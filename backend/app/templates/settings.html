@@ -108,6 +108,9 @@
       <label>Интервал cleanup, сек
         <input class="input" name="cleanup_interval_sec" value="{{ settings_map.get('cleanup_interval_sec', '3600') }}" />
       </label>
+      <label>Интервал сверки с master, сек
+        <input class="input" name="pipeline_reconcile_interval_sec" value="{{ settings_map.get('pipeline_reconcile_interval_sec', '600') }}" />
+      </label>
       <label>Возраст master для polling fallback, мин
         <input class="input" name="pipeline_master_min_age_min" value="{{ settings_map.get('pipeline_master_min_age_min', '5') }}" />
       </label>

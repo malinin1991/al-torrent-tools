@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # False = только отчёт; True = можно удалять при dry_run=false (кнопка / API).
     cleanup_allow_delete: bool = True
     pipeline_master_min_age_min: int = 5
+    # Полная сверка pipeline ↔ master (кнопка / scheduler).
+    pipeline_reconcile_interval_sec: int = 600
 
     torrent_storage_dir: str = default_torrent_storage_dir()
 

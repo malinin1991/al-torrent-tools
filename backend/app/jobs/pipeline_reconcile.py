@@ -27,7 +27,7 @@ async def load_torrent_bytes_with_fallback(
 
 
 async def run_pipeline_reconcile(db: Session, job_id: int, params: dict[str, Any]) -> None:
-    """Сверка pipeline без slave с master (кнопка / раз в сутки)."""
+    """Сверка pipeline без slave с master (кнопка / scheduler)."""
     _ = params
     service = TorrentPipelineService(db, job_id=job_id)
     cache: dict[int, bytes] = {}

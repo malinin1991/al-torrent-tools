@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import platform
 import sys
 from importlib.metadata import PackageNotFoundError, version as pkg_version
@@ -48,10 +49,13 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
 
     anilibria = await _probe_anilibria(db, has_token=has_token)
     database = _probe_database(db)
-    qb = {
-        "master": _probe_qb(db, "master"),
-        "slave": _probe_qb(db, "slave"),
-    }
+    master_creds = _qb_credentials(db, "master")
+    slave_creds = _qb_credentials(db, "slave")
+    master_status, slave_status = await asyncio.gather(
+        asyncio.to_thread(_probe_qb_creds, master_creds),
+        asyncio.to_thread(_probe_qb_creds, slave_creds),
+    )
+    qb = {"master": master_status, "slave": slave_status}
 
     storage = resolve_torrent_storage_root()
     return {
@@ -128,38 +132,58 @@ def _probe_database(db: Session) -> dict[str, Any]:
         }
 
 
-def _probe_qb(db: Session, role: str) -> dict[str, Any]:
+def _qb_credentials(db: Session, role: str) -> dict[str, Any] | None:
+    """Собирает креды на текущем потоке (без сетевых вызовов)."""
     client = db.scalar(select(QbClient).where(QbClient.role == role, QbClient.enabled.is_(True)).limit(1))
-    if client is None:
-        # Fallback на settings-ключи (как на странице настроек).
-        host = get_setting_value(db, f"qb_{role}_host", "")
-        port_raw = get_setting_value(db, f"qb_{role}_port", "8080")
-        username = get_setting_value(db, f"qb_{role}_username", "")
-        password = get_setting_value(db, f"qb_{role}_password", "")
-        if not host.strip():
-            return {
-                "configured": False,
-                "ok": False,
-                "detail": "Не настроен",
-                "host": "",
-                "port": None,
-                "version": "—",
-                "webapi": "—",
-                "torrents": None,
-            }
-        try:
-            port = int(port_raw or "8080")
-        except ValueError:
-            port = 8080
-        return _run_qb_test(host=host, port=port, username=username, password=password, configured=True)
+    if client is not None:
+        return {
+            "configured": True,
+            "name": client.name,
+            "host": client.host,
+            "port": client.port,
+            "username": client.username,
+            "password": client.password_encrypted,
+        }
 
+    host = get_setting_value(db, f"qb_{role}_host", "")
+    port_raw = get_setting_value(db, f"qb_{role}_port", "8080")
+    username = get_setting_value(db, f"qb_{role}_username", "")
+    password = get_setting_value(db, f"qb_{role}_password", "")
+    if not host.strip():
+        return None
+    try:
+        port = int(port_raw or "8080")
+    except ValueError:
+        port = 8080
+    return {
+        "configured": True,
+        "name": None,
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": password,
+    }
+
+
+def _probe_qb_creds(creds: dict[str, Any] | None) -> dict[str, Any]:
+    if creds is None:
+        return {
+            "configured": False,
+            "ok": False,
+            "detail": "Не настроен",
+            "host": "",
+            "port": None,
+            "version": "—",
+            "webapi": "—",
+            "torrents": None,
+        }
     return _run_qb_test(
-        host=client.host,
-        port=client.port,
-        username=client.username,
-        password=client.password_encrypted,
+        host=creds["host"],
+        port=int(creds["port"]),
+        username=creds["username"],
+        password=creds["password"],
         configured=True,
-        name=client.name,
+        name=creds.get("name"),
     )
 
 

@@ -15,8 +15,8 @@ from app.services.pipeline import TorrentPipelineService
 
 logger = logging.getLogger(__name__)
 
-# Интервалы ongoing/cleanup читаются при старте и периодически перечитываются в main-loop
-# (reschedule). pipeline_master_min_age_min читается на каждом тике _poll_master_pipeline.
+# Интервалы ongoing/cleanup/reconcile читаются при старте и периодически перечитываются
+# в main-loop (reschedule). pipeline_master_min_age_min — на каждом тике _poll_master_pipeline.
 
 
 async def _run_by_type(job_type: str) -> None:
@@ -55,7 +55,7 @@ async def _poll_master_pipeline() -> None:
                 pipeline_service.mark_failed(pipeline, str(exc))
 
 
-async def _daily_pipeline_reconcile() -> None:
+async def _pipeline_reconcile() -> None:
     with SessionLocal() as db:
         try:
             job = job_runner.create_job(db, "pipeline_reconcile", {})
@@ -132,6 +132,9 @@ async def main() -> None:
 
     ongoing_interval = _setting_int("ongoing_interval_sec", settings.ongoing_interval_sec)
     cleanup_interval = _setting_int("cleanup_interval_sec", settings.cleanup_interval_sec)
+    reconcile_interval = _setting_int(
+        "pipeline_reconcile_interval_sec", settings.pipeline_reconcile_interval_sec
+    )
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         _run_by_type,
@@ -161,10 +164,10 @@ async def main() -> None:
     )
     # Полная сверка master↔pipeline без slave (пропущенный webhook).
     scheduler.add_job(
-        _daily_pipeline_reconcile,
+        _pipeline_reconcile,
         "interval",
-        hours=24,
-        id="pipeline_reconcile_daily",
+        seconds=max(60, reconcile_interval),
+        id="pipeline_reconcile",
         max_instances=1,
         coalesce=True,
     )
@@ -204,6 +207,11 @@ async def main() -> None:
         )
         _reschedule_if_needed(
             scheduler, "cleanup", _setting_int("cleanup_interval_sec", settings.cleanup_interval_sec)
+        )
+        _reschedule_if_needed(
+            scheduler,
+            "pipeline_reconcile",
+            max(60, _setting_int("pipeline_reconcile_interval_sec", settings.pipeline_reconcile_interval_sec)),
         )
 
 

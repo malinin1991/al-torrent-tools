@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 
 from fastapi import Depends, FastAPI, Form, Query
 from fastapi.responses import HTMLResponse
@@ -180,6 +181,9 @@ def update_settings(
     ongoing_interval_sec: str = Form(default=str(settings.ongoing_interval_sec)),
     cleanup_interval_sec: str = Form(default=str(settings.cleanup_interval_sec)),
     pipeline_master_min_age_min: str = Form(default=str(settings.pipeline_master_min_age_min)),
+    pipeline_reconcile_interval_sec: str = Form(
+        default=str(settings.pipeline_reconcile_interval_sec)
+    ),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form_data = {
@@ -200,6 +204,7 @@ def update_settings(
         "ongoing_interval_sec": ongoing_interval_sec,
         "cleanup_interval_sec": cleanup_interval_sec,
         "pipeline_master_min_age_min": pipeline_master_min_age_min,
+        "pipeline_reconcile_interval_sec": pipeline_reconcile_interval_sec,
     }
     for key, value in form_data.items():
         row = db.get(Setting, key)
@@ -240,7 +245,7 @@ def update_settings(
 
 
 @app.post("/settings/qb-test/{role}", response_class=HTMLResponse)
-def qb_test_connection_settings(
+async def qb_test_connection_settings(
     request: Request,
     role: str,
     qb_master_host: str = Form(default=""),
@@ -273,7 +278,8 @@ def qb_test_connection_settings(
         password = _resolve_qb_password(db, "slave", qb_slave_password)
 
     try:
-        result = test_qb_connection(
+        result = await asyncio.to_thread(
+            test_qb_connection,
             host=host,
             port=_parse_port(port_raw),
             username=username,
@@ -443,22 +449,22 @@ def _jobs_page_context(
 
 
 @app.get("/pipeline", response_class=HTMLResponse)
-def pipeline_page(
+async def pipeline_page(
     request: Request,
     status: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = _pipeline_page_context(db, status=status)
+    context = await _pipeline_page_context_async(db, status=status)
     return templates.TemplateResponse(request, "pipeline.html", context)
 
 
 @app.get("/pipeline/live", response_class=HTMLResponse)
-def pipeline_live(
+async def pipeline_live(
     request: Request,
     status: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = _pipeline_page_context(db, status=status)
+    context = await _pipeline_page_context_async(db, status=status)
     return templates.TemplateResponse(request, "partials/pipeline_live.html", context)
 
 
@@ -478,16 +484,39 @@ async def pipeline_reconcile_action(
     return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
 
 
-def _pipeline_page_context(db: Session, *, status: str | None) -> dict:
+def _load_master_ui_states(info_hashes: list[str]) -> dict:
+    """Опрос master в отдельном потоке (своя DB-сессия)."""
+    with SessionLocal() as thread_db:
+        try:
+            return TorrentPipelineService(thread_db).get_master_ui_states(info_hashes)
+        except Exception:
+            return {}
+
+
+async def _pipeline_page_context_async(db: Session, *, status: str | None) -> dict:
+    context = _pipeline_page_context(db, status=status, master_states={})
+    hashes = [row.info_hash for row in context["rows"]]
+    context["master_states"] = await asyncio.to_thread(_load_master_ui_states, hashes)
+    return context
+
+
+def _pipeline_page_context(
+    db: Session,
+    *,
+    status: str | None,
+    master_states: dict | None = None,
+) -> dict:
     query = select(TorrentPipeline)
     if status:
         query = query.where(TorrentPipeline.status == status)
     rows = list(db.scalars(query.order_by(TorrentPipeline.id.desc()).limit(300)).all())
-    master_states: dict = {}
-    try:
-        master_states = TorrentPipelineService(db).get_master_ui_states([row.info_hash for row in rows])
-    except Exception:
-        master_states = {}
+    if master_states is None:
+        try:
+            master_states = TorrentPipelineService(db).get_master_ui_states(
+                [row.info_hash for row in rows]
+            )
+        except Exception:
+            master_states = {}
     return {
         "rows": rows,
         "master_states": master_states,

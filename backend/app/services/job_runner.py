@@ -213,14 +213,17 @@ class JobRunner:
         return job
 
     def schedule_job(self, job_id: int) -> asyncio.Task[Any]:
-        """Запустить джоб в фоне со своей DB-сессией (UI/API не ждут завершения)."""
+        """Запустить джоб в фоне в отдельном потоке (sync qB не блокирует UI)."""
 
-        async def _runner() -> None:
+        def _thread_main() -> None:
             with SessionLocal() as db:
                 try:
-                    await self.run_job(db, job_id)
+                    asyncio.run(self.run_job(db, job_id))
                 except Exception:
                     logger.exception("Фоновый джоб id=%s завершился с ошибкой", job_id)
+
+        async def _runner() -> None:
+            await asyncio.to_thread(_thread_main)
 
         task = asyncio.create_task(_runner(), name=f"job-{job_id}")
         _background_tasks.add(task)

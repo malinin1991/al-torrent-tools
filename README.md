@@ -116,6 +116,7 @@ UI/API: `http://UNRAID_IP:8000`, health: `http://UNRAID_IP:8000/health`.
 - `CLEANUP_INTERVAL_SEC` - интервал фонового запуска `cleanup`.
 - `CLEANUP_ALLOW_DELETE` - разрешить реальное удаление в qB (`true` по умолчанию; `false` — только отчёт в логах).
 - `PIPELINE_MASTER_MIN_AGE_MIN` - минимальный возраст `master_added` перед fallback polling.
+- `PIPELINE_RECONCILE_INTERVAL_SEC` - интервал полной сверки pipeline ↔ master (по умолчанию 600).
 - `JOB_STALE_MINUTES` - порог отмены зависших pending/running (worker reclaim, по умолчанию 30).
 - `TORRENT_STORAGE_DIR` - каталог для `.torrent` архива.
 
@@ -175,7 +176,7 @@ AniLibria / ongoing
 Если webhook не сработал, есть запасные механики:
 
 1. **Worker ~60 с** — для `master_added` старше `PIPELINE_MASTER_MIN_AGE_MIN`: опрос master по hash; при 100% / seeding → slave; если торрента нет на master → `cancelled`.
-2. **Сверка раз в сутки** (и кнопка «Сверить с master» на `/pipeline`) — все pipeline в `master_added` / `master_complete` (ещё нет на slave):
+2. **Сверка по расписанию** (по умолчанию каждые 10 мин, `PIPELINE_RECONCILE_INTERVAL_SEC` / настройка в UI; кнопка «Сверить с master» на `/pipeline`) — все pipeline в `master_added` / `master_complete` (ещё нет на slave):
    - загружен на master → досылка на slave;
    - ещё качается / остановлен → ждём callback;
    - не найден на master → `cancelled`.
