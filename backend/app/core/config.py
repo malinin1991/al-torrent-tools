@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     app_name: str = "AL Torrent Tools"
     app_env: str = "dev"
     secret_key: str = "change-me"
+    # Pending/running без активности (логи) дольше порога → cancelled (reclaim).
+    job_stale_minutes: int = 30
     database_url: str = "postgresql+psycopg://altt:altt@postgres:5432/altt"
 
     anilibria_base_url: str = "https://anilibria.top/api/v1"

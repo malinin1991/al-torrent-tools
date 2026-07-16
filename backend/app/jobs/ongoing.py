@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import ExtraUrl, JobLog, Setting
+from app.services.release_checkpoint import ReleaseRef, normalize_api_datetime, should_skip_unchanged
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
 
@@ -25,7 +26,7 @@ def _add_log(db: Session, job_id: int, message: str, level: str = "info") -> Non
     db.commit()
 
 
-def _extract_releases_from_schedule(payload: Any) -> list[tuple[int, str | None]]:
+def _extract_releases_from_schedule(payload: Any) -> list[ReleaseRef]:
     """Парсит ответ GET /anime/schedule/week (список releaseInSchedule)."""
     items: Any = payload
     if isinstance(payload, dict):
@@ -34,7 +35,7 @@ def _extract_releases_from_schedule(payload: Any) -> list[tuple[int, str | None]
     if not isinstance(items, list):
         return []
 
-    found: list[tuple[int, str | None]] = []
+    found: list[ReleaseRef] = []
     for entry in items:
         if not isinstance(entry, dict):
             continue
@@ -43,19 +44,30 @@ def _extract_releases_from_schedule(payload: Any) -> list[tuple[int, str | None]
         if isinstance(release, dict):
             release_id = release.get("id")
             alias = release.get("alias")
+            updated_at = normalize_api_datetime(release.get("updated_at"))
+            fresh_at = normalize_api_datetime(release.get("fresh_at"))
         else:
             release_id = entry.get("id")
             alias = entry.get("alias")
+            updated_at = normalize_api_datetime(entry.get("updated_at"))
+            fresh_at = normalize_api_datetime(entry.get("fresh_at"))
 
         if isinstance(release_id, int):
             alias_text = alias.strip() if isinstance(alias, str) and alias.strip() else None
-            found.append((release_id, alias_text))
+            found.append(
+                ReleaseRef(
+                    release_id=release_id,
+                    alias=alias_text,
+                    updated_at=updated_at,
+                    fresh_at=fresh_at,
+                )
+            )
 
-    unique: dict[int, str | None] = {}
-    for release_id, alias in found:
-        if release_id not in unique:
-            unique[release_id] = alias
-    return [(release_id, unique[release_id]) for release_id in unique]
+    unique: dict[int, ReleaseRef] = {}
+    for item in found:
+        if item.release_id not in unique:
+            unique[item.release_id] = item
+    return list(unique.values())
 
 
 async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
@@ -66,7 +78,9 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
     pause_every = _setting_int(db, "scrape_pause_every", settings.scrape_pause_every)
     pause_sec = _setting_int(db, "scrape_pause_sec", settings.scrape_pause_sec)
 
-    schedule = await al_client.get_schedule_week(include=["release.id", "release.alias"])
+    schedule = await al_client.get_schedule_week(
+        include=["release.id", "release.alias", "release.updated_at", "release.fresh_at"]
+    )
     releases = _extract_releases_from_schedule(schedule)
     _add_log(db, job_id, f"Ongoing: из расписания получено релизов {len(releases)}")
 
@@ -74,29 +88,67 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
     _add_log(db, job_id, f"Ongoing: активных extra URLs {len(extra_rows)}")
     for row in extra_rows:
         if row.release_id:
-            releases.append((row.release_id, row.release_alias))
+            releases.append(ReleaseRef(release_id=row.release_id, alias=row.release_alias))
         elif row.release_alias:
-            details = await al_client.get_releases_list(aliases=[row.release_alias], include=["id", "alias"])
+            details = await al_client.get_releases_list(
+                aliases=[row.release_alias],
+                include=["id", "alias", "updated_at", "fresh_at"],
+            )
             if isinstance(details, list):
                 for item in details:
                     if isinstance(item, dict) and isinstance(item.get("id"), int):
-                        releases.append((item["id"], item.get("alias")))
+                        releases.append(
+                            ReleaseRef(
+                                release_id=item["id"],
+                                alias=item.get("alias") if isinstance(item.get("alias"), str) else None,
+                                updated_at=normalize_api_datetime(item.get("updated_at")),
+                                fresh_at=normalize_api_datetime(item.get("fresh_at")),
+                            )
+                        )
 
-    unique_releases: dict[int, str | None] = {}
-    for release_id, alias in releases:
-        if release_id not in unique_releases:
-            unique_releases[release_id] = alias
+    unique_releases: dict[int, ReleaseRef] = {}
+    for item in releases:
+        if item.release_id not in unique_releases:
+            unique_releases[item.release_id] = item
 
     total = len(unique_releases)
+    skipped_unchanged = 0
     _add_log(db, job_id, f"Ongoing: найдено релизов {total}")
-    for index, (release_id, alias) in enumerate(unique_releases.items(), start=1):
+    for index, ref in enumerate(unique_releases.values(), start=1):
+        if should_skip_unchanged(
+            db,
+            ref.release_id,
+            updated_at=ref.updated_at,
+            fresh_at=ref.fresh_at,
+        ):
+            skipped_unchanged += 1
+            _add_log(
+                db,
+                job_id,
+                f"Ongoing: пропуск без изменений id={ref.release_id} "
+                f"(updated_at={ref.updated_at or '-'}, fresh_at={ref.fresh_at or '-'})",
+                level="debug",
+            )
+            continue
+
         _add_log(
             db,
             job_id,
-            f"Ongoing: обработка релиза {index}/{total} (id={release_id}, alias={alias or '-'})",
+            f"Ongoing: обработка релиза {index}/{total} (id={ref.release_id}, alias={ref.alias or '-'})",
             level="debug",
         )
-        await processor.process_release(release_id=release_id, release_alias=alias)
+        await processor.process_release(
+            release_id=ref.release_id,
+            release_alias=ref.alias,
+            list_updated_at=ref.updated_at,
+            list_fresh_at=ref.fresh_at,
+        )
         if pause_every > 0 and pause_sec > 0 and index % pause_every == 0 and index < total:
             _add_log(db, job_id, f"Ongoing: пауза {pause_sec} сек после {index} релизов")
             await asyncio.sleep(pause_sec)
+
+    _add_log(
+        db,
+        job_id,
+        f"Ongoing: готово, релизов={total}, пропущено без изменений (по markers)={skipped_unchanged}",
+    )

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import JobLog, Setting
+from app.services.release_checkpoint import normalize_api_datetime, should_skip_unchanged
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
 
@@ -61,8 +62,12 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     page = 1
     total_pages = 1
     processed_releases = 0
+    skipped_unchanged = 0
     while page <= total_pages:
-        payload = await al_client.catalog_releases(page=page, include=["id", "alias", "names", "season"])
+        payload = await al_client.catalog_releases(
+            page=page,
+            include=["id", "alias", "names", "season", "updated_at", "fresh_at"],
+        )
         total_pages = _extract_total_pages(payload)
         releases = _extract_list(payload)
         _add_log(db, job_id, f"Full sync: страница {page}/{total_pages}, релизов на странице: {len(releases)}")
@@ -73,15 +78,40 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 continue
             processed_releases += 1
             release_alias = release.get("alias") if isinstance(release.get("alias"), str) else None
+            updated_at = normalize_api_datetime(release.get("updated_at"))
+            fresh_at = normalize_api_datetime(release.get("fresh_at"))
+
+            if should_skip_unchanged(db, release_id, updated_at=updated_at, fresh_at=fresh_at):
+                skipped_unchanged += 1
+                _add_log(
+                    db,
+                    job_id,
+                    f"Full sync: пропуск без изменений id={release_id}",
+                    level="debug",
+                )
+                continue
+
             _add_log(
                 db,
                 job_id,
                 f"Full sync: обработка релиза id={release_id}, alias={release_alias or '-'} (#{processed_releases})",
                 level="debug",
             )
-            await processor.process_release(release_id=release_id, release_alias=release_alias)
+            await processor.process_release(
+                release_id=release_id,
+                release_alias=release_alias,
+                list_updated_at=updated_at,
+                list_fresh_at=fresh_at,
+            )
 
             if pause_every > 0 and pause_sec > 0 and processed_releases % pause_every == 0:
                 _add_log(db, job_id, f"Full sync: пауза {pause_sec} сек после {processed_releases} релизов")
                 await asyncio.sleep(pause_sec)
         page += 1
+
+    _add_log(
+        db,
+        job_id,
+        f"Full sync: готово, просмотрено={processed_releases}, "
+        f"пропущено без изменений (по markers)={skipped_unchanged}",
+    )

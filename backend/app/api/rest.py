@@ -14,7 +14,7 @@ from app.jobs.waiting_master_retry import run_waiting_master_retry
 from app.jobs.waiting_slave_retry import run_waiting_slave_retry
 from app.services.anilibria_auth import login_and_store_token
 from app.services.db_maintenance import reset_full, reset_operational_state
-from app.services.job_runner import JobAlreadyRunningError, JobRunner
+from app.services.job_runner import JobAlreadyRunningError, JobRunner, UnknownJobTypeError
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import sanitize_info_hash, test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, get_setting_value, mask_settings_dict
@@ -98,12 +98,18 @@ def list_jobs(
 def create_job(payload: JobCreateIn, db: Session = Depends(get_db)) -> dict:
     try:
         job = job_runner.create_job(db, payload.type, payload.params)
+    except UnknownJobTypeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Неизвестный тип джоба: {exc.job_type}. Допустимы: {sorted(job_runner.known_types())}",
+        ) from exc
     except JobAlreadyRunningError as exc:
         raise HTTPException(
             status_code=409,
             detail=f"Джоб типа {exc.job_type} уже выполняется (id={exc.running_job_id})",
         ) from exc
-    return {"id": job.id, "type": job.type, "status": job.status}
+    job_runner.schedule_job(job.id)
+    return {"id": job.id, "type": job.type, "status": job.status, "queued": True}
 
 
 @router.get("/jobs/{job_id}")
@@ -296,6 +302,11 @@ def delete_cleanup_rule(row_id: int, db: Session = Depends(get_db)) -> dict:
 def _create_and_run_job(db: Session, job_type: str, params: dict) -> Job:
     try:
         job = job_runner.create_job(db, job_type, params)
+    except UnknownJobTypeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Неизвестный тип джоба: {exc.job_type}. Допустимы: {sorted(job_runner.known_types())}",
+        ) from exc
     except JobAlreadyRunningError as exc:
         raise HTTPException(
             status_code=409,
@@ -440,6 +451,36 @@ async def qb_complete_webhook(
             "pipeline_id": pipeline.id,
             "message": f"Неожиданный статус pipeline: {pipeline.status}",
         }
+
+    # Не досылать на slave, пока торрент на master ещё качается (ложный/ранний webhook).
+    if pipeline.status == TorrentPipelineService.STATUS_MASTER_ADDED:
+        try:
+            master_state = pipeline_service.classify_master_torrent(pipeline)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": pipeline.status,
+                "pipeline_id": pipeline.id,
+                "message": f"Не удалось проверить master: {exc}",
+            }
+        if master_state == "in_progress":
+            return {
+                "ok": False,
+                "status": pipeline.status,
+                "pipeline_id": pipeline.id,
+                "message": "Торрент на master ещё не завершён — досылка на slave отклонена",
+            }
+        if master_state == "missing":
+            pipeline_service.mark_cancelled(
+                pipeline,
+                "Webhook: торрент отсутствует на master — pipeline cancelled",
+            )
+            return {
+                "ok": False,
+                "status": pipeline.status,
+                "pipeline_id": pipeline.id,
+                "message": pipeline.error or "Торрент отсутствует на master",
+            }
 
     try:
         torrent_file = await load_torrent_bytes_with_fallback(db, pipeline_service, pipeline)

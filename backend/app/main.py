@@ -11,8 +11,8 @@ from starlette.requests import Request
 from app.api.rest import job_runner, router as api_router
 from app.core.config import settings
 from app.db.models import ExtraUrl, Job, JobLog, QbClient, Setting, TorrentArchive, TorrentPipeline
-from app.db.session import get_db
-from app.services.job_runner import JobAlreadyRunningError
+from app.db.session import SessionLocal, get_db
+from app.services.job_runner import JobAlreadyRunningError, UnknownJobTypeError, reclaim_stale_jobs
 from app.services.anilibria_auth import login_and_store_token, resolve_anilibria_password
 from app.services.db_maintenance import reset_full, reset_operational_state
 from app.services.pipeline import TorrentPipelineService
@@ -107,6 +107,19 @@ async def validate_runtime_settings() -> None:
     if settings.app_env.lower() != "dev" and settings.secret_key == "change-me":
         raise RuntimeError("Для окружения вне dev требуется задать SECRET_KEY")
     resolve_torrent_storage_root().mkdir(parents=True, exist_ok=True)
+    with SessionLocal() as db:
+        # Только по порогу бездействия — не трогаем джобы, которые крутит worker.
+        cancelled = reclaim_stale_jobs(
+            db,
+            reason="API перезапущен — джобы без активности помечены как cancelled",
+        )
+        if cancelled:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "При старте api помечены cancelled зависшие джобы: %s",
+                cancelled,
+            )
 
 
 @app.get("/health")
@@ -299,7 +312,8 @@ def reset_state_settings(request: Request, db: Session = Depends(get_db)) -> HTM
     stats = reset_operational_state(db)
     message = (
         f"Состояние сброшено: jobs={stats['jobs_removed']}, logs={stats['job_logs_removed']}, "
-        f"seen={stats['seen_torrents_removed']}, pipeline={stats['pipeline_removed']}. "
+        f"seen={stats['seen_torrents_removed']}, pipeline={stats['pipeline_removed']}, "
+        f"checkpoints={stats.get('checkpoints_removed', 0)}. "
         f"Архив сохранён: {stats['archive_kept']} записей."
     )
     return templates.TemplateResponse(request, "partials/settings_result.html", {"message": message})
@@ -533,6 +547,12 @@ async def run_job_action(
     params = {"dry_run": dry_run} if job_type == "cleanup" else {}
     try:
         job = job_runner.create_job(db, job_type, params)
+    except UnknownJobTypeError as exc:
+        message = (
+            f"Неизвестный тип джоба: {exc.job_type}. "
+            f"Допустимы: {', '.join(sorted(job_runner.known_types()))}"
+        )
+        return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
     except JobAlreadyRunningError as exc:
         message = f"Джоб типа {exc.job_type} уже выполняется (id={exc.running_job_id})"
         return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})

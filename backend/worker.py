@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.db.models import Setting
 from app.db.session import SessionLocal
 from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback
-from app.services.job_runner import JobAlreadyRunningError, cancel_stale_jobs
+from app.services.job_runner import JobAlreadyRunningError, reclaim_stale_jobs
 from app.services.pipeline import TorrentPipelineService
 
 logger = logging.getLogger(__name__)
@@ -113,9 +113,17 @@ def _reschedule_if_needed(scheduler: AsyncIOScheduler, job_id: str, seconds: int
         logger.info("Scheduler %s: interval %s → %s сек", job_id, current, seconds)
 
 
+async def _reclaim_stale_jobs() -> None:
+    with SessionLocal() as db:
+        cancelled = reclaim_stale_jobs(db)
+        if cancelled:
+            logger.warning("Reclaim: отменены зависшие джобы: %s", cancelled)
+
+
 async def main() -> None:
     with SessionLocal() as db:
-        cancelled = cancel_stale_jobs(db)
+        # Порог бездействия, не blanket-cancel: api может ещё выполнять джоб в памяти.
+        cancelled = reclaim_stale_jobs(db)
         if cancelled:
             logger.warning(
                 "При старте worker помечены cancelled зависшие джобы: %s",
@@ -175,6 +183,14 @@ async def main() -> None:
         "interval",
         minutes=5,
         id="waiting_slave_retry",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _reclaim_stale_jobs,
+        "interval",
+        minutes=5,
+        id="job_stale_reclaim",
         max_instances=1,
         coalesce=True,
     )

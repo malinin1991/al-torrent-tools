@@ -21,6 +21,16 @@ def _tracker_list(trackers: Any) -> list[Any]:
         return []
 
 
+def _tracker_url(tracker: Any) -> str:
+    return str(getattr(tracker, "url", "") or "").casefold()
+
+
+def _tracker_message(tracker: Any) -> str:
+    return str(
+        getattr(tracker, "msg", None) or getattr(tracker, "message", None) or ""
+    ).casefold()
+
+
 def _tracker_matches_rule(tracker: Any, rule: CleanupRule) -> bool:
     """Как в qBittorrent-AL-remove-old: status==4, host в url, текст в msg."""
     try:
@@ -30,15 +40,19 @@ def _tracker_matches_rule(tracker: Any, rule: CleanupRule) -> bool:
     if status != 4:
         return False
 
-    url = str(getattr(tracker, "url", "") or "").casefold()
-    message = str(
-        getattr(tracker, "msg", None) or getattr(tracker, "message", None) or ""
-    ).casefold()
     host = (rule.tracker_host or "").strip().casefold()
     needle = (rule.message_contains or "").strip().casefold()
     if not host or not needle:
         return False
-    return host in url and needle in message
+    return host in _tracker_url(tracker) and needle in _tracker_message(tracker)
+
+
+def _tracker_host_present(trackers: list[Any], host: str) -> bool:
+    """Хост трекера встречается хотя бы в одном URL (без требования status/msg)."""
+    needle = (host or "").strip().casefold()
+    if not needle:
+        return False
+    return any(needle in _tracker_url(tracker) for tracker in trackers)
 
 
 def find_removable_torrents(
@@ -53,19 +67,25 @@ def find_removable_torrents(
 
         state_enum = getattr(torrent, "state_enum", None)
         trackers = _tracker_list(getattr(torrent, "trackers", None))
+        is_errored = bool(getattr(state_enum, "is_errored", False))
 
         for rule in rules:
             should_remove = False
             reason = ""
-            if rule.include_errored and bool(getattr(state_enum, "is_errored", False)):
+            for tracker in trackers:
+                if _tracker_matches_rule(tracker, rule):
+                    should_remove = True
+                    reason = "tracker"
+                    break
+            # Errored только если торрент связан с tracker_host правила — не все errored подряд.
+            if (
+                not should_remove
+                and rule.include_errored
+                and is_errored
+                and _tracker_host_present(trackers, rule.tracker_host)
+            ):
                 should_remove = True
                 reason = "errored"
-            else:
-                for tracker in trackers:
-                    if _tracker_matches_rule(tracker, rule):
-                        should_remove = True
-                        reason = "tracker"
-                        break
             if should_remove:
                 current = removable.get(torrent_hash)
                 if current is None:

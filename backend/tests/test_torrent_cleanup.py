@@ -101,7 +101,13 @@ def test_find_removable_torrents_matches_errored_state() -> None:
         hash="deadbeef",
         name="Broken torrent",
         state_enum=SimpleNamespace(is_errored=True),
-        trackers=[],
+        trackers=[
+            SimpleNamespace(
+                status=1,
+                url="http://tr.libria.fun:2710/announce",
+                msg="",
+            )
+        ],
     )
 
     removable = find_removable_torrents(torrent_list=[torrent], rules=[build_rule(include_errored=True)])
@@ -114,3 +120,22 @@ def test_find_removable_torrents_matches_errored_state() -> None:
             "reason": "errored",
         }
     ]
+
+
+def test_find_removable_torrents_ignores_errored_without_tracker_host() -> None:
+    torrent = SimpleNamespace(
+        hash="cafebabe",
+        name="Other tracker errored",
+        state_enum=SimpleNamespace(is_errored=True),
+        trackers=[
+            SimpleNamespace(
+                status=1,
+                url="http://other.tracker.example/announce",
+                msg="error",
+            )
+        ],
+    )
+
+    removable = find_removable_torrents(torrent_list=[torrent], rules=[build_rule(include_errored=True)])
+
+    assert removable == []

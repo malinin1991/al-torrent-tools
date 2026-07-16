@@ -116,9 +116,14 @@ UI/API: `http://UNRAID_IP:8000`, health: `http://UNRAID_IP:8000/health`.
 - `CLEANUP_INTERVAL_SEC` - интервал фонового запуска `cleanup`.
 - `CLEANUP_ALLOW_DELETE` - разрешить реальное удаление в qB (`true` по умолчанию; `false` — только отчёт в логах).
 - `PIPELINE_MASTER_MIN_AGE_MIN` - минимальный возраст `master_added` перед fallback polling.
+- `JOB_STALE_MINUTES` - порог отмены зависших pending/running (worker reclaim, по умолчанию 30).
 - `TORRENT_STORAGE_DIR` - каталог для `.torrent` архива.
 
 URL/token AniLibria и интервалы из UI имеют приоритет над env (DB override → env default).
+
+`ongoing` / `full_sync` пропускают релизы без изменений: сравнивают `updated_at`/`fresh_at` из списка
+с таблицей `release_checkpoints`, а внутри обработки — fingerprint списка торрентов
+(не дергают `get_release` и не качают `.torrent`, если всё уже в `seen_torrents`).
 
 ## Настройка qBittorrent
 
@@ -211,7 +216,7 @@ curl -fsS -X POST "http://127.0.0.1:8000/api/webhooks/qb/complete?hash=YOUR_INFO
 ```
 
 Ожидаемый ответ при успехе: `{"ok":true,"status":"done","pipeline_id":...}`.  
-Если hash неизвестен → `404`. Если pipeline ещё не `master_added` → `ok:false` с пояснением.
+Если hash неизвестен → `404`. Если торрент на master ещё качается → `ok:false`. Если pipeline ещё не `master_added` → `ok:false` с пояснением.
 
 GET тоже поддерживается (удобно для отладки):
 

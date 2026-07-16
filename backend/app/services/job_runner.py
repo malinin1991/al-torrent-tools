@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import zlib
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import Job, JobLog
 from app.db.session import SessionLocal
 
@@ -36,12 +38,29 @@ class JobAlreadyRunningError(Exception):
         super().__init__(f"Джоб типа {job_type} уже выполняется (id={running_job_id})")
 
 
+class UnknownJobTypeError(Exception):
+    """Тип джоба не зарегистрирован в JobRunner."""
+
+    def __init__(self, job_type: str) -> None:
+        self.job_type = job_type
+        super().__init__(f"Неизвестный тип джоба: {job_type}")
+
+
+def _advisory_lock_key(job_type: str) -> int:
+    """Стабильный 31-bit ключ для pg_advisory_xact_lock."""
+    return zlib.crc32(job_type.encode("utf-8")) & 0x7FFFFFFF
+
+
 def cancel_stale_jobs(
     db: Session,
     *,
     reason: str = "Процесс остановлен (Ctrl+C / рестарт), джоб помечен как cancelled",
 ) -> list[int]:
-    """Пометить зависшие pending/running как cancelled. Возвращает id затронутых джобов."""
+    """Пометить зависшие pending/running как cancelled. Возвращает id затронутых джобов.
+
+    Агрессивная отмена без порога возраста — только для явного сброса состояния,
+    не вызывать при старте api/worker (общая БД: чужой процесс может ещё крутить джоб).
+    """
     stale = list(
         db.scalars(select(Job).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
     )
@@ -67,6 +86,59 @@ def cancel_stale_jobs(
     return cancelled_ids
 
 
+def _job_last_activity_at(db: Session, job: Job) -> datetime | None:
+    """Якорь «живости»: для running — последний лог, иначе started_at/created_at."""
+    if job.status == STATUS_RUNNING:
+        last_log_at = db.scalar(select(func.max(JobLog.created_at)).where(JobLog.job_id == job.id))
+        if last_log_at is not None:
+            return last_log_at
+        return job.started_at or job.created_at
+    return job.created_at or job.started_at
+
+
+def reclaim_stale_jobs(
+    db: Session,
+    *,
+    max_age_minutes: int | None = None,
+    reason: str | None = None,
+) -> list[int]:
+    """Отменить pending/running без активности дольше порога.
+
+    Долгие живые джобы (full_sync и т.п.) пишут логи — их не трогаем.
+    """
+    age = max_age_minutes if max_age_minutes is not None else settings.job_stale_minutes
+    if age <= 0:
+        return []
+    threshold = datetime.utcnow() - timedelta(minutes=age)
+    msg = reason or (
+        f"Джоб без активности дольше {age} мин (pending/running) и помечен как cancelled"
+    )
+    candidates = list(
+        db.scalars(select(Job).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
+    )
+    cancelled_ids: list[int] = []
+    now = datetime.utcnow()
+    for job in candidates:
+        anchor = _job_last_activity_at(db, job)
+        if anchor is None or anchor > threshold:
+            continue
+        job.status = STATUS_CANCELLED
+        job.error = msg
+        if job.finished_at is None:
+            job.finished_at = now
+        db.add(
+            JobLog(
+                job_id=job.id,
+                level="warning",
+                message=f"Джоб переведён в cancelled: {msg}",
+            )
+        )
+        cancelled_ids.append(job.id)
+    if cancelled_ids:
+        db.commit()
+    return cancelled_ids
+
+
 class JobRunner:
     def __init__(self) -> None:
         self._handlers: dict[str, JobHandler] = {}
@@ -74,7 +146,16 @@ class JobRunner:
     def register(self, job_type: str, handler: JobHandler) -> None:
         self._handlers[job_type] = handler
 
+    def known_types(self) -> frozenset[str]:
+        return frozenset(self._handlers)
+
     def create_job(self, db: Session, job_type: str, params: dict[str, Any] | None = None) -> Job:
+        if job_type not in self._handlers:
+            raise UnknownJobTypeError(job_type)
+
+        # Сериализует create одного типа между api/worker (PostgreSQL).
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _advisory_lock_key(job_type)})
+
         running = db.scalar(
             select(Job)
             .where(Job.type == job_type, Job.status.in_((STATUS_RUNNING, STATUS_PENDING)))
@@ -105,21 +186,28 @@ class JobRunner:
         db.commit()
         self.add_log(db, job.id, f"Старт джоба {job.type}")
 
+        final_status = STATUS_SUCCESS
+        final_error: str | None = None
         try:
             await self._handlers[job.type](db, job.id, job.params_json or {})
-            job.status = STATUS_SUCCESS
             self.add_log(db, job.id, "Джоб завершен успешно")
         except asyncio.CancelledError:
-            job.status = STATUS_CANCELLED
-            job.error = "Прервано (Ctrl+C / shutdown)"
+            final_status = STATUS_CANCELLED
+            final_error = "Прервано (Ctrl+C / shutdown)"
             self.add_log(db, job.id, "Джоб отменён (CancelledError)", level="warning")
             raise
         except Exception as exc:
-            job.status = STATUS_FAILED
-            job.error = str(exc)
+            final_status = STATUS_FAILED
+            final_error = str(exc)
             self.add_log(db, job.id, f"Ошибка выполнения: {exc}", level="error")
         finally:
-            job.finished_at = datetime.utcnow()
+            db.refresh(job)
+            # Reclaim мог уже пометить cancelled — не воскрешаем слот.
+            if job.status != STATUS_CANCELLED or final_status == STATUS_CANCELLED:
+                job.status = final_status
+                job.error = final_error
+            if job.finished_at is None:
+                job.finished_at = datetime.utcnow()
             db.commit()
             db.refresh(job)
         return job

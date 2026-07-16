@@ -57,6 +57,17 @@ class SeenTorrent(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ReleaseCheckpoint(Base):
+    """Последние markers релиза с AniLibria — чтобы не дергать API без изменений."""
+
+    __tablename__ = "release_checkpoints"
+    release_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    api_updated_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    api_fresh_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    torrents_fingerprint: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class TorrentPipeline(Base):
     __tablename__ = "torrent_pipeline"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

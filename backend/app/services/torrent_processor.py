@@ -17,6 +17,13 @@ from app.services.qbittorrent import (
     should_wait_for_qb,
     torrent_info_hash,
 )
+from app.services.release_checkpoint import (
+    extract_release_markers,
+    invalidate_release_checkpoint,
+    mark_release_processed,
+    should_skip_by_torrents_fingerprint,
+    torrents_fingerprint,
+)
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.torrent_qb_meta import (
     build_qb_torrent_name_from_payloads,
@@ -136,21 +143,95 @@ class TorrentProcessor:
         )
         self._db.commit()
 
-    async def process_release(self, release_id: int, release_alias: str | None = None) -> dict[str, int]:
+    async def process_release(
+        self,
+        release_id: int,
+        release_alias: str | None = None,
+        *,
+        list_updated_at: str | None = None,
+        list_fresh_at: str | None = None,
+    ) -> dict[str, int]:
         torrents_payload = await self._al_client.get_torrents_for_release(
             release_id,
-            include=["id", "description", "codec", "type", "quality", "label", "info_hash", "hash", "size"],
+            include=[
+                "id",
+                "description",
+                "codec",
+                "type",
+                "quality",
+                "label",
+                "info_hash",
+                "hash",
+                "size",
+                "updated_at",
+            ],
         )
         torrents = self._iter_torrents(torrents_payload)
         if not torrents:
             self._add_log(f"Релиз {release_id}: торренты не найдены")
-            return {"total": 0, "new": 0, "skipped": 0, "waiting_master": 0}
+            mark_release_processed(
+                self._db,
+                release_id,
+                updated_at=list_updated_at,
+                fresh_at=list_fresh_at,
+                torrents_fingerprint_value="",
+            )
+            return {"total": 0, "new": 0, "skipped": 0, "waiting_master": 0, "unchanged": 0}
+
+        fingerprint = torrents_fingerprint(torrents)
+        all_seen = True
+        for torrent in torrents:
+            torrent_id = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
+            if torrent_id is None:
+                all_seen = False
+                break
+            raw_hash = torrent.get("info_hash") or torrent.get("hash")
+            info_hash = self._normalize_api_info_hash(raw_hash)
+            exists = self._db.scalar(self.build_seen_exists_query(torrent_id, info_hash).limit(1))
+            if exists is None:
+                all_seen = False
+                break
+
+        if all_seen:
+            unchanged = 1 if should_skip_by_torrents_fingerprint(self._db, release_id, fingerprint) else 0
+            if unchanged:
+                self._add_log(
+                    f"Релиз {release_id}: без изменений (fingerprint торрентов), "
+                    "пропуск get_release/скачивания",
+                    "debug",
+                )
+            else:
+                self._add_log(
+                    f"Релиз {release_id}: все торренты уже в seen, обновлён checkpoint без get_release",
+                    "debug",
+                )
+            mark_release_processed(
+                self._db,
+                release_id,
+                updated_at=list_updated_at,
+                fresh_at=list_fresh_at,
+                torrents_fingerprint_value=fingerprint,
+            )
+            return {
+                "total": len(torrents),
+                "new": 0,
+                "skipped": len(torrents),
+                "waiting_master": 0,
+                "unchanged": unchanged,
+            }
+
         release_payload = await self._al_client.get_release(
             release_id,
-            include=["id", "alias", "name", "season", "year", "description"],
+            include=["id", "alias", "name", "season", "year", "description", "updated_at", "fresh_at"],
         )
         if not isinstance(release_payload, dict):
             raise RuntimeError(f"Релиз {release_id}: AniLibria API вернул некорректные метаданные")
+
+        api_updated_at, api_fresh_at = extract_release_markers(release_payload)
+        if list_updated_at and not api_updated_at:
+            api_updated_at = list_updated_at
+        if list_fresh_at and not api_fresh_at:
+            api_fresh_at = list_fresh_at
 
         passkey = await ensure_passkey_stored(self._db)
         if passkey:
@@ -166,7 +247,8 @@ class TorrentProcessor:
         site_url = resolve_anilibria_site_url(self._al_client.base_url)
         category = archive_service._build_category(release_payload)
 
-        stats = {"total": len(torrents), "new": 0, "skipped": 0, "waiting_master": 0}
+        stats = {"total": len(torrents), "new": 0, "skipped": 0, "waiting_master": 0, "unchanged": 0}
+        errors = 0
         for torrent in torrents:
             torrent_id = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
             if torrent_id is None:
@@ -260,6 +342,7 @@ class TorrentProcessor:
                 self._add_log(f"Обработан торрент {torrent_id} для релиза {release_id}{alias_text}")
             except Exception as exc:
                 self._db.rollback()
+                errors += 1
                 if pipeline is not None:
                     try:
                         self._pipeline.mark_failed(pipeline, str(exc))
@@ -268,4 +351,16 @@ class TorrentProcessor:
                 self._add_log(f"Релиз {release_id}: ошибка обработки торрента {torrent_id}: {exc}", "error")
                 stats["skipped"] += 1
                 continue
+
+        if errors == 0:
+            mark_release_processed(
+                self._db,
+                release_id,
+                updated_at=api_updated_at,
+                fresh_at=api_fresh_at,
+                torrents_fingerprint_value=fingerprint,
+            )
+        else:
+            # Иначе markers совпадут со старым checkpoint и early-skip скроет ретрай.
+            invalidate_release_checkpoint(self._db, release_id)
         return stats
