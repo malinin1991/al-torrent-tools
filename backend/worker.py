@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -21,8 +22,17 @@ from app.services.pipeline import TorrentPipelineService
 
 logger = logging.getLogger(__name__)
 
+_HEALTH_FILE = Path("/tmp/altt_worker_healthy")
+
 # Интервалы ongoing/cleanup/reconcile читаются при старте и периодически перечитываются
 # в main-loop (reschedule). pipeline_master_min_age_min — на каждом тике _poll_master_pipeline.
+
+
+def _touch_health() -> None:
+    try:
+        _HEALTH_FILE.touch()
+    except OSError:
+        logger.exception("Не удалось обновить worker health-файл")
 
 
 async def _run_by_type(job_type: str) -> None:
@@ -215,6 +225,7 @@ async def main() -> None:
         coalesce=True,
     )
     scheduler.start()
+    _touch_health()
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -227,6 +238,7 @@ async def main() -> None:
 
     try:
         while not stop.is_set():
+            _touch_health()
             try:
                 await asyncio.wait_for(stop.wait(), timeout=60)
             except asyncio.TimeoutError:
@@ -251,6 +263,10 @@ async def main() -> None:
                 ),
             )
     finally:
+        try:
+            _HEALTH_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
         scheduler.shutdown(wait=False)
         cancelled = shutdown_cancel_active_jobs(
             reason="Worker остановлен — джоб помечен как cancelled"

@@ -42,6 +42,18 @@ services:
         "--port",
         "8000",
       ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
 
   worker:
     image: registry.mageek.su/al-torrent-tools:latest
@@ -59,6 +71,12 @@ services:
         condition: service_healthy
     command:
       ["sh", "/app/scripts/entrypoint.sh", "python", "worker.py"]
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_worker.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
 volumes:
   altt_pg_data:

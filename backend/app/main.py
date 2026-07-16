@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, Form, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -137,6 +137,13 @@ def _qb_test_message(role: str, result: dict) -> str:
         f"version={result['version']}, webapi={result['webapi']}, "
         f"торрентов={result['torrents']}"
     )
+
+
+@app.get("/health/live")
+async def health_live(db: Session = Depends(get_db)) -> dict:
+    """Лёгкий probe для Docker healthcheck (без AniLibria)."""
+    db.execute(text("SELECT 1"))
+    return {"status": "ok"}
 
 
 @app.get("/health")

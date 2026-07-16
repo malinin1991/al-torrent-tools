@@ -34,6 +34,18 @@ services:
     ports:
       - "8000:8000"
     command: ["sh", "/app/scripts/entrypoint.sh", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
 
   worker:
     build:
@@ -52,6 +64,12 @@ services:
       postgres:
         condition: service_healthy
     command: ["sh", "/app/scripts/entrypoint.sh", "python", "worker.py"]
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_worker.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
 volumes:
   pg_data:
