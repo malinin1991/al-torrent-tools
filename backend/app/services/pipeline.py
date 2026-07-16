@@ -5,7 +5,7 @@ import qbittorrentapi
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.db.models import JobLog, QbClient, TorrentArchive, TorrentPipeline
+from app.db.models import ExtraUrl, JobLog, QbClient, TorrentArchive, TorrentPipeline
 from app.services.qbittorrent import (
     MASTER_UI_LABELS,
     ensure_announce_passkey,
@@ -18,7 +18,7 @@ from app.services.runtime_settings import get_setting_value
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.torrent_qb_meta import (
     build_qb_torrent_name_from_archive,
-    build_release_torrents_url,
+    first_release_torrents_url,
     resolve_anilibria_site_url,
 )
 
@@ -62,7 +62,8 @@ class TorrentPipelineService:
         self._db.commit()
         self._db.refresh(pipeline)
         self._add_log(
-            f"Pipeline {pipeline.id} создан: release_id={release_id}, torrent_id={torrent_id}, status={pipeline.status}"
+            f"Pipeline {pipeline.id} создан: release_id={release_id}, torrent_id={torrent_id}, status={pipeline.status}",
+            "debug",
         )
         return pipeline
 
@@ -102,7 +103,7 @@ class TorrentPipelineService:
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}")
+        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
         return pipeline
 
     def mark_master_complete(self, pipeline: TorrentPipeline) -> TorrentPipeline:
@@ -110,7 +111,7 @@ class TorrentPipelineService:
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}")
+        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
         return pipeline
 
     def mark_waiting_slave(self, pipeline: TorrentPipeline, reason: str | None = None) -> TorrentPipeline:
@@ -128,7 +129,7 @@ class TorrentPipelineService:
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}")
+        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
         return pipeline
 
     def mark_done(self, pipeline: TorrentPipeline) -> TorrentPipeline:
@@ -136,7 +137,7 @@ class TorrentPipelineService:
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}")
+        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
         return pipeline
 
     def mark_failed(self, pipeline: TorrentPipeline, error: str) -> TorrentPipeline:
@@ -209,7 +210,10 @@ class TorrentPipelineService:
         """Идемпотентное завершение: master_added → slave; waiting_slave / master_complete — досылка."""
         self._db.refresh(pipeline)
         if pipeline.status in self._TERMINAL_OK:
-            self._add_log(f"Pipeline {pipeline.id}: process_completion no-op, status={pipeline.status}")
+            self._add_log(
+                f"Pipeline {pipeline.id}: process_completion no-op, status={pipeline.status}",
+                "debug",
+            )
             return pipeline
         if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
             return self._add_to_slave(pipeline, torrent_bytes)
@@ -223,7 +227,8 @@ class TorrentPipelineService:
             self._db.refresh(pipeline)
             if pipeline.status in self._TERMINAL_OK:
                 self._add_log(
-                    f"Pipeline {pipeline.id}: пропуск race/повтор, status={pipeline.status}"
+                    f"Pipeline {pipeline.id}: пропуск race/повтор, status={pipeline.status}",
+                    "debug",
                 )
                 return pipeline
             if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
@@ -233,7 +238,7 @@ class TorrentPipelineService:
             )
 
         pipeline = claimed
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}")
+        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
         return self._add_to_slave(pipeline, torrent_bytes)
 
     def _add_to_slave(self, pipeline: TorrentPipeline, torrent_bytes: bytes) -> TorrentPipeline:
@@ -261,10 +266,14 @@ class TorrentPipelineService:
                 category=category,
             )
             if added_new:
-                self._add_log(f"Pipeline {pipeline.id}: torrent_id={pipeline.torrent_id} добавлен в slave")
+                self._add_log(
+                    f"Pipeline {pipeline.id}: torrent_id={pipeline.torrent_id} добавлен в slave",
+                    "debug",
+                )
             else:
                 self._add_log(
-                    f"Pipeline {pipeline.id}: torrent_id={pipeline.torrent_id} уже есть в slave (Conflict)"
+                    f"Pipeline {pipeline.id}: torrent_id={pipeline.torrent_id} уже есть в slave (Conflict)",
+                    "debug",
                 )
             self.mark_slave_added(pipeline)
             return self.mark_done(pipeline)
@@ -284,19 +293,54 @@ class TorrentPipelineService:
             .order_by(TorrentArchive.id.desc())
             .limit(1)
         )
-        if archive is None:
-            return None, None, None
-        rename = build_qb_torrent_name_from_archive(
-            anime_name=archive.anime_name,
-            torrent_description=archive.torrent_description,
-            torrent_type=archive.torrent_type,
-            quality_json=archive.quality_json if isinstance(archive.quality_json, dict) else None,
+        rename: str | None = None
+        category: str | None = None
+        alias_candidates: list[str | None] = []
+
+        if archive is not None:
+            rename = build_qb_torrent_name_from_archive(
+                anime_name=archive.anime_name,
+                torrent_description=archive.torrent_description,
+                torrent_type=archive.torrent_type,
+                quality_json=archive.quality_json if isinstance(archive.quality_json, dict) else None,
+            )
+            category = archive.category
+            alias_candidates.append(archive.release_alias)
+
+        sibling_alias = self._db.scalar(
+            select(TorrentArchive.release_alias)
+            .where(
+                TorrentArchive.release_id == pipeline.release_id,
+                TorrentArchive.release_alias.isnot(None),
+                TorrentArchive.release_alias != "",
+            )
+            .limit(1)
         )
-        comment = build_release_torrents_url(
-            archive.release_alias,
+        if isinstance(sibling_alias, str):
+            alias_candidates.append(sibling_alias)
+
+        extra_alias = self._db.scalar(
+            select(ExtraUrl.release_alias)
+            .where(
+                ExtraUrl.release_id == pipeline.release_id,
+                ExtraUrl.enabled.is_(True),
+            )
+            .limit(1)
+        )
+        if isinstance(extra_alias, str):
+            alias_candidates.append(extra_alias)
+
+        comment = first_release_torrents_url(
+            *alias_candidates,
             site_url=resolve_anilibria_site_url(),
         )
-        return rename, comment, archive.category
+        if comment is None:
+            self._add_log(
+                f"Pipeline {pipeline.id}: нет alias для comment "
+                f"(release_id={pipeline.release_id}, torrent_id={pipeline.torrent_id})",
+                "warning",
+            )
+        return rename, comment, category
 
     def load_torrent_bytes_from_archive(self, pipeline: TorrentPipeline) -> bytes | None:
         """Берёт .torrent из локального архива (предпочтительно для slave)."""

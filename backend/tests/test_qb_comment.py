@@ -4,7 +4,11 @@ import pytest
 from qbittorrentapi.exceptions import HTTP404Error, UnsupportedQbittorrentVersion
 
 from app.services import qbittorrent as qb_mod
-from app.services.qbittorrent import _ensure_torrent_comment, qb_add_torrent
+from app.services.qbittorrent import (
+    _ensure_torrent_comment,
+    collect_client_info_hashes,
+    qb_add_torrent,
+)
 
 
 def _sample_torrent_bytes() -> bytes:
@@ -36,12 +40,8 @@ def test_ensure_comment_retries_404_then_overwrites(monkeypatch: pytest.MonkeyPa
 def test_ensure_comment_overwrites_existing_nonempty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Уже заполненный comment из .torrent должен быть перезаписан URL релиза."""
     client = MagicMock()
-    props_old = MagicMock()
-    props_old.comment = "old embedded comment"
     props_new = MagicMock()
     props_new.comment = "https://www.anilibria.top/anime/releases/release/x/torrents"
-    client.torrents_properties.side_effect = [props_old, props_new]
-    # После set_comment читаем ещё раз в том же attempt — вернём желаемое.
     client.torrents_properties.side_effect = [props_new]
     monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
 
@@ -64,6 +64,33 @@ def test_ensure_comment_unsupported_version() -> None:
     qb_mod._comment_unsupported_warned = False
 
     assert _ensure_torrent_comment(client, "c" * 40, "https://example/x") is False
+
+
+def test_ensure_comment_require_present_skips_missing() -> None:
+    client = MagicMock()
+    client.torrents_info.return_value = []
+
+    assert (
+        _ensure_torrent_comment(
+            client,
+            "d" * 40,
+            "https://example/x",
+            require_present=True,
+        )
+        is False
+    )
+    client.torrents_set_comment.assert_not_called()
+
+
+def test_collect_client_info_hashes_includes_v1() -> None:
+    client = MagicMock()
+    t1 = MagicMock()
+    t1.hash = "A" * 40
+    t1.infohash_v1 = "B" * 40
+    t1.infohash_v2 = None
+    client.torrents_info.return_value = [t1]
+
+    assert collect_client_info_hashes(client) == {"a" * 40, "b" * 40}
 
 
 def test_qb_add_torrent_sets_comment_even_when_already_present(monkeypatch: pytest.MonkeyPatch) -> None:

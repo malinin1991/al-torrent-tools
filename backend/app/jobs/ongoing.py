@@ -113,6 +113,10 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
 
     total = len(unique_releases)
     skipped_unchanged = 0
+    processed = 0
+    total_stats = TorrentProcessor.empty_release_stats()
+    batch_stats = TorrentProcessor.empty_release_stats()
+    batch_releases = 0
     _add_log(db, job_id, f"Ongoing: найдено релизов {total}")
     for index, ref in enumerate(unique_releases.values(), start=1):
         if should_skip_unchanged(
@@ -131,24 +135,52 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
             )
             continue
 
+        processed += 1
+        batch_releases += 1
         _add_log(
             db,
             job_id,
             f"Ongoing: обработка релиза {index}/{total} (id={ref.release_id}, alias={ref.alias or '-'})",
             level="debug",
         )
-        await processor.process_release(
+        part = await processor.process_release(
             release_id=ref.release_id,
             release_alias=ref.alias,
             list_updated_at=ref.updated_at,
             list_fresh_at=ref.fresh_at,
         )
-        if pause_every > 0 and pause_sec > 0 and index % pause_every == 0 and index < total:
-            _add_log(db, job_id, f"Ongoing: пауза {pause_sec} сек после {index} релизов")
+        TorrentProcessor.merge_release_stats(batch_stats, part)
+        TorrentProcessor.merge_release_stats(total_stats, part)
+
+        if pause_every > 0 and pause_sec > 0 and processed % pause_every == 0 and index < total:
+            _add_log(
+                db,
+                job_id,
+                TorrentProcessor.format_batch_summary(
+                    "Ongoing: сводка",
+                    batch_stats,
+                    releases=batch_releases,
+                ),
+            )
+            batch_stats = TorrentProcessor.empty_release_stats()
+            batch_releases = 0
+            _add_log(db, job_id, f"Ongoing: пауза {pause_sec} сек после {processed} обработанных релизов")
             await asyncio.sleep(pause_sec)
+
+    if batch_releases > 0:
+        _add_log(
+            db,
+            job_id,
+            TorrentProcessor.format_batch_summary(
+                "Ongoing: сводка",
+                batch_stats,
+                releases=batch_releases,
+            ),
+        )
 
     _add_log(
         db,
         job_id,
-        f"Ongoing: готово, релизов={total}, пропущено без изменений (по markers)={skipped_unchanged}",
+        f"Ongoing: готово, релизов={total}, пропущено без изменений (по markers)={skipped_unchanged}, "
+        + TorrentProcessor.format_batch_summary("итого", total_stats, releases=processed),
     )

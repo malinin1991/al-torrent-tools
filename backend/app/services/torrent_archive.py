@@ -217,7 +217,9 @@ class TorrentArchiveService:
             archive.info_hash = safe_hash
             archive.torrent_id = torrent_id
             archive.release_id = release_id
-            archive.release_alias = release_alias
+            # Не затираем уже сохранённый alias пустым значением — иначе slave/retry без URL.
+            if release_alias:
+                archive.release_alias = release_alias
             archive.anime_name = self._extract_anime_name(release_payload)
             archive.category = self._build_category(release_payload)
             archive.description = self._clean_text(release_payload.get("description"))

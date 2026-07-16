@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import JobLog, Setting
-from app.services.release_checkpoint import normalize_api_datetime, should_skip_unchanged
+from app.services.release_checkpoint import normalize_api_datetime
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
 
@@ -51,6 +51,24 @@ def _extract_total_pages(payload: Any) -> int:
     return 1
 
 
+def _flush_batch_summary(
+    db: Session,
+    job_id: int,
+    *,
+    prefix: str,
+    batch: dict[str, int],
+    releases: int,
+) -> dict[str, int]:
+    if releases <= 0:
+        return TorrentProcessor.empty_release_stats()
+    _add_log(
+        db,
+        job_id,
+        TorrentProcessor.format_batch_summary(prefix, batch, releases=releases),
+    )
+    return TorrentProcessor.empty_release_stats()
+
+
 async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> None:
     _ = params
     _add_log(db, job_id, "Full sync: инициализация клиента AniLibria и TorrentProcessor")
@@ -62,7 +80,10 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     page = 1
     total_pages = 1
     processed_releases = 0
-    skipped_unchanged = 0
+    total_stats = TorrentProcessor.empty_release_stats()
+    batch_stats = TorrentProcessor.empty_release_stats()
+    batch_releases = 0
+
     while page <= total_pages:
         payload = await al_client.catalog_releases(
             page=page,
@@ -70,48 +91,77 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
         )
         total_pages = _extract_total_pages(payload)
         releases = _extract_list(payload)
-        _add_log(db, job_id, f"Full sync: страница {page}/{total_pages}, релизов на странице: {len(releases)}")
+        _add_log(
+            db,
+            job_id,
+            f"Full sync: страница {page}/{total_pages}, релизов на странице: {len(releases)}",
+            level="debug",
+        )
 
         for release in releases:
             release_id = release.get("id")
             if not isinstance(release_id, int):
                 continue
             processed_releases += 1
+            batch_releases += 1
             release_alias = release.get("alias") if isinstance(release.get("alias"), str) else None
             updated_at = normalize_api_datetime(release.get("updated_at"))
             fresh_at = normalize_api_datetime(release.get("fresh_at"))
 
-            if should_skip_unchanged(db, release_id, updated_at=updated_at, fresh_at=fresh_at):
-                skipped_unchanged += 1
-                _add_log(
-                    db,
-                    job_id,
-                    f"Full sync: пропуск без изменений id={release_id}",
-                    level="debug",
-                )
-                continue
-
+            # Не пропускаем по markers: нужно обновить comment у уже известных торрентов.
             _add_log(
                 db,
                 job_id,
                 f"Full sync: обработка релиза id={release_id}, alias={release_alias or '-'} (#{processed_releases})",
                 level="debug",
             )
-            await processor.process_release(
+            part = await processor.process_release(
                 release_id=release_id,
                 release_alias=release_alias,
                 list_updated_at=updated_at,
                 list_fresh_at=fresh_at,
+                refresh_qb_meta=True,
             )
+            TorrentProcessor.merge_release_stats(batch_stats, part)
+            TorrentProcessor.merge_release_stats(total_stats, part)
 
             if pause_every > 0 and pause_sec > 0 and processed_releases % pause_every == 0:
-                _add_log(db, job_id, f"Full sync: пауза {pause_sec} сек после {processed_releases} релизов")
+                batch_stats = _flush_batch_summary(
+                    db,
+                    job_id,
+                    prefix="Full sync: сводка",
+                    batch=batch_stats,
+                    releases=batch_releases,
+                )
+                batch_releases = 0
+                _add_log(
+                    db,
+                    job_id,
+                    f"Full sync: пауза {pause_sec} сек после {processed_releases} релизов",
+                )
                 await asyncio.sleep(pause_sec)
         page += 1
+
+    if batch_releases > 0:
+        _flush_batch_summary(
+            db,
+            job_id,
+            prefix="Full sync: сводка",
+            batch=batch_stats,
+            releases=batch_releases,
+        )
 
     _add_log(
         db,
         job_id,
-        f"Full sync: готово, просмотрено={processed_releases}, "
-        f"пропущено без изменений (по markers)={skipped_unchanged}",
+        "Full sync: финальный backfill comment из torrent_archive на master/slave",
+    )
+    backfill = processor.backfill_qb_comments_from_archive()
+    _add_log(
+        db,
+        job_id,
+        "Full sync: готово, "
+        + TorrentProcessor.format_batch_summary("итого", total_stats, releases=processed_releases)
+        + f"; backfill comments: архивов={backfill['archives']}, "
+        f"обновлено={backfill['updated']}, пропущено={backfill['missing']}",
     )

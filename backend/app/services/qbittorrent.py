@@ -271,6 +271,35 @@ def _apply_torrent_rename(client: qbittorrentapi.Client, info_hash: str, rename:
         logger.warning("Не удалось переименовать торрент %s: %s", info_hash[:8], exc)
 
 
+def _torrent_hash_fields(torrent: object) -> list[str]:
+    """Все известные hash-поля записи torrents/info (v1/v2/hybrid)."""
+    keys = ("hash", "infohash_v1", "infohash_v2")
+    values: list[str] = []
+    for key in keys:
+        raw = getattr(torrent, key, None)
+        if raw is None and isinstance(torrent, dict):
+            raw = torrent.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip().lower()
+        if text and text not in values:
+            values.append(text)
+    return values
+
+
+def collect_client_info_hashes(client: qbittorrentapi.Client) -> set[str]:
+    """Множество info_hash, которые сейчас есть в qB (включая v1/v2)."""
+    found: set[str] = set()
+    torrents = client.torrents_info()
+    for torrent in torrents or []:
+        for value in _torrent_hash_fields(torrent):
+            try:
+                found.add(sanitize_info_hash(value))
+            except ValueError:
+                continue
+    return found
+
+
 def _ensure_torrent_comment(
     client: qbittorrentapi.Client,
     info_hash: str,
@@ -278,18 +307,35 @@ def _ensure_torrent_comment(
     *,
     attempts: int = 6,
     delay_sec: float = 0.35,
+    require_present: bool = False,
 ) -> bool:
-    """Принудительно ставит comment (перезапись), с ретраями на 404 сразу после add."""
+    """Принудительно ставит comment (перезапись), с ретраями на 404 сразу после add.
+
+    require_present=True — сразу False, если торрента нет в клиенте (для массового backfill).
+    """
     global _comment_unsupported_warned
     desired = (comment or "").strip()
     if not desired:
         return False
 
+    try:
+        safe_hash = sanitize_info_hash(info_hash)
+    except ValueError:
+        return False
+
+    if require_present:
+        try:
+            present = bool(client.torrents_info(torrent_hashes=safe_hash))
+        except Exception:
+            present = True
+        if not present:
+            return False
+
     last_exc: BaseException | None = None
     for attempt in range(1, attempts + 1):
         try:
-            client.torrents_set_comment(comment=desired, torrent_hashes=info_hash)
-            current = _read_torrent_comment(client, info_hash)
+            client.torrents_set_comment(comment=desired, torrent_hashes=safe_hash)
+            current = _read_torrent_comment(client, safe_hash)
             if current is None or current == desired:
                 return True
             # API принял запрос, но UI ещё отдаёт старый comment из .torrent — повторим.
@@ -308,6 +354,8 @@ def _ensure_torrent_comment(
                         "Комментарий торрента недоступен (нужен qBittorrent ≥ 5.2 / WebAPI 2.12.1)"
                     )
                 return False
+            if require_present and isinstance(exc, (qb_exc.NotFound404Error, qb_exc.HTTP404Error)):
+                return False
         except Exception as exc:
             last_exc = exc
 
@@ -316,7 +364,7 @@ def _ensure_torrent_comment(
 
     logger.warning(
         "Не удалось установить comment для %s после %s попыток: %s",
-        info_hash[:8],
+        safe_hash[:8],
         attempts,
         last_exc,
     )

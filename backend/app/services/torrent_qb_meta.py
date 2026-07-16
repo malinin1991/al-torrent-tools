@@ -33,6 +33,18 @@ def build_release_torrents_url(release_alias: str | None, *, site_url: str | Non
     return f"{root}/anime/releases/release/{alias}/torrents"
 
 
+def first_release_torrents_url(
+    *aliases: str | None,
+    site_url: str | None = None,
+) -> str | None:
+    """Первый валидный URL релиза из списка alias-кандидатов."""
+    for alias in aliases:
+        url = build_release_torrents_url(alias, site_url=site_url)
+        if url:
+            return url
+    return None
+
+
 def _clean(value: Any) -> str | None:
     if isinstance(value, str):
         text = value.strip()

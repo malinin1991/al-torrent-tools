@@ -3,6 +3,7 @@ from app.services.torrent_qb_meta import (
     build_qb_torrent_name,
     build_qb_torrent_name_from_payloads,
     build_release_torrents_url,
+    first_release_torrents_url,
 )
 
 
@@ -33,6 +34,17 @@ def test_build_qb_torrent_name_from_payloads() -> None:
 
 def test_build_release_torrents_url() -> None:
     url = build_release_torrents_url("lets-go-kaiki-gumi", site_url="https://www.anilibria.top")
+    assert url == "https://www.anilibria.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
+
+
+def test_first_release_torrents_url_skips_empty() -> None:
+    url = first_release_torrents_url(
+        None,
+        "",
+        "  ",
+        "lets-go-kaiki-gumi",
+        site_url="https://www.anilibria.top",
+    )
     assert url == "https://www.anilibria.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
 
 
