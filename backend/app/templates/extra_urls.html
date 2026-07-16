@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Extra URLs</h1>
+<div class="card">
+  <form hx-post="/extra-urls/save" hx-target="#extra-urls-table" hx-swap="innerHTML">
+    <div class="grid">
+      <label>Alias
+        <input class="input" name="release_alias" required />
+      </label>
+      <label>Release ID
+        <input class="input" name="release_id" />
+      </label>
+      <label>Note
+        <input class="input" name="note" />
+      </label>
+      <label style="display:flex; align-items:center; gap:8px; margin-top: 20px;">
+        <input type="checkbox" name="enabled" checked /> enabled
+      </label>
+    </div>
+    <button class="btn" type="submit" style="margin-top: 12px;">Добавить</button>
+  </form>
+</div>
+<div class="card" id="extra-urls-table">
+  {% include "partials/extra_urls_table.html" %}
+</div>
+{% endblock %}

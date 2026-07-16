@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Jobs</h1>
+<div class="card" style="margin-bottom:12px;">
+  <form method="get" action="/jobs" class="row">
+    <input class="input" style="max-width:180px;" name="job_type" placeholder="type" value="{{ job_type }}" />
+    <input class="input" style="max-width:180px;" name="status" placeholder="status" value="{{ status }}" />
+    <button class="btn" type="submit">Фильтр</button>
+    <span class="muted" id="jobs-poll-hint">обновление каждые 2 с</span>
+  </form>
+</div>
+<div
+  id="jobs-live"
+  hx-get="/jobs/live?job_type={{ job_type }}&status={{ status }}{% if selected_job %}&job_id={{ selected_job.id }}{% endif %}"
+  hx-trigger="every 2s [document.visibilityState=='visible']"
+  hx-swap="innerHTML"
+>
+  {% include "partials/jobs_live.html" %}
+</div>
+<script>
+function copyJobLogs() {
+  const panel = document.getElementById("job-logs-panel");
+  const status = document.getElementById("copy-logs-status");
+  if (!panel) return;
+  const lines = [...panel.querySelectorAll(".log-line")].map((row) => {
+    const ts = row.querySelector(".log-ts")?.textContent?.trim() || "";
+    const level = row.querySelector(".log-level")?.textContent?.trim() || "";
+    const msg = row.querySelector(".log-msg")?.textContent?.trim() || "";
+    return `${ts} [${level}] ${msg}`;
+  });
+  const text = lines.join("\n");
+  const onSuccess = () => {
+    if (status) {
+      status.hidden = false;
+      setTimeout(() => { status.hidden = true; }, 2000);
+    }
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(onSuccess).catch(() => fallbackCopy(text, onSuccess));
+  } else {
+    fallbackCopy(text, onSuccess);
+  }
+}
+function fallbackCopy(text, onSuccess) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.appendChild(area);
+  area.select();
+  try {
+    document.execCommand("copy");
+    onSuccess();
+  } finally {
+    document.body.removeChild(area);
+  }
+}
+
+(function () {
+  const root = document.getElementById("jobs-live");
+  if (!root) return;
+  let savedScroll = 0;
+  let stickToNewest = true;
+  root.addEventListener("htmx:beforeRequest", () => {
+    const panel = document.getElementById("job-logs-panel");
+    if (!panel) return;
+    savedScroll = panel.scrollTop;
+    stickToNewest = panel.scrollTop < 48;
+  });
+  root.addEventListener("htmx:afterSwap", () => {
+    const panel = document.getElementById("job-logs-panel");
+    if (!panel) return;
+    panel.scrollTop = stickToNewest ? 0 : savedScroll;
+  });
+})();
+</script>
+{% endblock %}

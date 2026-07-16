@@ -1,0 +1,39 @@
+<table>
+  <thead>
+    <tr><th>ID</th><th>Alias</th><th>Release ID</th><th>Note</th><th>Enabled</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td>{{ row.id }}</td>
+      <td colspan="5">
+        <form
+          hx-post="/extra-urls/save"
+          hx-target="#extra-urls-table"
+          hx-swap="innerHTML"
+          class="row"
+          style="flex-wrap:wrap;"
+        >
+          <input type="hidden" name="row_id" value="{{ row.id }}" />
+
+          <input class="input" style="max-width:240px;" name="release_alias" value="{{ row.release_alias }}" />
+          <input class="input" style="max-width:140px;" name="release_id" value="{{ row.release_id or '' }}" />
+          <input class="input" style="max-width:320px;" name="note" value="{{ row.note or '' }}" />
+          <label style="display:flex; align-items:center; gap:8px; white-space:nowrap;">
+            <input type="checkbox" name="enabled" value="on" {% if row.enabled %}checked{% endif %} />
+            enabled
+          </label>
+
+          <button class="btn" type="submit">Обновить</button>
+        </form>
+
+        <form hx-post="/extra-urls/{{ row.id }}/delete" hx-target="#extra-urls-table" hx-swap="innerHTML" style="margin-top:8px;">
+          <button class="btn btn-danger" type="submit">Удалить</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">Записей нет</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

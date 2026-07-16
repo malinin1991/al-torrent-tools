@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Настройки</h1>
+<form hx-post="/settings" hx-target="#settings-result" hx-swap="innerHTML">
+  <section class="settings-group card">
+    <h2>AniLiberty API</h2>
+    <p class="muted">Авторизация: <code>POST /accounts/users/auth/login</code> — см. <a href="https://anilibria.top/api/docs/v1" target="_blank" rel="noopener">документацию API</a>.</p>
+    <div class="grid">
+      <label>Основной URL API
+        <input class="input" name="anilibria_base_url" value="{{ settings_map.get('anilibria_base_url', '') }}" placeholder="https://anilibria.top/api/v1" />
+      </label>
+      <label>Резервный URL API
+        <input class="input" name="anilibria_fallback_base_url" value="{{ settings_map.get('anilibria_fallback_base_url', '') }}" />
+      </label>
+      <label>Логин
+        <input class="input" name="anilibria_login" value="{{ settings_map.get('anilibria_login', '') }}" autocomplete="username" />
+      </label>
+      <label>Пароль
+        <input class="input" type="password" name="anilibria_password" value="" placeholder="Оставьте пустым, чтобы не менять" autocomplete="current-password" />
+      </label>
+      <label>Bearer token (вручную, опционально)
+        <input class="input" type="password" name="anilibria_bearer_token" value="" placeholder="Оставьте пустым, чтобы не менять" />
+      </label>
+      <div class="settings-hint">
+        {% if has_anilibria_token %}
+        <span class="badge badge-ok">Токен сохранён</span>
+        {% else %}
+        <span class="badge badge-warn">Токен не задан</span>
+        {% endif %}
+        {% if has_anilibria_passkey %}
+        <span class="badge badge-ok">Passkey (pk) сохранён</span>
+        {% else %}
+        <span class="badge badge-warn">Passkey не задан</span>
+        {% endif %}
+        <button class="btn" type="button" hx-post="/settings/anilibria-login" hx-include="closest form" hx-target="#settings-result" hx-swap="innerHTML">Войти в API</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-group card">
+    <h2>qBittorrent — master</h2>
+    <div class="grid">
+      <label>Хост
+        <input class="input" name="qb_master_host" value="{{ settings_map.get('qb_master_host', '') }}" />
+      </label>
+      <label>Порт
+        <input class="input" name="qb_master_port" value="{{ settings_map.get('qb_master_port', '8080') }}" />
+      </label>
+      <label>Логин
+        <input class="input" name="qb_master_username" value="{{ settings_map.get('qb_master_username', '') }}" autocomplete="username" />
+      </label>
+      <label>Пароль
+        <input class="input" type="password" name="qb_master_password" value="" placeholder="Оставьте пустым, чтобы не менять" autocomplete="current-password" />
+      </label>
+      <div class="settings-hint">
+        <button
+          class="btn btn-secondary"
+          type="button"
+          hx-post="/settings/qb-test/master"
+          hx-include="closest form"
+          hx-target="#settings-result"
+          hx-swap="innerHTML"
+        >Проверить подключение master</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-group card">
+    <h2>qBittorrent — slave</h2>
+    <div class="grid">
+      <label>Хост
+        <input class="input" name="qb_slave_host" value="{{ settings_map.get('qb_slave_host', '') }}" />
+      </label>
+      <label>Порт
+        <input class="input" name="qb_slave_port" value="{{ settings_map.get('qb_slave_port', '8080') }}" />
+      </label>
+      <label>Логин
+        <input class="input" name="qb_slave_username" value="{{ settings_map.get('qb_slave_username', '') }}" autocomplete="username" />
+      </label>
+      <label>Пароль
+        <input class="input" type="password" name="qb_slave_password" value="" placeholder="Оставьте пустым, чтобы не менять" autocomplete="current-password" />
+      </label>
+      <div class="settings-hint">
+        <button
+          class="btn btn-secondary"
+          type="button"
+          hx-post="/settings/qb-test/slave"
+          hx-include="closest form"
+          hx-target="#settings-result"
+          hx-swap="innerHTML"
+        >Проверить подключение slave</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-group card">
+    <h2>Джобы и интервалы</h2>
+    <div class="grid">
+      <label>Количество релизов до паузы
+        <input class="input" name="scrape_pause_every" value="{{ settings_map.get('scrape_pause_every', '10') }}" />
+      </label>
+      <label>Длительность паузы, сек
+        <input class="input" name="scrape_pause_sec" value="{{ settings_map.get('scrape_pause_sec', '2') }}" />
+      </label>
+      <label>Интервал ongoing, сек
+        <input class="input" name="ongoing_interval_sec" value="{{ settings_map.get('ongoing_interval_sec', '120') }}" />
+      </label>
+      <label>Интервал cleanup, сек
+        <input class="input" name="cleanup_interval_sec" value="{{ settings_map.get('cleanup_interval_sec', '3600') }}" />
+      </label>
+      <label>Возраст master для polling fallback, мин
+        <input class="input" name="pipeline_master_min_age_min" value="{{ settings_map.get('pipeline_master_min_age_min', '5') }}" />
+      </label>
+    </div>
+  </section>
+
+  <div style="margin-top: 12px;">
+    <button class="btn" type="submit">Сохранить все настройки</button>
+  </div>
+</form>
+<div id="settings-result" class="muted" style="margin-top: 8px;"></div>
+
+<section class="settings-group card">
+  <h2>Обслуживание базы</h2>
+  <p class="muted">Сброс состояния для перезапуска мониторинга. Настройки, extra URLs и правила cleanup сохраняются.</p>
+  <div class="row" style="flex-wrap: wrap;">
+    <button
+      class="btn btn-secondary"
+      type="button"
+      hx-post="/settings/reset-state"
+      hx-target="#settings-result"
+      hx-swap="innerHTML"
+      hx-confirm="Сбросить джобы, seen_torrents и pipeline? Архив .torrent и файлы на диске сохранятся."
+    >Сброс состояния (архив сохранить)</button>
+    <button
+      class="btn btn-danger"
+      type="button"
+      hx-post="/settings/reset-full"
+      hx-target="#settings-result"
+      hx-swap="innerHTML"
+      hx-confirm="ПОЛНАЯ очистка: архив, .torrent файлы, джобы, pipeline и seen. Это необратимо. Продолжить?"
+    >Полная очистка</button>
+  </div>
+</section>
+{% endblock %}

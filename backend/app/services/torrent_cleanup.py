@@ -1,0 +1,190 @@
+from types import SimpleNamespace
+from typing import Any
+
+import qbittorrentapi
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db.models import CleanupRule, JobLog, QbClient
+
+
+def _tracker_list(trackers: Any) -> list[Any]:
+    """Нормализует ответ qbittorrent-api: List / .data / обычный list."""
+    if trackers is None:
+        return []
+    data = getattr(trackers, "data", None)
+    if data is not None:
+        return list(data)
+    try:
+        return list(trackers)
+    except TypeError:
+        return []
+
+
+def _tracker_matches_rule(tracker: Any, rule: CleanupRule) -> bool:
+    """Как в qBittorrent-AL-remove-old: status==4, host в url, текст в msg."""
+    try:
+        status = int(getattr(tracker, "status", -1))
+    except (TypeError, ValueError):
+        return False
+    if status != 4:
+        return False
+
+    url = str(getattr(tracker, "url", "") or "").casefold()
+    message = str(
+        getattr(tracker, "msg", None) or getattr(tracker, "message", None) or ""
+    ).casefold()
+    host = (rule.tracker_host or "").strip().casefold()
+    needle = (rule.message_contains or "").strip().casefold()
+    if not host or not needle:
+        return False
+    return host in url and needle in message
+
+
+def find_removable_torrents(
+    torrent_list: list[Any],
+    rules: list[CleanupRule],
+) -> list[dict[str, Any]]:
+    removable: dict[str, dict[str, Any]] = {}
+    for torrent in torrent_list:
+        torrent_hash = str(getattr(torrent, "hash", "")).lower()
+        if not torrent_hash:
+            continue
+
+        state_enum = getattr(torrent, "state_enum", None)
+        trackers = _tracker_list(getattr(torrent, "trackers", None))
+
+        for rule in rules:
+            should_remove = False
+            reason = ""
+            if rule.include_errored and bool(getattr(state_enum, "is_errored", False)):
+                should_remove = True
+                reason = "errored"
+            else:
+                for tracker in trackers:
+                    if _tracker_matches_rule(tracker, rule):
+                        should_remove = True
+                        reason = "tracker"
+                        break
+            if should_remove:
+                current = removable.get(torrent_hash)
+                if current is None:
+                    removable[torrent_hash] = {
+                        "hash": torrent_hash,
+                        "name": str(getattr(torrent, "name", torrent_hash)),
+                        "delete_files": bool(rule.delete_files),
+                        "reason": reason,
+                    }
+                elif rule.delete_files:
+                    current["delete_files"] = True
+    return list(removable.values())
+
+
+class TorrentCleanupService:
+    def __init__(self, db: Session, job_id: int) -> None:
+        self._db = db
+        self._job_id = job_id
+
+    def _add_log(self, message: str, level: str = "info") -> None:
+        self._db.add(JobLog(job_id=self._job_id, level=level, message=message))
+        self._db.commit()
+
+    def add_log(self, message: str, level: str = "info") -> None:
+        self._add_log(message=message, level=level)
+
+    def _get_clients_by_target(self, target: str) -> list[QbClient]:
+        query = select(QbClient).where(QbClient.enabled.is_(True))
+        if target == "both":
+            query = query.where(QbClient.role.in_(("master", "slave")))
+        else:
+            query = query.where(QbClient.role == target)
+        return list(self._db.scalars(query).all())
+
+    def _enrich_with_trackers(self, client: qbittorrentapi.Client, torrents: list[Any]) -> list[Any]:
+        """torrents/info не отдаёт трекеры — подгружаем torrents_trackers по каждому hash."""
+        enriched: list[Any] = []
+        for torrent in torrents:
+            torrent_hash = str(getattr(torrent, "hash", ""))
+            try:
+                trackers = list(client.torrents_trackers(torrent_hash=torrent_hash))
+            except Exception as exc:  # noqa: BLE001 — лог и пропуск одного торрента
+                self._add_log(
+                    f"Cleanup: не удалось получить trackers для {torrent_hash}: {exc}",
+                    "warning",
+                )
+                trackers = []
+            enriched.append(
+                SimpleNamespace(
+                    hash=torrent_hash,
+                    name=getattr(torrent, "name", torrent_hash),
+                    state_enum=getattr(torrent, "state_enum", None),
+                    trackers=trackers,
+                )
+            )
+        return enriched
+
+    def run(self, dry_run: bool = True) -> dict[str, int]:
+        rules = self._db.scalars(select(CleanupRule).where(CleanupRule.enabled.is_(True))).all()
+        if not rules:
+            self._add_log("Cleanup: нет активных правил")
+            return {"checked": 0, "matched": 0, "deleted": 0}
+
+        checked = 0
+        matched = 0
+        deleted = 0
+        for rule in rules:
+            if rule.target_client not in {"master", "slave", "both"}:
+                self._add_log(
+                    f"Cleanup: правило {rule.id} пропущено, неверный target_client={rule.target_client}",
+                    "warning",
+                )
+                continue
+            clients = self._get_clients_by_target(rule.target_client)
+            if not clients:
+                self._add_log(f"Cleanup: нет активных клиентов для правила {rule.id}")
+                continue
+
+            for db_client in clients:
+                client = qbittorrentapi.Client(
+                    host=db_client.host,
+                    port=db_client.port,
+                    username=db_client.username,
+                    password=db_client.password_encrypted,
+                )
+                client.auth_log_in()
+                torrents = self._enrich_with_trackers(client, list(client.torrents_info()))
+                checked += len(torrents)
+                self._add_log(
+                    f"Cleanup: клиент {db_client.role}/{db_client.name}, "
+                    f"загружено торрентов {len(torrents)} для правила {rule.name} "
+                    f"(host={rule.tracker_host!r}, msg={rule.message_contains!r})"
+                )
+                removable = find_removable_torrents(torrents, [rule])
+                matched += len(removable)
+                if not removable:
+                    self._add_log(
+                        f"Cleanup: клиент {db_client.role}/{db_client.name}, "
+                        f"правило {rule.name} не нашло кандидатов"
+                    )
+                    continue
+
+                self._add_log(
+                    f"Cleanup: клиент {db_client.role}/{db_client.name}, "
+                    f"правило {rule.name} — найдено {len(removable)} торрентов"
+                )
+                if dry_run:
+                    for item in removable:
+                        self._add_log(
+                            f"Cleanup dry-run: {item['name']} ({item['hash']}) reason={item['reason']}"
+                        )
+                    continue
+
+                hashes_delete_files_true = [item["hash"] for item in removable if item["delete_files"]]
+                hashes_delete_files_false = [item["hash"] for item in removable if not item["delete_files"]]
+                if hashes_delete_files_true:
+                    client.torrents_delete(delete_files=True, torrent_hashes=hashes_delete_files_true)
+                    deleted += len(hashes_delete_files_true)
+                if hashes_delete_files_false:
+                    client.torrents_delete(delete_files=False, torrent_hashes=hashes_delete_files_false)
+                    deleted += len(hashes_delete_files_false)
+        return {"checked": checked, "matched": matched, "deleted": deleted}

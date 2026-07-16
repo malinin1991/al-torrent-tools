@@ -1,0 +1,46 @@
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Hash</th>
+      <th>Release ID</th>
+      <th>Torrent ID</th>
+      <th>Статус</th>
+      <th>На master</th>
+      <th>Добавлен в master</th>
+      <th>Добавлен в slave</th>
+      <th>Ошибка</th>
+      <th>Создан</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    {% set ms = master_states.get(row.info_hash.lower() if row.info_hash else '', {}) %}
+    <tr>
+      <td>{{ row.id }}</td>
+      <td>{{ row.info_hash }}</td>
+      <td>{{ row.release_id }}</td>
+      <td>{{ row.torrent_id }}</td>
+      <td><span class="job-status job-status-{{ row.status }}">{{ row.status }}</span></td>
+      <td>
+        {% if ms %}
+        <span class="master-state master-state-{{ ms.key }}"{% if ms.raw_state %} title="{{ ms.raw_state }}"{% endif %}>
+          {{ ms.label }}
+          {% if ms.key == 'downloading' and ms.progress is not none %}
+          {{ (ms.progress * 100)|round(0)|int }}%
+          {% endif %}
+        </span>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </td>
+      <td>{% if row.master_added_at %}<time class="local-time" datetime="{{ row.master_added_at|as_utc_iso }}">{{ row.master_added_at }}</time>{% else %}-{% endif %}</td>
+      <td>{% if row.slave_added_at %}<time class="local-time" datetime="{{ row.slave_added_at|as_utc_iso }}">{{ row.slave_added_at }}</time>{% else %}-{% endif %}</td>
+      <td>{{ row.error or "-" }}</td>
+      <td>{% if row.created_at %}<time class="local-time" datetime="{{ row.created_at|as_utc_iso }}">{{ row.created_at }}</time>{% else %}-{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10" class="muted">Записей пока нет</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

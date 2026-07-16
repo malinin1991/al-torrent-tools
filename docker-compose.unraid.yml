@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: altt_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: altt
+      POSTGRES_USER: altt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-altt}
+    volumes:
+      - altt_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U altt -d altt"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: registry.mageek.su/al-torrent-tools:latest
+    container_name: altt_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TORRENT_STORAGE_DIR: /app/data/torrents
+      APP_ENV: prod
+    volumes:
+      - /mnt/user/appdata/al-torrent-tools/torrents:/app/data/torrents
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command:
+      [
+        "sh",
+        "/app/scripts/entrypoint.sh",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
+
+  worker:
+    image: registry.mageek.su/al-torrent-tools:latest
+    container_name: altt_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TORRENT_STORAGE_DIR: /app/data/torrents
+      APP_ENV: prod
+    volumes:
+      - /mnt/user/appdata/al-torrent-tools/torrents:/app/data/torrents
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      ["sh", "/app/scripts/entrypoint.sh", "python", "worker.py"]
+
+volumes:
+  altt_pg_data:

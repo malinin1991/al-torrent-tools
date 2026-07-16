@@ -1,0 +1,53 @@
+from app.services.qbittorrent import ensure_announce_passkey
+from app.services.torrent_qb_meta import (
+    build_qb_torrent_name,
+    build_qb_torrent_name_from_payloads,
+    build_release_torrents_url,
+)
+
+
+def test_build_qb_torrent_name_full() -> None:
+    assert (
+        build_qb_torrent_name(
+            main_name="Блич",
+            original_name="Bleach",
+            episodes="1-189",
+            torrent_type="BDRip 1080p AVC",
+        )
+        == "Блич / Bleach (1-189) [BDRip 1080p AVC]"
+    )
+
+
+def test_build_qb_torrent_name_from_payloads() -> None:
+    name = build_qb_torrent_name_from_payloads(
+        {"name": {"main": "Мао", "english": "Mao"}},
+        {
+            "description": "1-12",
+            "type": {"value": "WEBRip"},
+            "quality": {"value": "1080p"},
+            "codec": {"label": "HEVC"},
+        },
+    )
+    assert name == "Мао / Mao (1-12) [WEBRip 1080p HEVC]"
+
+
+def test_build_release_torrents_url() -> None:
+    url = build_release_torrents_url("lets-go-kaiki-gumi", site_url="https://www.anilibria.top")
+    assert url == "https://www.anilibria.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
+
+
+def test_ensure_announce_passkey_injects_pk() -> None:
+    announce = b"http://tr.libria.fun:2710/announce"
+    info = b"d4:name4:test6:lengthi1ee"
+    torrent = b"d8:announce" + f"{len(announce)}:".encode() + announce + b"4:info" + info + b"e"
+    patched = ensure_announce_passkey(torrent, "XqvV10S2tvF5E4j2")
+    assert b"?pk=XqvV10S2tvF5E4j2" in patched
+    # info_hash не меняется
+    from app.services.qbittorrent import torrent_info_hash
+
+    assert torrent_info_hash(torrent) == torrent_info_hash(patched)
+
+
+def test_ensure_announce_passkey_noop_without_key() -> None:
+    raw = b"d8:announce34:http://tr.libria.fun:2710/announce4:infod4:name4:teste"
+    assert ensure_announce_passkey(raw, "") is raw

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Релизы</h1>
+<div class="card" style="margin-bottom:12px;">
+  <form method="get" action="/releases" class="row">
+    <input class="input" style="max-width:320px;" name="search" placeholder="Поиск по названию / alias" value="{{ search }}" />
+    <button class="btn" type="submit">Найти</button>
+  </form>
+  <p class="muted" style="margin:10px 0 0;">Релизов: {{ total }}. Страница {{ page }} из {{ total_pages }}. Сортировка — по последнему торренту.</p>
+</div>
+
+{% for group in groups %}
+<details class="release-block">
+  <summary class="release-summary">
+    <div class="release-title">
+      <strong>{{ group.anime_name or group.release_alias or ("Release #" ~ group.release_id) }}</strong>
+      {% if group.release_alias and group.anime_name %}
+      <span class="muted">{{ group.release_alias }}</span>
+      {% endif %}
+    </div>
+    <div class="release-meta muted">
+      <span>{{ group.torrent_count }} торр.</span>
+      {% if group.category %}<span>{{ group.category }}</span>{% endif %}
+      <span>
+        {% if group.last_updated %}
+        <time class="local-time" datetime="{{ group.last_updated|as_utc_iso }}">{{ group.last_updated }}</time>
+        {% else %}-{% endif %}
+      </span>
+    </div>
+  </summary>
+  <div class="release-body">
+    <div class="row" style="margin-bottom:10px; flex-wrap:wrap;">
+      <span class="muted">release_id={{ group.release_id }}</span>
+      {% if group.release_url %}
+      <a href="{{ group.release_url }}" target="_blank" rel="noopener">На AniLibria</a>
+      {% endif %}
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Тип</th>
+          <th>Серии</th>
+          <th>Размер</th>
+          <th>Pipeline</th>
+          <th>Добавлен</th>
+          <th>Hash</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in group.torrents %}
+        <tr>
+          <td>{{ t.torrent_type or "-" }}</td>
+          <td>{{ t.torrent_description or "-" }}</td>
+          <td>{{ t.file_size_label }}</td>
+          <td>
+            {% if t.pipeline_status %}
+            <span class="job-status job-status-{{ t.pipeline_status }}">{{ t.pipeline_status }}</span>
+            {% if t.pipeline_error %}<div class="muted">{{ t.pipeline_error }}</div>{% endif %}
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if t.created_at %}
+            <time class="local-time" datetime="{{ t.created_at|as_utc_iso }}">{{ t.created_at }}</time>
+            {% else %}-{% endif %}
+          </td>
+          <td><code>{{ t.info_hash[:12] }}…</code></td>
+          <td><a class="btn" href="/api/archive/{{ t.archive_id }}/download">Скачать</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="muted">Нет торрентов</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% else %}
+<div class="card"><p class="muted">Релизов пока нет.</p></div>
+{% endfor %}
+
+<div class="row" style="margin-top:12px;">
+  {% if page > 1 %}
+  <a class="btn" href="/releases?search={{ search }}&page={{ page - 1 }}">Назад</a>
+  {% endif %}
+  {% if page < total_pages %}
+  <a class="btn" href="/releases?search={{ search }}&page={{ page + 1 }}">Вперёд</a>
+  {% endif %}
+</div>
+{% endblock %}

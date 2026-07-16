@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Главная</h1>
+<div class="card">
+  <h3>Быстрые действия</h3>
+  <div class="row">
+    <button class="btn" hx-post="/actions/run/ongoing" hx-target="#action-result" hx-swap="innerHTML">Запустить ongoing</button>
+    <button class="btn" hx-post="/actions/run/full_sync" hx-target="#action-result" hx-swap="innerHTML">Запустить full sync</button>
+    <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML">
+      <input type="hidden" name="dry_run" value="true" />
+      <button class="btn" type="submit">Cleanup (dry-run)</button>
+    </form>
+    <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML">
+      <input type="hidden" name="dry_run" value="false" />
+      <button class="btn btn-danger" type="submit">Cleanup (удалить)</button>
+    </form>
+  </div>
+  <div id="action-result" class="muted" style="margin-top: 10px;"></div>
+</div>
+<div class="card">
+  <h3>Последние джобы <span class="muted" style="font-weight:normal;font-size:0.85rem;">автообновление</span></h3>
+  <div
+    id="dashboard-jobs-live"
+    hx-get="/dashboard/jobs-live"
+    hx-trigger="every 3s [document.visibilityState=='visible']"
+    hx-swap="innerHTML"
+  >
+    {% include "partials/dashboard_jobs.html" %}
+  </div>
+</div>
+{% endblock %}

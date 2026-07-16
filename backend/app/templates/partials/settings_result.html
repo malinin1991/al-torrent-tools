@@ -1,0 +1,3 @@
+<div class="card{% if ok is defined and ok %} badge-ok{% elif ok is defined and not ok %} badge-warn{% endif %}" style="{% if ok is defined and ok %}border-color:#2d5a3d;{% elif ok is defined and not ok %}border-color:#5a3d2d;{% endif %}">
+  {{ message }}
+</div>

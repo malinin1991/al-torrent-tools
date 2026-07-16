@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AL Torrent Tools</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #121212; color: #eee; }
+    header { padding: 12px 20px; background: #1f1f1f; }
+    nav a { color: #9ad1ff; margin-right: 16px; text-decoration: none; }
+    main { padding: 20px; }
+    .card { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 12px; }
+    .grid > .card { min-width: 0; overflow: hidden; }
+    .btn { background: #2c4f76; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    .btn-secondary { background: #3a3a3a; }
+    .btn-danger { background: #823b3b; }
+    .input, select, textarea { width: 100%; background: #101010; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { border-bottom: 1px solid #343434; padding: 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
+    .log-toolbar { justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; }
+    .log-toolbar h3 { margin: 0; }
+    .log-panel {
+      max-height: 70vh;
+      overflow: auto;
+      background: #101010;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+    .log-line { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid #1f1f1f; }
+    .log-line:last-child { border-bottom: 0; }
+    .log-ts { color: #8a8a8a; flex: 0 0 auto; white-space: nowrap; }
+    .log-level { flex: 0 0 56px; text-transform: lowercase; color: #9ad1ff; }
+    .log-msg { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
+    .log-level-error { color: #ff8a80; }
+    .log-level-warning { color: #ffcc80; }
+    .log-level-debug { color: #6a6a6a; }
+    .copy-status { font-size: 0.85rem; color: #8dffb0; }
+    .muted { color: #9b9b9b; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .settings-group h2 { margin: 0 0 12px; font-size: 1.1rem; color: #9ad1ff; }
+    .settings-group .grid { margin-top: 8px; }
+    .settings-hint { display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; }
+    .badge { display: inline-block; padding: 4px 8px; border-radius: 6px; font-size: 0.85rem; width: fit-content; }
+    .badge-ok { background: #1f3d2a; color: #8dffb0; }
+    .badge-warn { background: #3d2f1f; color: #ffcc80; }
+    .job-status-running, .job-status-discovered, .job-status-waiting_master, .job-status-waiting_slave, .job-status-master_added, .job-status-master_complete { color: #ffcc80; }
+    .job-status-success, .job-status-done, .job-status-slave_added { color: #8dffb0; }
+    .job-status-failed, .job-status-error { color: #ff8a80; }
+    .job-status-cancelled, .job-status-pending { color: #9b9b9b; }
+    .master-state-downloading { color: #9ad1ff; }
+    .master-state-seeding { color: #8dffb0; }
+    .master-state-stopped { color: #ffcc80; }
+    .master-state-error { color: #ff8a80; }
+    .master-state-missing, .master-state-unavailable { color: #9b9b9b; }
+    tr.row-selected td { background: #243044; }
+    a { color: #9ad1ff; }
+    code { background: #101010; padding: 2px 6px; border-radius: 4px; }
+    .release-block {
+      background: #1b1b1b;
+      border: 1px solid #333;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .release-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      align-items: baseline;
+      justify-content: space-between;
+      padding: 14px 16px;
+      user-select: none;
+    }
+    .release-summary::-webkit-details-marker { display: none; }
+    .release-summary::before {
+      content: "▸";
+      color: #9ad1ff;
+      margin-right: 8px;
+      flex: 0 0 auto;
+    }
+    details[open] > .release-summary::before { content: "▾"; }
+    .release-title { display: flex; flex-direction: column; gap: 2px; flex: 1 1 220px; min-width: 0; }
+    .release-meta { display: flex; flex-wrap: wrap; gap: 10px 14px; font-size: 0.9rem; }
+    .release-body { padding: 0 16px 16px; border-top: 1px solid #2a2a2a; }
+    .info-table { width: 100%; table-layout: auto; }
+    .info-table th {
+      width: 140px;
+      color: #9b9b9b;
+      font-weight: normal;
+      border-bottom: 1px solid #2a2a2a;
+      white-space: nowrap;
+    }
+    .info-table td { border-bottom: 1px solid #2a2a2a; }
+    .info-table tr:last-child th,
+    .info-table tr:last-child td { border-bottom: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <nav>
+      <a href="/">Главная</a>
+      <a href="/info">Информация</a>
+      <a href="/settings">Настройки</a>
+      <a href="/extra-urls">Доп. релизы</a>
+      <a href="/jobs">Джобы</a>
+      <a href="/releases">Релизы</a>
+      <a href="/archive">Архив</a>
+      <a href="/pipeline">Пайплайн</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <script>
+  function formatLocalTimes(root) {
+    const scope = root || document;
+    scope.querySelectorAll("time.local-time[datetime]").forEach((el) => {
+      const raw = el.getAttribute("datetime");
+      if (!raw) return;
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) return;
+      el.textContent = date.toLocaleString(undefined, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      el.title = date.toString();
+    });
+  }
+  document.addEventListener("DOMContentLoaded", () => formatLocalTimes());
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    formatLocalTimes(event.detail.target);
+  });
+  </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Пайплайн master -> slave</h1>
+<div class="card" style="margin-bottom:12px;">
+  <form method="get" action="/pipeline" class="row">
+    <input class="input" style="max-width:220px;" name="status" placeholder="Статус" value="{{ status }}" />
+    <button class="btn" type="submit">Фильтр</button>
+    <button
+      class="btn"
+      type="button"
+      hx-post="/pipeline/reconcile"
+      hx-target="#pipeline-reconcile-result"
+      hx-swap="innerHTML"
+      hx-confirm="Опросить master по всем pipeline без slave? Завершённые уйдут на slave, отсутствующие — cancelled."
+    >Сверить с master</button>
+    <span class="muted">обновление каждые 3 с · авто-сверка раз в сутки</span>
+  </form>
+  <div id="pipeline-reconcile-result" style="margin-top:8px;"></div>
+</div>
+<div class="card">
+  <div
+    id="pipeline-live"
+    hx-get="/pipeline/live?status={{ status }}"
+    hx-trigger="every 3s [document.visibilityState=='visible']"
+    hx-swap="innerHTML"
+  >
+    {% include "partials/pipeline_live.html" %}
+  </div>
+</div>
+{% endblock %}

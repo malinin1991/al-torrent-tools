@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: altt_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: altt
+      POSTGRES_USER: altt
+      POSTGRES_PASSWORD: altt
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U altt -d altt"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: altt_api
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      TORRENT_STORAGE_DIR: /app/data/torrents
+    volumes:
+      - ./backend:/app
+      - ./data/torrents:/app/data/torrents
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: ["sh", "/app/scripts/entrypoint.sh", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: altt_worker
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      TORRENT_STORAGE_DIR: /app/data/torrents
+    volumes:
+      - ./backend:/app
+      - ./data/torrents:/app/data/torrents
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["sh", "/app/scripts/entrypoint.sh", "python", "worker.py"]
+
+volumes:
+  pg_data:
