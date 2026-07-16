@@ -1,10 +1,15 @@
 import hashlib
+import logging
 import re
+import time
 from pathlib import Path
 
 import qbittorrentapi
+from qbittorrentapi import exceptions as qb_exc
 
 _INFO_HASH_RE = re.compile(r"^[0-9a-fA-F]{32,64}$")
+logger = logging.getLogger(__name__)
+_comment_unsupported_warned = False
 
 
 def is_qb_torrent_already_present(exc: BaseException) -> bool:
@@ -232,7 +237,11 @@ def qb_add_torrent(
     comment: str | None = None,
     category: str | None = None,
 ) -> bool:
-    """Добавляет торрент в qB. True = новый, False = уже был (Conflict)."""
+    """Добавляет торрент в qB. True = новый, False = уже был (Conflict).
+
+    Имя/комментарий выставляются отдельно и **всегда перезаписывают** текущие
+    значения (в т.ч. comment из .torrent), с ретраями — иначе после add часто 404.
+    """
     add_kwargs: dict = {"torrent_files": [torrent_bytes]}
     if rename:
         add_kwargs["rename"] = rename
@@ -247,21 +256,84 @@ def qb_add_torrent(
             raise
         already_present = True
 
-    needs_post = bool(comment) or (bool(rename) and already_present)
-    if needs_post:
-        info_hash = torrent_info_hash(torrent_bytes)
-        if rename and already_present:
-            try:
-                client.torrents_rename(torrent_hash=info_hash, new_torrent_name=rename)
-            except Exception:
-                pass
-        if comment:
-            try:
-                client.torrents_set_comment(comment=comment, torrent_hashes=info_hash)
-            except Exception:
-                # Нужен qBittorrent ≥ 5.2 / WebAPI 2.12.1
-                pass
+    info_hash = torrent_info_hash(torrent_bytes)
+    if rename and already_present:
+        _apply_torrent_rename(client, info_hash, rename)
+    if comment:
+        _ensure_torrent_comment(client, info_hash, comment)
     return not already_present
+
+
+def _apply_torrent_rename(client: qbittorrentapi.Client, info_hash: str, rename: str) -> None:
+    try:
+        client.torrents_rename(torrent_hash=info_hash, new_torrent_name=rename)
+    except Exception as exc:
+        logger.warning("Не удалось переименовать торрент %s: %s", info_hash[:8], exc)
+
+
+def _ensure_torrent_comment(
+    client: qbittorrentapi.Client,
+    info_hash: str,
+    comment: str,
+    *,
+    attempts: int = 6,
+    delay_sec: float = 0.35,
+) -> bool:
+    """Принудительно ставит comment (перезапись), с ретраями на 404 сразу после add."""
+    global _comment_unsupported_warned
+    desired = (comment or "").strip()
+    if not desired:
+        return False
+
+    last_exc: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            client.torrents_set_comment(comment=desired, torrent_hashes=info_hash)
+            current = _read_torrent_comment(client, info_hash)
+            if current is None or current == desired:
+                return True
+            # API принял запрос, но UI ещё отдаёт старый comment из .torrent — повторим.
+            last_exc = RuntimeError(f"comment не обновился (сейчас={current!r})")
+        except (
+            qb_exc.UnsupportedQbittorrentVersion,
+            qb_exc.NotFound404Error,
+            qb_exc.HTTP404Error,
+            AttributeError,
+        ) as exc:
+            last_exc = exc
+            if isinstance(exc, (qb_exc.UnsupportedQbittorrentVersion, AttributeError)):
+                if not _comment_unsupported_warned:
+                    _comment_unsupported_warned = True
+                    logger.warning(
+                        "Комментарий торрента недоступен (нужен qBittorrent ≥ 5.2 / WebAPI 2.12.1)"
+                    )
+                return False
+        except Exception as exc:
+            last_exc = exc
+
+        if attempt < attempts:
+            time.sleep(delay_sec * attempt)
+
+    logger.warning(
+        "Не удалось установить comment для %s после %s попыток: %s",
+        info_hash[:8],
+        attempts,
+        last_exc,
+    )
+    return False
+
+
+def _read_torrent_comment(client: qbittorrentapi.Client, info_hash: str) -> str | None:
+    try:
+        props = client.torrents_properties(torrent_hash=info_hash)
+    except Exception:
+        return None
+    raw = getattr(props, "comment", None)
+    if isinstance(props, dict):
+        raw = props.get("comment", raw)
+    if not isinstance(raw, str):
+        return None
+    return raw.strip()
 
 
 def qbittorrent_add(*args, **kwargs) -> dict:
