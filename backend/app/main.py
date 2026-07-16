@@ -1,5 +1,7 @@
 from pathlib import Path
 import asyncio
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Form, Query
 from fastapi.responses import HTMLResponse
@@ -13,7 +15,13 @@ from app.api.rest import job_runner, router as api_router
 from app.core.config import settings
 from app.db.models import ExtraUrl, Job, JobLog, QbClient, Setting, TorrentArchive, TorrentPipeline
 from app.db.session import SessionLocal, get_db
-from app.services.job_runner import JobAlreadyRunningError, UnknownJobTypeError, reclaim_stale_jobs
+from app.services.job_runner import (
+    JobAlreadyRunningError,
+    UnknownJobTypeError,
+    reclaim_orphan_jobs,
+    reclaim_stale_jobs,
+    shutdown_cancel_active_jobs,
+)
 from app.services.anilibria_auth import login_and_store_token, resolve_anilibria_password
 from app.services.db_maintenance import reset_full, reset_operational_state
 from app.services.pipeline import TorrentPipelineService
@@ -25,7 +33,35 @@ from app.services.torrent_archive import resolve_torrent_storage_root
 from app.utils.datetime_fmt import as_utc_iso
 
 
-app = FastAPI(title=settings.app_name)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if settings.app_env.lower() != "dev" and settings.secret_key == "change-me":
+        raise RuntimeError("Для окружения вне dev требуется задать SECRET_KEY")
+    resolve_torrent_storage_root().mkdir(parents=True, exist_ok=True)
+    with SessionLocal() as db:
+        # Сироты после kill: lock свободен → сразу cancelled (не ждём JOB_STALE_MINUTES).
+        cancelled = reclaim_orphan_jobs(
+            db,
+            reason="API перезапущен — джоб-сирота помечен как cancelled",
+        )
+        if cancelled:
+            logger.warning("При старте api помечены cancelled джобы-сироты: %s", cancelled)
+        stale = reclaim_stale_jobs(
+            db,
+            reason="API перезапущен — джобы без активности помечены как cancelled",
+        )
+        if stale:
+            logger.warning("При старте api помечены cancelled зависшие джобы: %s", stale)
+    yield
+    cancelled = shutdown_cancel_active_jobs(reason="API остановлен — джоб помечен как cancelled")
+    if cancelled:
+        logger.warning("При остановке api помечены cancelled активные джобы: %s", cancelled)
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(api_router)
 
 base_path = Path(__file__).resolve().parent
@@ -101,26 +137,6 @@ def _qb_test_message(role: str, result: dict) -> str:
         f"version={result['version']}, webapi={result['webapi']}, "
         f"торрентов={result['torrents']}"
     )
-
-
-@app.on_event("startup")
-async def validate_runtime_settings() -> None:
-    if settings.app_env.lower() != "dev" and settings.secret_key == "change-me":
-        raise RuntimeError("Для окружения вне dev требуется задать SECRET_KEY")
-    resolve_torrent_storage_root().mkdir(parents=True, exist_ok=True)
-    with SessionLocal() as db:
-        # Только по порогу бездействия — не трогаем джобы, которые крутит worker.
-        cancelled = reclaim_stale_jobs(
-            db,
-            reason="API перезапущен — джобы без активности помечены как cancelled",
-        )
-        if cancelled:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "При старте api помечены cancelled зависшие джобы: %s",
-                cancelled,
-            )
 
 
 @app.get("/health")

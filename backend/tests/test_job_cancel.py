@@ -10,7 +10,9 @@ from app.services.job_runner import (
     STATUS_RUNNING,
     JobRunner,
     UnknownJobTypeError,
+    cancel_jobs_by_ids,
     cancel_stale_jobs,
+    reclaim_orphan_jobs,
     reclaim_stale_jobs,
 )
 
@@ -43,6 +45,19 @@ def test_cancel_stale_jobs_noop_when_empty() -> None:
     db.commit.assert_not_called()
 
 
+def test_cancel_jobs_by_ids() -> None:
+    running = SimpleNamespace(id=7, status=STATUS_RUNNING, error=None, finished_at=None)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [running]
+
+    cancelled = cancel_jobs_by_ids(db, [7], reason="shutdown")
+
+    assert cancelled == [7]
+    assert running.status == STATUS_CANCELLED
+    assert running.error == "shutdown"
+    db.commit.assert_called_once()
+
+
 def test_reclaim_stale_jobs_by_age() -> None:
     old = datetime.utcnow() - timedelta(minutes=60)
     fresh = datetime.utcnow() - timedelta(minutes=1)
@@ -56,6 +71,8 @@ def test_reclaim_stale_jobs_by_age() -> None:
     db.scalars.return_value.all.return_value = [stale_running, fresh_pending]
     # Нет логов — для running якорь = started_at (старый).
     db.scalar.return_value = None
+    # try_lock успешен → сирота / можно отменить.
+    db.execute.return_value.scalar.return_value = True
 
     cancelled = reclaim_stale_jobs(db, max_age_minutes=30)
 
@@ -86,6 +103,60 @@ def test_reclaim_keeps_long_running_job_with_recent_logs() -> None:
     assert cancelled == []
     assert long_running.status == STATUS_RUNNING
     db.commit.assert_not_called()
+
+
+def test_reclaim_orphan_running_when_lock_free() -> None:
+    running = SimpleNamespace(
+        id=3,
+        status=STATUS_RUNNING,
+        error=None,
+        finished_at=None,
+        started_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [running]
+    db.execute.return_value.scalar.return_value = True
+
+    cancelled = reclaim_orphan_jobs(db, reason="сирота")
+
+    assert cancelled == [3]
+    assert running.status == STATUS_CANCELLED
+    db.commit.assert_called_once()
+
+
+def test_reclaim_orphan_skips_running_when_lock_held() -> None:
+    running = SimpleNamespace(
+        id=4,
+        status=STATUS_RUNNING,
+        error=None,
+        finished_at=None,
+        started_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [running]
+    db.execute.return_value.scalar.return_value = False
+
+    cancelled = reclaim_orphan_jobs(db)
+
+    assert cancelled == []
+    assert running.status == STATUS_RUNNING
+    db.commit.assert_not_called()
+
+
+def test_reclaim_orphan_pending_older_than_grace() -> None:
+    old = datetime.utcnow() - timedelta(seconds=120)
+    pending = SimpleNamespace(
+        id=5, status=STATUS_PENDING, error=None, finished_at=None, started_at=None, created_at=old
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [pending]
+
+    cancelled = reclaim_orphan_jobs(db, pending_grace_sec=60)
+
+    assert cancelled == [5]
+    assert pending.status == STATUS_CANCELLED
 
 
 def test_create_job_rejects_unknown_type() -> None:

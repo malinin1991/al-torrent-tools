@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import signal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
@@ -10,7 +11,12 @@ from app.core.config import settings
 from app.db.models import Setting
 from app.db.session import SessionLocal
 from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback
-from app.services.job_runner import JobAlreadyRunningError, reclaim_stale_jobs
+from app.services.job_runner import (
+    JobAlreadyRunningError,
+    reclaim_orphan_jobs,
+    reclaim_stale_jobs,
+    shutdown_cancel_active_jobs,
+)
 from app.services.pipeline import TorrentPipelineService
 
 logger = logging.getLogger(__name__)
@@ -115,6 +121,9 @@ def _reschedule_if_needed(scheduler: AsyncIOScheduler, job_id: str, seconds: int
 
 async def _reclaim_stale_jobs() -> None:
     with SessionLocal() as db:
+        orphans = reclaim_orphan_jobs(db)
+        if orphans:
+            logger.warning("Reclaim orphans: отменены джобы-сироты: %s", orphans)
         cancelled = reclaim_stale_jobs(db)
         if cancelled:
             logger.warning("Reclaim: отменены зависшие джобы: %s", cancelled)
@@ -122,7 +131,15 @@ async def _reclaim_stale_jobs() -> None:
 
 async def main() -> None:
     with SessionLocal() as db:
-        # Порог бездействия, не blanket-cancel: api может ещё выполнять джоб в памяти.
+        orphans = reclaim_orphan_jobs(
+            db,
+            reason="Worker перезапущен — джоб-сирота помечен как cancelled",
+        )
+        if orphans:
+            logger.warning(
+                "При старте worker помечены cancelled джобы-сироты: %s",
+                orphans,
+            )
         cancelled = reclaim_stale_jobs(db)
         if cancelled:
             logger.warning(
@@ -199,20 +216,47 @@ async def main() -> None:
     )
     scheduler.start()
 
-    while True:
-        await asyncio.sleep(60)
-        # Перечитываем интервалы из settings и при необходимости reschedule.
-        _reschedule_if_needed(
-            scheduler, "ongoing", _setting_int("ongoing_interval_sec", settings.ongoing_interval_sec)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:
+            # Windows / ограниченные среды — полагаемся на KeyboardInterrupt.
+            pass
+
+    try:
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                pass
+            if stop.is_set():
+                break
+            # Перечитываем интервалы из settings и при необходимости reschedule.
+            _reschedule_if_needed(
+                scheduler, "ongoing", _setting_int("ongoing_interval_sec", settings.ongoing_interval_sec)
+            )
+            _reschedule_if_needed(
+                scheduler, "cleanup", _setting_int("cleanup_interval_sec", settings.cleanup_interval_sec)
+            )
+            _reschedule_if_needed(
+                scheduler,
+                "pipeline_reconcile",
+                max(
+                    60,
+                    _setting_int(
+                        "pipeline_reconcile_interval_sec", settings.pipeline_reconcile_interval_sec
+                    ),
+                ),
+            )
+    finally:
+        scheduler.shutdown(wait=False)
+        cancelled = shutdown_cancel_active_jobs(
+            reason="Worker остановлен — джоб помечен как cancelled"
         )
-        _reschedule_if_needed(
-            scheduler, "cleanup", _setting_int("cleanup_interval_sec", settings.cleanup_interval_sec)
-        )
-        _reschedule_if_needed(
-            scheduler,
-            "pipeline_reconcile",
-            max(60, _setting_int("pipeline_reconcile_interval_sec", settings.pipeline_reconcile_interval_sec)),
-        )
+        if cancelled:
+            logger.warning("При остановке worker помечены cancelled активные джобы: %s", cancelled)
 
 
 if __name__ == "__main__":
