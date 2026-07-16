@@ -29,7 +29,7 @@ def test_find_removable_torrents_matches_tracker_and_merges_delete_flag() -> Non
         state_enum=SimpleNamespace(is_errored=False),
         trackers=[
             SimpleNamespace(
-                status=4,
+                status=5,
                 url="http://tr.libria.fun:2710/announce",
                 msg="Торрент не зарегистрирован на трекере",
             )
@@ -58,7 +58,7 @@ def test_find_removable_torrents_matches_host_without_port() -> None:
         state_enum=SimpleNamespace(is_errored=False),
         trackers=[
             SimpleNamespace(
-                status=4,
+                status=5,
                 url="http://tr.libria.fun:2710/announce",
                 msg="Торрент не зарегистрирован",
             )
@@ -74,6 +74,49 @@ def test_find_removable_torrents_matches_host_without_port() -> None:
     assert removable[0]["reason"] == "tracker"
 
 
+def test_find_removable_ignores_not_working_status_without_tracker_error() -> None:
+    """NotWorking (4) без TrackerError не удаляем — только status=5 + msg."""
+    torrent = SimpleNamespace(
+        hash="notworking",
+        name="Not working only",
+        state_enum=SimpleNamespace(is_errored=False),
+        trackers=[
+            SimpleNamespace(
+                status=4,
+                url="http://tr.libria.fun:2710/announce",
+                msg="Торрент не зарегистрирован",
+            )
+        ],
+    )
+
+    assert find_removable_torrents(torrent_list=[torrent], rules=[build_rule()]) == []
+
+
+def test_find_removable_torrents_matches_msg_on_endpoint() -> None:
+    torrent = SimpleNamespace(
+        hash="endpoint1",
+        name="Endpoint msg",
+        state_enum=SimpleNamespace(is_errored=False),
+        trackers=[
+            SimpleNamespace(
+                status=5,
+                url="http://tr.libria.fun:2710/announce",
+                msg="",
+                endpoints=[
+                    SimpleNamespace(
+                        status=5,
+                        msg="Торрент не зарегистрирован",
+                    )
+                ],
+            )
+        ],
+    )
+
+    removable = find_removable_torrents(torrent_list=[torrent], rules=[build_rule()])
+
+    assert len(removable) == 1
+
+
 def test_find_removable_torrents_reads_trackers_data_attr() -> None:
     """Как в старом скрипте: torrent.trackers.data."""
     torrent = SimpleNamespace(
@@ -83,7 +126,7 @@ def test_find_removable_torrents_reads_trackers_data_attr() -> None:
         trackers=SimpleNamespace(
             data=[
                 SimpleNamespace(
-                    status=4,
+                    status=5,
                     url="udp://tr.libria.fun:2710/announce",
                     msg="Торрент не зарегистрирован",
                 )

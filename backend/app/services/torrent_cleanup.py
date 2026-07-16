@@ -7,11 +7,18 @@ from sqlalchemy.orm import Session
 
 from app.db.models import CleanupRule, JobLog, QbClient
 
+# qB 5+: TrackerError — ответ трекера с ошибкой (в т.ч. «не зарегистрирован»).
+_TRACKER_ERROR_STATUS = 5
+
 
 def _tracker_list(trackers: Any) -> list[Any]:
     """Нормализует ответ qbittorrent-api: List / .data / обычный list."""
     if trackers is None:
         return []
+    # Обычный list/TrackersList: итерируем напрямую.
+    # Старый скрипт использовал torrent.trackers.data — учитываем AttrDict.
+    if isinstance(trackers, list):
+        return list(trackers)
     data = getattr(trackers, "data", None)
     if data is not None:
         return list(data)
@@ -31,20 +38,43 @@ def _tracker_message(tracker: Any) -> str:
     ).casefold()
 
 
-def _tracker_matches_rule(tracker: Any, rule: CleanupRule) -> bool:
-    """Как в qBittorrent-AL-remove-old: status==4, host в url, текст в msg."""
+def _tracker_status(tracker: Any) -> int:
     try:
-        status = int(getattr(tracker, "status", -1))
+        return int(getattr(tracker, "status", -1))
     except (TypeError, ValueError):
-        return False
-    if status != 4:
-        return False
+        return -1
 
+
+def _tracker_match_entries(tracker: Any) -> list[Any]:
+    """Сам трекер + endpoints (qB 5 может держать msg на endpoint)."""
+    entries = [tracker]
+    endpoints = getattr(tracker, "endpoints", None)
+    if not endpoints:
+        return entries
+    try:
+        entries.extend(list(endpoints))
+    except TypeError:
+        data = getattr(endpoints, "data", None)
+        if data is not None:
+            entries.extend(list(data))
+    return entries
+
+
+def _tracker_matches_rule(tracker: Any, rule: CleanupRule) -> bool:
+    """host в url + status=TrackerError(5) + текст в msg."""
     host = (rule.tracker_host or "").strip().casefold()
     needle = (rule.message_contains or "").strip().casefold()
     if not host or not needle:
         return False
-    return host in _tracker_url(tracker) and needle in _tracker_message(tracker)
+    if host not in _tracker_url(tracker):
+        return False
+
+    for entry in _tracker_match_entries(tracker):
+        if _tracker_status(entry) != _TRACKER_ERROR_STATUS:
+            continue
+        if needle in _tracker_message(entry):
+            return True
+    return False
 
 
 def _tracker_host_present(trackers: list[Any], host: str) -> bool:

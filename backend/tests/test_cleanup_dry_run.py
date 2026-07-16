@@ -4,6 +4,14 @@ from unittest.mock import MagicMock
 from app.jobs.cleanup import run_cleanup
 
 
+class _FakeSessionCM:
+    def __enter__(self) -> MagicMock:
+        return MagicMock()
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
 def test_run_cleanup_defaults_dry_run_true(monkeypatch) -> None:
     captured: dict[str, bool] = {}
 
@@ -20,6 +28,7 @@ def test_run_cleanup_defaults_dry_run_true(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr("app.jobs.cleanup.TorrentCleanupService", FakeService)
+    monkeypatch.setattr("app.jobs.cleanup.SessionLocal", _FakeSessionCM)
 
     asyncio.run(run_cleanup(MagicMock(), job_id=1, params={}))
 
@@ -41,6 +50,7 @@ def test_run_cleanup_forces_dry_run_when_delete_disabled(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr("app.jobs.cleanup.TorrentCleanupService", FakeService)
+    monkeypatch.setattr("app.jobs.cleanup.SessionLocal", _FakeSessionCM)
     monkeypatch.setattr("app.jobs.cleanup.settings.cleanup_allow_delete", False)
 
     asyncio.run(run_cleanup(MagicMock(), job_id=2, params={"dry_run": False}))
@@ -63,6 +73,7 @@ def test_run_cleanup_allows_delete_when_enabled(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr("app.jobs.cleanup.TorrentCleanupService", FakeService)
+    monkeypatch.setattr("app.jobs.cleanup.SessionLocal", _FakeSessionCM)
     monkeypatch.setattr("app.jobs.cleanup.settings.cleanup_allow_delete", True)
 
     asyncio.run(run_cleanup(MagicMock(), job_id=3, params={"dry_run": False}))

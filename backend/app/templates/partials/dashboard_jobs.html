@@ -1,6 +1,6 @@
 <table>
   <thead>
-    <tr><th>ID</th><th>Тип</th><th>Статус</th><th>Ошибка</th></tr>
+    <tr><th>ID</th><th>Тип</th><th>Статус</th><th>Завершён</th><th>Ошибка</th></tr>
   </thead>
   <tbody>
     {% for job in jobs %}
@@ -8,10 +8,19 @@
       <td><a href="/jobs?job_id={{ job.id }}">{{ job.id }}</a></td>
       <td>{{ job.type }}</td>
       <td><span class="job-status job-status-{{ job.status }}">{{ job.status }}</span></td>
-      <td>{{ job.error or "-" }}</td>
+      <td>
+        {% if job.finished_at %}
+        <time class="local-time" datetime="{{ job.finished_at|as_utc_iso }}">{{ job.finished_at }}</time>
+        {% else %}-{% endif %}
+      </td>
+      <td{% if job.error %} title="{{ job.error }}"{% endif %}>
+        {% if job.error %}
+        {{ job.error if job.error|length <= 80 else job.error[:77] ~ "…" }}
+        {% else %}-{% endif %}
+      </td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="muted">Джобов пока нет</td></tr>
+    <tr><td colspan="5" class="muted">Джобов пока нет</td></tr>
     {% endfor %}
   </tbody>
 </table>
