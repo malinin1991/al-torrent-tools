@@ -185,9 +185,17 @@ class AniLibriaClient:
             params["ids"] = ",".join(str(item) for item in ids)
         return await self._request_json("/anime/releases/list", params or None)
 
-    async def catalog_releases(self, page: int = 1, include: Iterable[str] | None = None, exclude: Iterable[str] | None = None) -> Any:
+    async def catalog_releases(
+        self,
+        page: int = 1,
+        *,
+        limit: int = 10,
+        include: Iterable[str] | None = None,
+        exclude: Iterable[str] | None = None,
+    ) -> Any:
         params = self._build_fields_params(include, exclude)
         params["page"] = str(page)
+        params["limit"] = str(max(1, limit))
         return await self._request_json("/anime/catalog/releases", params)
 
     async def get_torrents_for_release(

@@ -116,14 +116,24 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     )
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
     service._resolve_qb_meta = MagicMock(  # type: ignore[method-assign]
-        return_value=("Name / Orig (1-2) [HEVC]", "https://www.anilibria.top/anime/releases/release/x/torrents", "winter.2024")
+        return_value=("Name / Orig (1-2) [HEVC]", "https://www.anilibria.top/anime/releases/release/x/torrents", "winter.2024", ["Комедия"])
     )
 
     qb = MagicMock()
+    comment_url = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    from app.services.qbittorrent import torrent_info_hash
+
+    info_hash = torrent_info_hash(_sample_torrent_bytes())
+    present = MagicMock(hash=info_hash, infohash_v1=info_hash, infohash_v2=None)
+    qb.torrents_info.return_value = [present]
+    props = MagicMock()
+    props.comment = comment_url
+    qb.torrents_properties.return_value = props
     fake_client_cls = MagicMock(return_value=qb)
     monkeypatch.setattr("app.services.pipeline.qbittorrentapi.Client", fake_client_cls)
     monkeypatch.setattr("app.services.pipeline.get_setting_value", lambda *a, **k: "testpk")
     monkeypatch.setattr("app.services.pipeline.ensure_announce_passkey", lambda data, pk: data)
+    monkeypatch.setattr("app.services.qbittorrent.time.sleep", lambda *_: None)
 
     def mark_slave(p: SimpleNamespace) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
@@ -142,7 +152,7 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     qb.auth_log_in.assert_called_once()
     qb.torrents_add.assert_called_once()
     assert qb.torrents_add.call_args.kwargs.get("rename") == "Name / Orig (1-2) [HEVC]"
-    qb.torrents_set_comment.assert_called_once()
+    assert qb.torrents_set_comment.called
 
 
 def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,11 +163,11 @@ def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPa
     service._claim_master_complete = MagicMock()  # type: ignore[method-assign]
     slave = SimpleNamespace(host="slave.local", port=8080, username="u", password_encrypted="p")
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
-    service._resolve_qb_meta = MagicMock(return_value=(None, None, None))  # type: ignore[method-assign]
+    service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
     monkeypatch.setattr("app.services.pipeline.qbittorrentapi.Client", MagicMock(return_value=MagicMock()))
     monkeypatch.setattr("app.services.pipeline.get_setting_value", lambda *a, **k: "")
     monkeypatch.setattr("app.services.pipeline.ensure_announce_passkey", lambda data, pk: data)
-    monkeypatch.setattr("app.services.pipeline.qb_add_torrent", MagicMock(return_value=True))
+    monkeypatch.setattr("app.services.pipeline.qb_add_torrent", MagicMock(return_value=(True, True, True)))
 
     def mark_slave(p: SimpleNamespace) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
@@ -239,7 +249,7 @@ def test_process_completion_slave_auth_error_goes_waiting(monkeypatch: pytest.Mo
 
     slave = SimpleNamespace(host="slave.local", port=8080, username="u", password_encrypted="p")
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
-    service._resolve_qb_meta = MagicMock(return_value=(None, None, None))  # type: ignore[method-assign]
+    service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
 
     qb = MagicMock()
     qb.auth_log_in.side_effect = LoginFailed("bad password")
@@ -273,7 +283,7 @@ def test_process_completion_slave_unavailable_goes_waiting(monkeypatch: pytest.M
     service._claim_master_complete = MagicMock(return_value=claimed)  # type: ignore[method-assign]
     slave = SimpleNamespace(host="slave.local", port=8080, username="u", password_encrypted="p")
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
-    service._resolve_qb_meta = MagicMock(return_value=(None, None, None))  # type: ignore[method-assign]
+    service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
 
     qb = MagicMock()
     qb.auth_log_in.side_effect = APIConnectionError("connection refused")
@@ -310,7 +320,7 @@ def test_process_completion_conflict_on_slave_is_success(monkeypatch: pytest.Mon
         password_encrypted="p",
     )
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
-    service._resolve_qb_meta = MagicMock(return_value=(None, None, None))  # type: ignore[method-assign]
+    service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
 
     qb = MagicMock()
     qb.torrents_add.side_effect = Conflict409Error("Conflict")

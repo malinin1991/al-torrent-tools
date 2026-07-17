@@ -107,7 +107,7 @@ async def retry_waiting_master_pipelines(db: Session, *, job_id: int | None = No
                 torrent_bytes = await al_client.download_torrent_file(pipeline.torrent_id)
                 torrent_bytes = ensure_announce_passkey(torrent_bytes, al_client.passkey)
 
-            rename, comment, category = pipeline_service._resolve_qb_meta(pipeline)
+            rename, comment, category, tags = pipeline_service._resolve_qb_meta(pipeline)
             try:
                 qb_add_torrent(
                     qb,
@@ -115,6 +115,7 @@ async def retry_waiting_master_pipelines(db: Session, *, job_id: int | None = No
                     rename=rename,
                     comment=comment,
                     category=category,
+                    tags=tags,
                 )
             except Exception as add_exc:
                 if should_wait_for_qb(add_exc):

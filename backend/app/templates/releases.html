@@ -17,6 +17,13 @@
       {% if group.release_alias and group.anime_name %}
       <span class="muted">{{ group.release_alias }}</span>
       {% endif %}
+      {% if group.genres %}
+      <div class="genre-tags" aria-label="Жанры">
+        {% for genre in group.genres %}
+        <span class="genre-tag">{{ genre }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
     </div>
     <div class="release-meta muted">
       <span>{{ group.torrent_count }} торр.</span>

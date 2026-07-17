@@ -85,11 +85,14 @@ class TorrentArchiveService:
         quality_json: dict[str, Any],
         release_payload: dict[str, Any],
     ) -> dict[str, Any]:
-        from app.services.torrent_qb_meta import extract_release_names
+        from app.services.torrent_qb_meta import extract_release_genres, extract_release_names
 
         main, original = extract_release_names(release_payload)
         if main or original:
             quality_json = {**quality_json, "names": {"main": main, "english": original}}
+        genres = extract_release_genres(release_payload)
+        if genres:
+            quality_json = {**quality_json, "genres": genres}
         return quality_json
 
     @staticmethod

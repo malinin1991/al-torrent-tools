@@ -236,17 +236,21 @@ def qb_add_torrent(
     rename: str | None = None,
     comment: str | None = None,
     category: str | None = None,
-) -> bool:
-    """Добавляет торрент в qB. True = новый, False = уже был (Conflict).
+    tags: list[str] | None = None,
+) -> tuple[bool, bool, bool]:
+    """Добавляет торрент в qB.
 
-    Имя/комментарий выставляются отдельно и **всегда перезаписывают** текущие
-    значения (в т.ч. comment из .torrent), с ретраями — иначе после add часто 404.
+    Returns:
+        (added_new, comment_ok, tags_ok)
     """
+    clean_tags = _normalize_tags(tags)
     add_kwargs: dict = {"torrent_files": [torrent_bytes]}
     if rename:
         add_kwargs["rename"] = rename
     if category:
         add_kwargs["category"] = category
+    if clean_tags:
+        add_kwargs["tags"] = clean_tags
 
     already_present = False
     try:
@@ -259,9 +263,44 @@ def qb_add_torrent(
     info_hash = torrent_info_hash(torrent_bytes)
     if rename and already_present:
         _apply_torrent_rename(client, info_hash, rename)
+
+    comment_ok = True
     if comment:
-        _ensure_torrent_comment(client, info_hash, comment)
-    return not already_present
+        comment_ok = _set_torrent_comment_after_add(client, info_hash, comment)
+        if not comment_ok:
+            logger.warning(
+                "Не удалось установить comment после add для %s (already_present=%s)",
+                info_hash[:8],
+                already_present,
+            )
+
+    tags_ok = True
+    if clean_tags:
+        tags_ok = _set_torrent_tags_after_add(client, info_hash, clean_tags)
+        if not tags_ok:
+            logger.warning(
+                "Не удалось установить tags после add для %s (already_present=%s)",
+                info_hash[:8],
+                already_present,
+            )
+    return (not already_present), comment_ok, tags_ok
+
+
+def _normalize_tags(tags: list[str] | None) -> list[str]:
+    if not tags:
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in tags:
+        text = (raw or "").replace(",", " ").strip()
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned
 
 
 def _apply_torrent_rename(client: qbittorrentapi.Client, info_hash: str, rename: str) -> None:
@@ -300,6 +339,165 @@ def collect_client_info_hashes(client: qbittorrentapi.Client) -> set[str]:
     return found
 
 
+def _client_hash_candidates(client: qbittorrentapi.Client, preferred: str) -> list[str]:
+    """preferred + hash/infohash_v1/v2 из torrents/info, если торрент уже виден."""
+    try:
+        safe = sanitize_info_hash(preferred)
+    except ValueError:
+        return []
+    ordered = [safe]
+    try:
+        items = list(client.torrents_info(torrent_hashes=safe) or [])
+    except Exception:
+        items = []
+    for torrent in items:
+        for value in _torrent_hash_fields(torrent):
+            try:
+                normalized = sanitize_info_hash(value)
+            except ValueError:
+                continue
+            if normalized not in ordered:
+                ordered.append(normalized)
+    return ordered
+
+
+def _wait_torrent_hash_candidates(
+    client: qbittorrentapi.Client,
+    info_hash: str,
+    *,
+    attempts: int = 8,
+    delay_sec: float = 0.25,
+) -> list[str]:
+    """Ждёт появления торрента в qB после add и возвращает hash-кандидаты."""
+    for attempt in range(1, attempts + 1):
+        candidates = _client_hash_candidates(client, info_hash)
+        try:
+            present = bool(client.torrents_info(torrent_hashes=candidates[0] if candidates else info_hash))
+        except Exception:
+            present = False
+        if present:
+            return candidates
+        if attempt < attempts:
+            time.sleep(delay_sec * attempt)
+    return _client_hash_candidates(client, info_hash)
+
+
+def _set_torrent_comment_after_add(
+    client: qbittorrentapi.Client,
+    info_hash: str,
+    comment: str,
+) -> bool:
+    """После add/Conflict ждёт торрент и ставит comment по всем известным hash."""
+    candidates = _wait_torrent_hash_candidates(client, info_hash)
+    if not candidates:
+        try:
+            candidates = [sanitize_info_hash(info_hash)]
+        except ValueError:
+            return False
+    for candidate in candidates:
+        if _ensure_torrent_comment(client, candidate, comment, attempts=8, delay_sec=0.3):
+            return True
+    return False
+
+
+def _read_torrent_tags(client: qbittorrentapi.Client, info_hash: str) -> set[str]:
+    try:
+        items = list(client.torrents_info(torrent_hashes=info_hash) or [])
+    except Exception:
+        return set()
+    if not items:
+        return set()
+    raw = getattr(items[0], "tags", None)
+    if raw is None and isinstance(items[0], dict):
+        raw = items[0].get("tags")
+    if not isinstance(raw, str) or not raw.strip():
+        return set()
+    return {part.strip().casefold() for part in raw.split(",") if part.strip()}
+
+
+def _ensure_torrent_tags(
+    client: qbittorrentapi.Client,
+    info_hash: str,
+    tags: list[str],
+    *,
+    attempts: int = 6,
+    delay_sec: float = 0.3,
+    require_present: bool = False,
+) -> bool:
+    """Добавляет tags (addTags), с ретраями; успех если все desired есть у торрента."""
+    desired = _normalize_tags(tags)
+    if not desired:
+        return True
+    try:
+        safe_hash = sanitize_info_hash(info_hash)
+    except ValueError:
+        return False
+
+    if require_present:
+        try:
+            present = bool(client.torrents_info(torrent_hashes=safe_hash))
+        except Exception:
+            present = True
+        if not present:
+            return False
+
+    desired_keys = {t.casefold() for t in desired}
+    last_exc: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            client.torrents_add_tags(tags=desired, torrent_hashes=safe_hash)
+            current = _read_torrent_tags(client, safe_hash)
+            if desired_keys.issubset(current):
+                return True
+            last_exc = RuntimeError(f"tags не обновились (сейчас={sorted(current)!r})")
+        except (
+            qb_exc.UnsupportedQbittorrentVersion,
+            qb_exc.NotFound404Error,
+            qb_exc.HTTP404Error,
+            AttributeError,
+        ) as exc:
+            last_exc = exc
+            if isinstance(exc, (qb_exc.UnsupportedQbittorrentVersion, AttributeError)):
+                logger.warning("Tags торрента недоступны в этой версии qBittorrent/WebAPI")
+                return False
+            if require_present and isinstance(exc, (qb_exc.NotFound404Error, qb_exc.HTTP404Error)):
+                return False
+        except Exception as exc:
+            last_exc = exc
+
+        if attempt < attempts:
+            time.sleep(delay_sec * attempt)
+
+    logger.warning(
+        "Не удалось установить tags для %s после %s попыток: %s",
+        safe_hash[:8],
+        attempts,
+        last_exc,
+    )
+    return False
+
+
+def _set_torrent_tags_after_add(
+    client: qbittorrentapi.Client,
+    info_hash: str,
+    tags: list[str],
+) -> bool:
+    """После add/Conflict ждёт торрент и ставит genre tags."""
+    desired = _normalize_tags(tags)
+    if not desired:
+        return True
+    candidates = _wait_torrent_hash_candidates(client, info_hash)
+    if not candidates:
+        try:
+            candidates = [sanitize_info_hash(info_hash)]
+        except ValueError:
+            return False
+    for candidate in candidates:
+        if _ensure_torrent_tags(client, candidate, desired, attempts=6, delay_sec=0.25):
+            return True
+    return False
+
+
 def _ensure_torrent_comment(
     client: qbittorrentapi.Client,
     info_hash: str,
@@ -311,6 +509,7 @@ def _ensure_torrent_comment(
 ) -> bool:
     """Принудительно ставит comment (перезапись), с ретраями на 404 сразу после add.
 
+    Успех только если properties.comment совпал с desired.
     require_present=True — сразу False, если торрента нет в клиенте (для массового backfill).
     """
     global _comment_unsupported_warned
@@ -336,10 +535,13 @@ def _ensure_torrent_comment(
         try:
             client.torrents_set_comment(comment=desired, torrent_hashes=safe_hash)
             current = _read_torrent_comment(client, safe_hash)
-            if current is None or current == desired:
+            if current == desired:
                 return True
-            # API принял запрос, но UI ещё отдаёт старый comment из .torrent — повторим.
-            last_exc = RuntimeError(f"comment не обновился (сейчас={current!r})")
+            if current is None:
+                # Торрент ещё не готов / properties 404 — не считаем успехом.
+                last_exc = RuntimeError("comment не прочитан после setComment")
+            else:
+                last_exc = RuntimeError(f"comment не обновился (сейчас={current!r})")
         except (
             qb_exc.UnsupportedQbittorrentVersion,
             qb_exc.NotFound404Error,

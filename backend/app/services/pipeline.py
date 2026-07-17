@@ -19,6 +19,7 @@ from app.services.torrent_archive import TorrentArchiveService
 from app.services.torrent_qb_meta import (
     build_qb_torrent_name_from_archive,
     first_release_torrents_url,
+    genres_from_quality_json,
     resolve_anilibria_site_url,
 )
 
@@ -256,15 +257,28 @@ class TorrentPipelineService:
 
             passkey = get_setting_value(self._db, "anilibria_passkey", "")
             prepared = ensure_announce_passkey(torrent_bytes, passkey)
-            rename, comment, category = self._resolve_qb_meta(pipeline)
+            rename, comment, category, tags = self._resolve_qb_meta(pipeline)
 
-            added_new = qb_add_torrent(
+            added_new, comment_ok, tags_ok = qb_add_torrent(
                 qb,
                 prepared,
                 rename=rename,
                 comment=comment,
                 category=category,
+                tags=tags,
             )
+            if comment and not comment_ok:
+                self._add_log(
+                    f"Pipeline {pipeline.id}: comment не установлен на slave "
+                    f"(torrent_id={pipeline.torrent_id})",
+                    "warning",
+                )
+            if tags and not tags_ok:
+                self._add_log(
+                    f"Pipeline {pipeline.id}: tags не установлены на slave "
+                    f"(torrent_id={pipeline.torrent_id}, tags={tags})",
+                    "warning",
+                )
             if added_new:
                 self._add_log(
                     f"Pipeline {pipeline.id}: torrent_id={pipeline.torrent_id} добавлен в slave",
@@ -283,7 +297,9 @@ class TorrentPipelineService:
             self._db.refresh(pipeline)
             raise
 
-    def _resolve_qb_meta(self, pipeline: TorrentPipeline) -> tuple[str | None, str | None, str | None]:
+    def _resolve_qb_meta(
+        self, pipeline: TorrentPipeline
+    ) -> tuple[str | None, str | None, str | None, list[str]]:
         archive = self._db.scalar(
             select(TorrentArchive)
             .where(
@@ -295,6 +311,7 @@ class TorrentPipelineService:
         )
         rename: str | None = None
         category: str | None = None
+        tags: list[str] = []
         alias_candidates: list[str | None] = []
 
         if archive is not None:
@@ -306,6 +323,9 @@ class TorrentPipelineService:
             )
             category = archive.category
             alias_candidates.append(archive.release_alias)
+            tags = genres_from_quality_json(
+                archive.quality_json if isinstance(archive.quality_json, dict) else None
+            )
 
         sibling_alias = self._db.scalar(
             select(TorrentArchive.release_alias)
@@ -318,6 +338,21 @@ class TorrentPipelineService:
         )
         if isinstance(sibling_alias, str):
             alias_candidates.append(sibling_alias)
+
+        if not tags:
+            sibling = self._db.scalar(
+                select(TorrentArchive)
+                .where(
+                    TorrentArchive.release_id == pipeline.release_id,
+                    TorrentArchive.quality_json.isnot(None),
+                )
+                .order_by(TorrentArchive.id.desc())
+                .limit(1)
+            )
+            if sibling is not None:
+                tags = genres_from_quality_json(
+                    sibling.quality_json if isinstance(sibling.quality_json, dict) else None
+                )
 
         extra_alias = self._db.scalar(
             select(ExtraUrl.release_alias)
@@ -340,7 +375,7 @@ class TorrentPipelineService:
                 f"(release_id={pipeline.release_id}, torrent_id={pipeline.torrent_id})",
                 "warning",
             )
-        return rename, comment, category
+        return rename, comment, category, tags
 
     def load_torrent_bytes_from_archive(self, pipeline: TorrentPipeline) -> bytes | None:
         """Берёт .torrent из локального архива (предпочтительно для slave)."""

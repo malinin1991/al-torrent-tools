@@ -48,6 +48,22 @@ def test_first_release_torrents_url_skips_empty() -> None:
     assert url == "https://www.anilibria.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
 
 
+def test_extract_release_genres() -> None:
+    from app.services.torrent_qb_meta import extract_release_genres, genres_from_quality_json
+
+    names = extract_release_genres(
+        {
+            "genres": [
+                {"id": 1, "name": "Комедия"},
+                {"id": 10, "name": "Повседневность"},
+                {"id": 1, "name": "комедия"},
+            ]
+        }
+    )
+    assert names == ["Комедия", "Повседневность"]
+    assert genres_from_quality_json({"genres": names}) == names
+
+
 def test_ensure_announce_passkey_injects_pk() -> None:
     announce = b"http://tr.libria.fun:2710/announce"
     info = b"d4:name4:test6:lengthi1ee"

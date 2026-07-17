@@ -51,6 +51,21 @@ def _extract_total_pages(payload: Any) -> int:
     return 1
 
 
+def _extract_total_releases(payload: Any) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    pagination = meta.get("pagination")
+    if not isinstance(pagination, dict):
+        return None
+    value = pagination.get("total")
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
 def _flush_batch_summary(
     db: Session,
     job_id: int,
@@ -76,9 +91,17 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     processor = TorrentProcessor(db=db, job_id=job_id, client=al_client)
     pause_every = _setting_int(db, "scrape_pause_every", settings.scrape_pause_every)
     pause_sec = _setting_int(db, "scrape_pause_sec", settings.scrape_pause_sec)
+    catalog_limit = 50
+    _add_log(
+        db,
+        job_id,
+        f"Full sync: каталог limit={catalog_limit}, "
+        f"пауза каждые {pause_every} релизов по {pause_sec} сек",
+    )
 
     page = 1
     total_pages = 1
+    total_releases: int | None = None
     processed_releases = 0
     total_stats = TorrentProcessor.empty_release_stats()
     batch_stats = TorrentProcessor.empty_release_stats()
@@ -87,9 +110,19 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     while page <= total_pages:
         payload = await al_client.catalog_releases(
             page=page,
+            limit=catalog_limit,
             include=["id", "alias", "names", "season", "updated_at", "fresh_at"],
         )
         total_pages = _extract_total_pages(payload)
+        if total_releases is None:
+            total_releases = _extract_total_releases(payload)
+            if total_releases is not None:
+                _add_log(
+                    db,
+                    job_id,
+                    f"Full sync: всего релизов в каталоге={total_releases}, "
+                    f"страниц={total_pages}",
+                )
         releases = _extract_list(payload)
         _add_log(
             db,
@@ -129,7 +162,7 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 batch_stats = _flush_batch_summary(
                     db,
                     job_id,
-                    prefix="Full sync: сводка",
+                    prefix=f"Full sync: сводка за {batch_releases} релизов (пауза)",
                     batch=batch_stats,
                     releases=batch_releases,
                 )
@@ -137,7 +170,9 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 _add_log(
                     db,
                     job_id,
-                    f"Full sync: пауза {pause_sec} сек после {processed_releases} релизов",
+                    f"Full sync: пауза {pause_sec} сек после {processed_releases}"
+                    + (f"/{total_releases}" if total_releases is not None else "")
+                    + f" релизов (scrape_pause_every={pause_every})",
                 )
                 await asyncio.sleep(pause_sec)
         page += 1
@@ -154,14 +189,20 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     _add_log(
         db,
         job_id,
-        "Full sync: финальный backfill comment из torrent_archive на master/slave",
+        "Full sync: финальный backfill comment/tags из torrent_archive на master/slave",
     )
     backfill = processor.backfill_qb_comments_from_archive()
     _add_log(
         db,
         job_id,
         "Full sync: готово, "
+        + (
+            f"каталог={total_releases}, "
+            if total_releases is not None
+            else ""
+        )
         + TorrentProcessor.format_batch_summary("итого", total_stats, releases=processed_releases)
-        + f"; backfill comments: архивов={backfill['archives']}, "
-        f"обновлено={backfill['updated']}, пропущено={backfill['missing']}",
+        + f"; backfill: архивов={backfill['archives']}, "
+        f"comments={backfill['updated']}, tags={backfill.get('tags_updated', 0)}, "
+        f"пропущено={backfill['missing']}",
     )

@@ -82,6 +82,39 @@ def test_ensure_comment_require_present_skips_missing() -> None:
     client.torrents_set_comment.assert_not_called()
 
 
+def test_ensure_comment_retries_when_properties_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """None из properties больше не считается успехом — нужен повтор."""
+    client = MagicMock()
+    client.torrents_set_comment.return_value = None
+    props_ok = MagicMock()
+    props_ok.comment = "https://example/x"
+    client.torrents_properties.side_effect = [Exception("not ready"), props_ok]
+    monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
+
+    ok = _ensure_torrent_comment(client, "e" * 40, "https://example/x")
+
+    assert ok is True
+    assert client.torrents_set_comment.call_count == 2
+
+
+def test_set_comment_after_add_waits_for_torrent(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    present = [MagicMock(hash="f" * 40, infohash_v1="f" * 40, infohash_v2=None)]
+    client.torrents_info.side_effect = [
+        [],  # ещё нет
+        present,
+        present,
+    ]
+    ensure = MagicMock(return_value=True)
+    monkeypatch.setattr(qb_mod, "_ensure_torrent_comment", ensure)
+    monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
+
+    ok = qb_mod._set_torrent_comment_after_add(client, "f" * 40, "https://example/x")
+
+    assert ok is True
+    ensure.assert_called_once()
+
+
 def test_collect_client_info_hashes_includes_v1() -> None:
     client = MagicMock()
     t1 = MagicMock()
@@ -96,11 +129,11 @@ def test_collect_client_info_hashes_includes_v1() -> None:
 def test_qb_add_torrent_sets_comment_even_when_already_present(monkeypatch: pytest.MonkeyPatch) -> None:
     client = MagicMock()
     client.torrents_add.side_effect = qb_mod.qbittorrentapi.Conflict409Error("exists")
-    ensure = MagicMock(return_value=True)
-    monkeypatch.setattr(qb_mod, "_ensure_torrent_comment", ensure)
+    set_comment = MagicMock(return_value=True)
+    monkeypatch.setattr(qb_mod, "_set_torrent_comment_after_add", set_comment)
     monkeypatch.setattr(qb_mod, "_apply_torrent_rename", MagicMock())
 
-    added_new = qb_add_torrent(
+    added_new, comment_ok, tags_ok = qb_add_torrent(
         client,
         _sample_torrent_bytes(),
         rename="Name",
@@ -109,5 +142,24 @@ def test_qb_add_torrent_sets_comment_even_when_already_present(monkeypatch: pyte
     )
 
     assert added_new is False
-    ensure.assert_called_once()
-    assert ensure.call_args.args[2].startswith("https://www.anilibria.top/")
+    assert comment_ok is True
+    assert tags_ok is True
+    set_comment.assert_called_once()
+    assert set_comment.call_args.args[2].startswith("https://www.anilibria.top/")
+
+
+def test_ensure_torrent_tags_adds_and_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    t = MagicMock()
+    t.tags = "Комедия, Повседневность"
+    client.torrents_info.return_value = [t]
+    monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
+
+    ok = qb_mod._ensure_torrent_tags(
+        client,
+        "a" * 40,
+        ["Комедия", "Повседневность"],
+    )
+
+    assert ok is True
+    client.torrents_add_tags.assert_called_once()

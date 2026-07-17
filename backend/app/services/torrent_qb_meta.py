@@ -52,6 +52,54 @@ def _clean(value: Any) -> str | None:
     return None
 
 
+def extract_release_genres(release_payload: dict[str, Any]) -> list[str]:
+    """Имена жанров релиза для qBittorrent Tags (порядок как в API, без дублей)."""
+    raw = release_payload.get("genres")
+    if not isinstance(raw, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        name: str | None = None
+        if isinstance(item, dict):
+            name = _clean(item.get("name"))
+        elif isinstance(item, str):
+            name = _clean(item)
+        if not name:
+            continue
+        # Запятая в qB — разделитель тегов.
+        name = name.replace(",", " ").strip()
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def genres_from_quality_json(quality_json: dict[str, Any] | None) -> list[str]:
+    """Жанры, сохранённые в torrent_archive.quality_json."""
+    if not isinstance(quality_json, dict):
+        return []
+    raw = quality_json.get("genres")
+    if not isinstance(raw, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = _clean(item) if isinstance(item, str) else None
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
 def extract_release_names(release_payload: dict[str, Any]) -> tuple[str | None, str | None]:
     """(русское main, оригинальное english)."""
     name = release_payload.get("name")

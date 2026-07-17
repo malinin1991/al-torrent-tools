@@ -101,7 +101,7 @@ def test_retry_waiting_master_submits_when_api_ok(monkeypatch) -> None:
         return_value=SimpleNamespace(host="h", port=1, username="u", password_encrypted="p")
     )
     service.load_torrent_bytes_from_archive = MagicMock(return_value=b"torrent")  # type: ignore[method-assign]
-    service._resolve_qb_meta = MagicMock(return_value=(None, None, None))  # type: ignore[method-assign]
+    service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
     service.mark_master_added = MagicMock()  # type: ignore[method-assign]
     service.mark_cancelled = MagicMock()  # type: ignore[method-assign]
 
@@ -115,7 +115,7 @@ def test_retry_waiting_master_submits_when_api_ok(monkeypatch) -> None:
     )
     qb = MagicMock()
     monkeypatch.setattr("app.jobs.waiting_master_retry.qbittorrentapi.Client", MagicMock(return_value=qb))
-    monkeypatch.setattr("app.jobs.waiting_master_retry.qb_add_torrent", MagicMock(return_value=True))
+    monkeypatch.setattr("app.jobs.waiting_master_retry.qb_add_torrent", MagicMock(return_value=(True, True, True)))
     al = MagicMock()
     al.passkey = ""
     al.torrent_exists = AsyncMock(side_effect=[True])

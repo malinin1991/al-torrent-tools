@@ -9,6 +9,7 @@ def test_backfill_qb_comments_from_archive_sets_present_only(monkeypatch) -> Non
     archive = SimpleNamespace(
         info_hash="a" * 40,
         release_alias="lets-go-kaiki-gumi",
+        quality_json={},
     )
     db.scalars.return_value.all.return_value = [archive]
 

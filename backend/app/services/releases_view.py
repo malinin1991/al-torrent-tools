@@ -10,7 +10,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import TorrentArchive, TorrentPipeline
-from app.services.torrent_qb_meta import build_release_torrents_url, resolve_anilibria_site_url
+from app.services.torrent_qb_meta import (
+    build_release_torrents_url,
+    genres_from_quality_json,
+    resolve_anilibria_site_url,
+)
 
 
 @dataclass
@@ -36,6 +40,7 @@ class ReleaseGroup:
     last_updated: datetime | None
     torrent_count: int
     release_url: str | None
+    genres: list[str]
     torrents: list[ReleaseTorrentRow]
 
 
@@ -128,6 +133,13 @@ def list_release_groups(
         items = by_release.get(release_id) or []
         head = items[0] if items else None
         stats = stats_by_id[release_id]
+        genres: list[str] = []
+        for item in items:
+            genres = genres_from_quality_json(
+                item.quality_json if isinstance(item.quality_json, dict) else None
+            )
+            if genres:
+                break
         torrents = []
         for item in items:
             status, error = pipeline_by_hash.get(item.info_hash.lower(), (None, None))
@@ -157,6 +169,7 @@ def list_release_groups(
                     head.release_alias if head else None,
                     site_url=site_url,
                 ),
+                genres=genres,
                 torrents=torrents,
             )
         )
