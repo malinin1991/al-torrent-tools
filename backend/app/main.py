@@ -743,7 +743,7 @@ async def run_job_action(
     dry_run: bool = Form(default=True),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    params = {"dry_run": dry_run} if job_type == "cleanup" else {}
+    params = {"dry_run": dry_run} if job_type in {"cleanup", "orphan_cleanup"} else {}
     try:
         job = job_runner.create_job(db, job_type, params)
     except UnknownJobTypeError as exc:

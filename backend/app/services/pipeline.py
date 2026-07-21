@@ -250,7 +250,61 @@ class TorrentPipelineService:
 
         pipeline = claimed
         self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
-        return self._add_to_slave(pipeline, torrent_bytes)
+        result = self._add_to_slave(pipeline, torrent_bytes)
+        self._enqueue_hash_torrent(result)
+        return result
+
+    def _enqueue_hash_torrent(self, pipeline: TorrentPipeline) -> None:
+        """После master_complete — фоновый hash_torrent без блокировки slave."""
+        from app.api.rest import job_runner
+        from app.db.models import TorrentArchive
+        from app.services.job_runner import JobAlreadyRunningError, UnknownJobTypeError
+
+        archive = self._db.scalar(
+            select(TorrentArchive)
+            .where(
+                (TorrentArchive.info_hash == pipeline.info_hash)
+                | (TorrentArchive.torrent_id == pipeline.torrent_id)
+            )
+            .order_by(TorrentArchive.id.desc())
+            .limit(1)
+        )
+        if archive is not None and not archive.api_present:
+            self._add_log(
+                f"Pipeline {pipeline.id}: hash_torrent пропуск (api_present=false)",
+                "debug",
+            )
+            return
+        try:
+            job = job_runner.create_job(
+                self._db,
+                "hash_torrent",
+                {
+                    "info_hash": pipeline.info_hash,
+                    "torrent_id": pipeline.torrent_id,
+                    "release_id": pipeline.release_id,
+                },
+            )
+            job_runner.schedule_job(job.id)
+            self._add_log(
+                f"Pipeline {pipeline.id}: поставлен hash_torrent job_id={job.id}",
+                "debug",
+            )
+        except JobAlreadyRunningError as exc:
+            self._add_log(
+                f"Pipeline {pipeline.id}: hash_torrent уже в очереди (job_id={exc.running_job_id})",
+                "debug",
+            )
+        except UnknownJobTypeError:
+            self._add_log(
+                f"Pipeline {pipeline.id}: hash_torrent не зарегистрирован",
+                "warning",
+            )
+        except Exception as exc:
+            self._add_log(
+                f"Pipeline {pipeline.id}: не удалось поставить hash_torrent: {exc}",
+                "warning",
+            )
 
     def _add_to_slave(self, pipeline: TorrentPipeline, torrent_bytes: bytes) -> TorrentPipeline:
         try:

@@ -1,10 +1,12 @@
 import asyncio
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import JobLog, Setting
+from app.db.models import JobLog, Setting, TorrentArchive
+from app.services.file_tracker import mark_missing_api_present_false
 from app.services.release_checkpoint import normalize_api_datetime
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
@@ -106,6 +108,7 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     total_stats = TorrentProcessor.empty_release_stats()
     batch_stats = TorrentProcessor.empty_release_stats()
     batch_releases = 0
+    seen_torrent_ids: set[int] = set()
 
     while page <= total_pages:
         payload = await al_client.catalog_releases(
@@ -155,6 +158,15 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 list_fresh_at=fresh_at,
                 refresh_qb_meta=True,
             )
+            # present torrent_ids уже выставлены в process_release; собираем для финального sweep
+            present = db.scalars(
+                select(TorrentArchive.torrent_id).where(
+                    TorrentArchive.release_id == release_id,
+                    TorrentArchive.api_present.is_(True),
+                )
+            ).all()
+            seen_torrent_ids.update(int(x) for x in present)
+
             TorrentProcessor.merge_release_stats(batch_stats, part)
             TorrentProcessor.merge_release_stats(total_stats, part)
 
@@ -176,6 +188,17 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 )
                 await asyncio.sleep(pause_sec)
         page += 1
+
+    if seen_torrent_ids:
+        archived = mark_missing_api_present_false(db, seen_torrent_ids)
+        _add_log(db, job_id, f"Full sync: api_present=false для отсутствующих в API: {archived}")
+    else:
+        _add_log(
+            db,
+            job_id,
+            "Full sync: пропуск api_present sweep — каталог API не вернул торренты",
+            "warning",
+        )
 
     if batch_releases > 0:
         _flush_batch_summary(

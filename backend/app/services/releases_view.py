@@ -2,19 +2,32 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import TorrentArchive, TorrentPipeline, TrackedRelease
+from app.db.models import FileChangeEvent, TorrentArchive, TorrentFile, TorrentPipeline, TrackedRelease
+from app.services.file_tracker import file_status_for_ui
 from app.services.torrent_qb_meta import (
     build_release_torrents_url,
     genres_from_quality_json,
     resolve_anilibria_site_url,
 )
+
+# События новее этого окна влияют на бейдж в UI.
+_EVENT_WINDOW = timedelta(days=30)
+
+
+@dataclass
+class ReleaseFileRow:
+    relative_path: str
+    size: int
+    selected: bool
+    full_path: str | None
+    status: str  # new|changed|removed|missing|ok
 
 
 @dataclass
@@ -29,6 +42,8 @@ class ReleaseTorrentRow:
     created_at: datetime | None
     pipeline_status: str | None
     pipeline_error: str | None
+    api_present: bool = True
+    files: list[ReleaseFileRow] = field(default_factory=list)
 
 
 @dataclass
@@ -42,6 +57,7 @@ class ReleaseGroup:
     release_url: str | None
     genres: list[str]
     torrents: list[ReleaseTorrentRow]
+    archived_torrents: list[ReleaseTorrentRow] = field(default_factory=list)
     tracked: bool = False
     track_source: str | None = None
 
@@ -124,6 +140,8 @@ def list_release_groups(
 
     pipeline_by_hash = _latest_pipeline_by_hash(db, [a.info_hash for a in archives])
     tracked_by_id = _tracked_by_release_id(db, release_ids)
+    files_by_hash = _files_by_hash(db, [a.info_hash for a in archives])
+    events_by_torrent = _recent_events_by_torrent(db, release_ids)
     site_url = resolve_anilibria_site_url()
 
     by_release: dict[int, list[TorrentArchive]] = {rid: [] for rid in release_ids}
@@ -143,23 +161,32 @@ def list_release_groups(
             )
             if genres:
                 break
-        torrents = []
+        active: list[ReleaseTorrentRow] = []
+        archived: list[ReleaseTorrentRow] = []
         for item in items:
             status, error = pipeline_by_hash.get(item.info_hash.lower(), (None, None))
-            torrents.append(
-                ReleaseTorrentRow(
-                    archive_id=item.id,
-                    torrent_id=item.torrent_id,
-                    info_hash=item.info_hash,
-                    torrent_type=item.torrent_type,
-                    torrent_description=item.torrent_description,
-                    file_size=item.file_size,
-                    file_size_label=format_bytes(item.file_size),
-                    created_at=item.created_at,
-                    pipeline_status=status,
-                    pipeline_error=error,
-                )
+            file_rows = _build_file_rows(
+                files_by_hash.get(item.info_hash.lower(), []),
+                events_by_torrent.get(item.torrent_id, {}),
             )
+            row = ReleaseTorrentRow(
+                archive_id=item.id,
+                torrent_id=item.torrent_id,
+                info_hash=item.info_hash,
+                torrent_type=item.torrent_type,
+                torrent_description=item.torrent_description,
+                file_size=item.file_size,
+                file_size_label=format_bytes(item.file_size),
+                created_at=item.created_at,
+                pipeline_status=status,
+                pipeline_error=error,
+                api_present=bool(getattr(item, "api_present", True)),
+                files=file_rows,
+            )
+            if row.api_present:
+                active.append(row)
+            else:
+                archived.append(row)
         tracked_row = tracked_by_id.get(release_id)
         groups.append(
             ReleaseGroup(
@@ -174,7 +201,8 @@ def list_release_groups(
                     site_url=site_url,
                 ),
                 genres=genres,
-                torrents=torrents,
+                torrents=active,
+                archived_torrents=archived,
                 tracked=bool(tracked_row and tracked_row.enabled),
                 track_source=tracked_row.source if tracked_row else None,
             )
@@ -188,6 +216,81 @@ def list_release_groups(
         "total": total,
         "total_pages": total_pages,
     }
+
+
+def split_active_archived(
+    torrents: list[ReleaseTorrentRow],
+) -> tuple[list[ReleaseTorrentRow], list[ReleaseTorrentRow]]:
+    """Хелпер для тестов: разделение по api_present."""
+    active = [t for t in torrents if t.api_present]
+    archived = [t for t in torrents if not t.api_present]
+    return active, archived
+
+
+def _build_file_rows(
+    files: list[TorrentFile],
+    events_by_path: dict[str, set[str]],
+) -> list[ReleaseFileRow]:
+    rows: list[ReleaseFileRow] = []
+    for item in files:
+        kinds = events_by_path.get(item.relative_path, set())
+        rows.append(
+            ReleaseFileRow(
+                relative_path=item.relative_path,
+                size=int(item.size or 0),
+                selected=bool(item.selected),
+                full_path=item.full_path,
+                status=file_status_for_ui(
+                    relative_path=item.relative_path,
+                    full_path=item.full_path,
+                    recent_kinds=kinds,
+                ),
+            )
+        )
+    return rows
+
+
+def _files_by_hash(db: Session, hashes: list[str]) -> dict[str, list[TorrentFile]]:
+    normalized = sorted({(h or "").strip().lower() for h in hashes if h})
+    if not normalized:
+        return {}
+    rows = list(
+        db.scalars(
+            select(TorrentFile)
+            .where(TorrentFile.info_hash.in_(normalized))
+            .order_by(TorrentFile.file_index.asc(), TorrentFile.id.asc())
+        ).all()
+    )
+    result: dict[str, list[TorrentFile]] = {}
+    for row in rows:
+        result.setdefault(row.info_hash.lower(), []).append(row)
+    return result
+
+
+def _recent_events_by_torrent(
+    db: Session,
+    release_ids: list[int],
+) -> dict[int, dict[str, set[str]]]:
+    """torrent_id → relative_path → set(kinds)."""
+    if not release_ids:
+        return {}
+    since = datetime.utcnow() - _EVENT_WINDOW
+    rows = db.scalars(
+        select(FileChangeEvent).where(
+            FileChangeEvent.release_id.in_(release_ids),
+            FileChangeEvent.created_at >= since,
+        )
+    ).all()
+    result: dict[int, dict[str, set[str]]] = {}
+    for row in rows:
+        if row.torrent_id is None:
+            continue
+        path_key = row.relative_path or row.full_path or ""
+        if not path_key:
+            continue
+        by_path = result.setdefault(row.torrent_id, {})
+        by_path.setdefault(path_key, set()).add(row.kind)
+    return result
 
 
 def _latest_pipeline_by_hash(

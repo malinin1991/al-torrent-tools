@@ -29,11 +29,14 @@ def test_list_release_groups_exposes_genres() -> None:
         file_size=1024,
         created_at=None,
         quality_json={"genres": ["Комедия", "Романтика"]},
+        api_present=True,
     )
     db.scalars.side_effect = [
         MagicMock(all=lambda: [archive]),  # archives
         MagicMock(all=lambda: []),  # pipelines
         MagicMock(all=lambda: []),  # tracked
+        MagicMock(all=lambda: []),  # torrent_files
+        MagicMock(all=lambda: []),  # events
     ]
 
     result = list_release_groups(db, page=1, per_page=30)
@@ -42,3 +45,5 @@ def test_list_release_groups_exposes_genres() -> None:
     assert result["groups"][0].genres == ["Комедия", "Романтика"]
     assert result["groups"][0].tracked is False
     assert result["groups"][0].track_source is None
+    assert result["groups"][0].torrents[0].api_present is True
+    assert result["groups"][0].archived_torrents == []

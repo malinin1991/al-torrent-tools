@@ -29,6 +29,7 @@ from app.services.release_checkpoint import (
 )
 from app.services.telegram_notify import enqueue_pipeline_telegram_notification
 from app.services.torrent_archive import TorrentArchiveService
+from app.services.file_tracker import update_api_present_for_release
 from app.services.torrent_qb_meta import (
     build_qb_torrent_name_from_payloads,
     build_release_torrents_url,
@@ -544,6 +545,7 @@ class TorrentProcessor:
         torrents = self._iter_torrents(torrents_payload)
         if not torrents:
             self._add_log(f"Релиз {release_id}: торренты не найдены", "debug")
+            update_api_present_for_release(self._db, release_id, set())
             mark_release_processed(
                 self._db,
                 release_id,
@@ -554,6 +556,13 @@ class TorrentProcessor:
             return self.empty_release_stats()
 
         fingerprint = torrents_fingerprint(torrents)
+        present_ids: set[int] = set()
+        for torrent in torrents:
+            tid = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
+            if tid is not None:
+                present_ids.add(tid)
+        update_api_present_for_release(self._db, release_id, present_ids)
+
         all_seen = True
         for torrent in torrents:
             torrent_id = self._to_int(torrent.get("id") or torrent.get("torrent_id"))

@@ -8,7 +8,10 @@ from app.db.models import CleanupRule, ExtraUrl, Job, JobLog, QbClient, Setting
 from app.db.session import get_db
 from app.jobs.cleanup import run_cleanup
 from app.jobs.full_sync import run_full_sync
+from app.jobs.hash_backfill import run_hash_backfill
+from app.jobs.hash_torrent import run_hash_torrent
 from app.jobs.ongoing import run_ongoing
+from app.jobs.orphan_cleanup import run_orphan_cleanup
 from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback, run_pipeline_reconcile
 from app.jobs.waiting_master_retry import run_waiting_master_retry
 from app.jobs.waiting_slave_retry import run_waiting_slave_retry
@@ -31,6 +34,9 @@ job_runner.register("cleanup", run_cleanup)
 job_runner.register("pipeline_reconcile", run_pipeline_reconcile)
 job_runner.register("waiting_master_retry", run_waiting_master_retry)
 job_runner.register("waiting_slave_retry", run_waiting_slave_retry)
+job_runner.register("hash_torrent", run_hash_torrent)
+job_runner.register("hash_backfill", run_hash_backfill)
+job_runner.register("orphan_cleanup", run_orphan_cleanup)
 
 
 class JobCreateIn(BaseModel):
@@ -333,6 +339,27 @@ async def run_full_sync_job(db: Session = Depends(get_db)) -> dict:
 async def run_cleanup_job(dry_run: bool = True, db: Session = Depends(get_db)) -> dict:
     # Удаление только при CLEANUP_ALLOW_DELETE=true и ?dry_run=false; иначе только отчёт.
     job = _create_and_run_job(db, "cleanup", {"dry_run": dry_run})
+    job_runner.schedule_job(job.id)
+    return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
+
+
+@router.post("/jobs/hash-backfill/run")
+async def run_hash_backfill_job(
+    reset_checkpoint: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    job = _create_and_run_job(db, "hash_backfill", {"reset_checkpoint": reset_checkpoint})
+    job_runner.schedule_job(job.id)
+    return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
+
+
+@router.post("/jobs/orphan-cleanup/run")
+async def run_orphan_cleanup_job(
+    dry_run: bool = True,
+    apply: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    job = _create_and_run_job(db, "orphan_cleanup", {"dry_run": dry_run, "apply": apply})
     job_runner.schedule_job(job.id)
     return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
 

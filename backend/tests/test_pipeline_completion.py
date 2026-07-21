@@ -108,6 +108,7 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     claimed = _pipeline(status=TorrentPipelineService.STATUS_MASTER_COMPLETE)
 
     service._claim_master_complete = MagicMock(return_value=claimed)  # type: ignore[method-assign]
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
     slave = SimpleNamespace(
         host="slave.local",
         port=8080,
@@ -161,6 +162,7 @@ def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPa
     pipeline = _pipeline(status=TorrentPipelineService.STATUS_MASTER_COMPLETE)
 
     service._claim_master_complete = MagicMock()  # type: ignore[method-assign]
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
     slave = SimpleNamespace(host="slave.local", port=8080, username="u", password_encrypted="p")
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
     service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
@@ -299,6 +301,7 @@ def test_process_completion_slave_auth_error_goes_waiting(monkeypatch: pytest.Mo
     service = TorrentPipelineService(db)
     pipeline = _pipeline(status=TorrentPipelineService.STATUS_MASTER_COMPLETE)
 
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
     slave = SimpleNamespace(host="slave.local", port=8080, username="u", password_encrypted="p")
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
     service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
@@ -333,6 +336,7 @@ def test_process_completion_slave_unavailable_goes_waiting(monkeypatch: pytest.M
     claimed = _pipeline(status=TorrentPipelineService.STATUS_MASTER_COMPLETE)
 
     service._claim_master_complete = MagicMock(return_value=claimed)  # type: ignore[method-assign]
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
     slave = SimpleNamespace(host="slave.local", port=8080, username="u", password_encrypted="p")
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
     service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
@@ -365,6 +369,7 @@ def test_process_completion_conflict_on_slave_is_success(monkeypatch: pytest.Mon
     claimed = _pipeline(status=TorrentPipelineService.STATUS_MASTER_COMPLETE)
 
     service._claim_master_complete = MagicMock(return_value=claimed)  # type: ignore[method-assign]
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
     slave = SimpleNamespace(
         host="slave.local",
         port=8080,

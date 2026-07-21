@@ -6,6 +6,11 @@
   <div class="row">
     <button class="btn" hx-post="/actions/run/ongoing" hx-target="#action-result" hx-swap="innerHTML">Запустить ongoing</button>
     <button class="btn" hx-post="/actions/run/full_sync" hx-target="#action-result" hx-swap="innerHTML">Запустить full sync</button>
+    <button class="btn" hx-post="/actions/run/hash_backfill" hx-target="#action-result" hx-swap="innerHTML">Hash backfill</button>
+    <form hx-post="/actions/run/orphan_cleanup" hx-target="#action-result" hx-swap="innerHTML">
+      <input type="hidden" name="dry_run" value="true" />
+      <button class="btn" type="submit">Orphan cleanup (dry-run)</button>
+    </form>
     <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML">
       <input type="hidden" name="dry_run" value="true" />
       <button class="btn" type="submit">Cleanup (dry-run)</button>

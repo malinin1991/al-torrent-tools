@@ -23,9 +23,11 @@ services:
       - .env
     environment:
       TORRENT_STORAGE_DIR: /app/data/torrents
+      ANILIBRIA_MEDIA_ROOT: /anilibria
       APP_ENV: prod
     volumes:
       - /mnt/user/appdata/al-torrent-tools/torrents:/app/data/torrents
+      - /mnt/user/anilibria:/anilibria:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,9 +65,11 @@ services:
       - .env
     environment:
       TORRENT_STORAGE_DIR: /app/data/torrents
+      ANILIBRIA_MEDIA_ROOT: /anilibria
       APP_ENV: prod
     volumes:
       - /mnt/user/appdata/al-torrent-tools/torrents:/app/data/torrents
+      - /mnt/user/anilibria:/anilibria:ro
     depends_on:
       postgres:
         condition: service_healthy

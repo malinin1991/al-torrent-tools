@@ -11,3 +11,4 @@ qbittorrent-api
 pydantic-settings
 pytest
 python-telegram-bot>=21.0
+blake3

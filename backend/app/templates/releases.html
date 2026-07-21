@@ -59,6 +59,7 @@
           <th>Pipeline</th>
           <th>Добавлен</th>
           <th>Hash</th>
+          <th>Файлы</th>
           <th></th>
         </tr>
       </thead>
@@ -82,13 +83,76 @@
             {% else %}-{% endif %}
           </td>
           <td><code>{{ t.info_hash[:12] }}…</code></td>
+          <td>
+            {% if t.files %}
+            <details>
+              <summary class="muted">{{ t.files|length }} файл.</summary>
+              <ul class="file-list" style="margin:6px 0 0; padding-left:16px; font-size:0.9em;">
+                {% for f in t.files %}
+                <li>
+                  {% if f.status == 'new' %}<span class="badge badge-ok">новый</span>
+                  {% elif f.status == 'changed' %}<span class="badge">изменён</span>
+                  {% elif f.status == 'removed' %}<span class="badge badge-warn">удалён</span>
+                  {% elif f.status == 'missing' %}<span class="badge badge-warn">missing</span>
+                  {% else %}<span class="badge muted">ok</span>{% endif %}
+                  <code>{{ f.relative_path }}</code>
+                </li>
+                {% endfor %}
+              </ul>
+            </details>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
           <td><a class="btn" href="/api/archive/{{ t.archive_id }}/download">Скачать</a></td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="muted">Нет торрентов</td></tr>
+        <tr><td colspan="8" class="muted">Нет актуальных торрентов</td></tr>
         {% endfor %}
       </tbody>
     </table>
+
+    {% if group.archived_torrents %}
+    <details style="margin-top:12px;">
+      <summary class="muted">Архивные торренты ({{ group.archived_torrents|length }})</summary>
+      <table style="margin-top:8px;">
+        <thead>
+          <tr>
+            <th>Тип</th>
+            <th>Серии</th>
+            <th>Размер</th>
+            <th>Pipeline</th>
+            <th>Добавлен</th>
+            <th>Hash</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in group.archived_torrents %}
+          <tr>
+            <td>{{ t.torrent_type or "-" }}</td>
+            <td>{{ t.torrent_description or "-" }}</td>
+            <td>{{ t.file_size_label }}</td>
+            <td>
+              {% if t.pipeline_status %}
+              <span class="job-status job-status-{{ t.pipeline_status }}">{{ t.pipeline_status }}</span>
+              {% else %}
+              <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if t.created_at %}
+              <time class="local-time" datetime="{{ t.created_at|as_utc_iso }}">{{ t.created_at }}</time>
+              {% else %}-{% endif %}
+            </td>
+            <td><code>{{ t.info_hash[:12] }}…</code></td>
+            <td><a class="btn" href="/api/archive/{{ t.archive_id }}/download">Скачать</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+    {% endif %}
   </div>
 </details>
 {% else %}

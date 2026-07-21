@@ -30,6 +30,11 @@ _STALE_STATUSES = (STATUS_RUNNING, STATUS_PENDING)
 # После kill соединение рвётся → lock свободен → orphan reclaim сразу отменяет джоб.
 _JOB_RUN_LOCK_CLASS = 8721
 
+# Типы, допускающие несколько pending/running; уникальность — по ключу в params.
+_CONCURRENT_UNIQUE_PARAM: dict[str, str] = {
+    "hash_torrent": "info_hash",
+}
+
 # Чтобы background tasks не собрал GC до завершения.
 _background_tasks: set[asyncio.Task[Any]] = set()
 _active_job_ids: set[int] = set()
@@ -269,18 +274,33 @@ class JobRunner:
         if job_type not in self._handlers:
             raise UnknownJobTypeError(job_type)
 
+        params = params or {}
         # Сериализует create одного типа между api/worker (PostgreSQL).
         db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _advisory_lock_key(job_type)})
 
-        running = db.scalar(
-            select(Job)
-            .where(Job.type == job_type, Job.status.in_((STATUS_RUNNING, STATUS_PENDING)))
-            .limit(1)
-        )
-        if running is not None:
-            raise JobAlreadyRunningError(job_type, running.id)
+        unique_param = _CONCURRENT_UNIQUE_PARAM.get(job_type)
+        if unique_param is not None:
+            unique_value = str(params.get(unique_param) or "").strip().lower()
+            active = list(
+                db.scalars(
+                    select(Job).where(Job.type == job_type, Job.status.in_((STATUS_RUNNING, STATUS_PENDING)))
+                ).all()
+            )
+            for existing in active:
+                existing_params = existing.params_json or {}
+                existing_value = str(existing_params.get(unique_param) or "").strip().lower()
+                if unique_value and existing_value == unique_value:
+                    raise JobAlreadyRunningError(job_type, existing.id)
+        else:
+            running = db.scalar(
+                select(Job)
+                .where(Job.type == job_type, Job.status.in_((STATUS_RUNNING, STATUS_PENDING)))
+                .limit(1)
+            )
+            if running is not None:
+                raise JobAlreadyRunningError(job_type, running.id)
 
-        job = Job(type=job_type, status=STATUS_PENDING, params_json=params or {})
+        job = Job(type=job_type, status=STATUS_PENDING, params_json=params)
         db.add(job)
         db.commit()
         db.refresh(job)

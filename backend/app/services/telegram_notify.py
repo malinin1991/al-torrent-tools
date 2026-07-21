@@ -176,6 +176,131 @@ def build_torrent_notification_text(
     return message
 
 
+_FILE_KIND_ICONS = {
+    "added": "➕",
+    "removed": "➖",
+    "modified": "✏️",
+    "missing": "⚠️",
+    "orphan": "🗑",
+}
+
+
+def build_file_changes_notification_text(
+    *,
+    title: str,
+    alias: str,
+    torrent_label: str,
+    changes: list[dict[str, Any]],
+) -> str:
+    """MarkdownV2: изменения файлов для tracked-релиза."""
+    message = (
+        f"📁 *Изменения файлов для [{escape_markdown_v2(title)}]"
+        f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(alias)})*\n\n"
+    )
+    label = torrent_label.strip() or "торрент"
+    message += f"Torrent: *{escape_markdown_v2(label)}*\n"
+    for item in changes:
+        kind = str(item.get("kind") or "")
+        icon = _FILE_KIND_ICONS.get(kind, "•")
+        path = str(item.get("relative_path") or item.get("full_path") or "?")
+        suffix = ""
+        if kind == "modified":
+            suffix = " \\(содержимое\\)"
+        elif kind == "missing":
+            suffix = " \\(нет на диске\\)"
+        elif kind == "orphan":
+            suffix = " \\(orphan\\)"
+        message += f"  {icon} `{escape_markdown_v2(path)}`{suffix}\n"
+    return message
+
+
+def enqueue_file_changes_notification(
+    db: Session,
+    *,
+    release_id: int,
+    torrent_id: int | None,
+    events: list[Any],
+    archive: Any | None = None,
+) -> TelegramOutbox | None:
+    """Пишет в outbox уведомление об изменениях файлов (pipeline_id=null)."""
+    if not events:
+        return None
+    if not is_release_tracked(db, release_id):
+        return None
+    if not is_telegram_enabled(db):
+        return None
+    chat_id = get_telegram_chat_id(db)
+    if not chat_id:
+        return None
+
+    tracked = db.get(TrackedRelease, release_id)
+    alias = ""
+    title = ""
+    if tracked is not None:
+        alias = tracked.release_alias or ""
+        title = tracked.title or alias
+    torrent_label = ""
+    if archive is not None:
+        parts = [
+            getattr(archive, "torrent_type", None) or "",
+            getattr(archive, "torrent_description", None) or "",
+        ]
+        torrent_label = " · ".join(p for p in parts if p)
+        if not alias and getattr(archive, "release_alias", None):
+            alias = str(archive.release_alias)
+        if not title and getattr(archive, "anime_name", None):
+            title = str(archive.anime_name)
+    if not title:
+        title = alias or str(release_id)
+    if not alias:
+        alias = str(release_id)
+
+    changes = [
+        {
+            "kind": getattr(ev, "kind", None) or (ev.get("kind") if isinstance(ev, dict) else ""),
+            "relative_path": getattr(ev, "relative_path", None)
+            if not isinstance(ev, dict)
+            else ev.get("relative_path"),
+            "full_path": getattr(ev, "full_path", None)
+            if not isinstance(ev, dict)
+            else ev.get("full_path"),
+        }
+        for ev in events
+    ]
+    text = build_file_changes_notification_text(
+        title=title,
+        alias=alias,
+        torrent_label=torrent_label or f"torrent_id={torrent_id}",
+        changes=changes,
+    )
+    payload = {
+        "parse_mode": "MarkdownV2",
+        "disable_web_page_preview": True,
+        "text": text,
+        "kind": "file_changes",
+        "release_id": release_id,
+        "torrent_id": torrent_id,
+        "title": title,
+        "alias": alias,
+    }
+    outbox = TelegramOutbox(
+        pipeline_id=None,
+        chat_id=chat_id,
+        payload_json=payload,
+        status=OUTBOX_PENDING,
+        attempts=0,
+        created_at=datetime.utcnow(),
+    )
+    db.add(outbox)
+    now = datetime.utcnow()
+    for ev in events:
+        if hasattr(ev, "notified_at"):
+            ev.notified_at = now
+    db.commit()
+    db.refresh(outbox)
+    return outbox
+
+
 _CODEC_FAMILIES = ("AVC", "HEVC", "AV1")
 
 

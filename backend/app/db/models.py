@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -129,7 +129,56 @@ class TorrentArchive(Base):
     quality_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # True = торрент сейчас в ответе AniLibria API; False = архивный (снят с раздачи).
+    api_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TorrentFile(Base):
+    """Ожидаемый состав файлов из .torrent + приоритеты qB master."""
+
+    __tablename__ = "torrent_files"
+    __table_args__ = (UniqueConstraint("info_hash", "relative_path", name="uq_torrent_files_hash_path"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    torrent_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    info_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    release_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    file_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    full_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DiskFileHash(Base):
+    """Снимок BLAKE3 на диске (gate size+mtime)."""
+
+    __tablename__ = "disk_file_hashes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    full_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    mtime: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    hash_algo: Mapped[str] = mapped_column(String(32), nullable=False, default="blake3")
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_hashed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class FileChangeEvent(Base):
+    """События изменений файлов для UI и Telegram."""
+
+    __tablename__ = "file_change_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    release_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    torrent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    full_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    details_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class CleanupRule(Base):

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     pipeline_reconcile_interval_sec: int = 600
 
     torrent_storage_dir: str = default_torrent_storage_dir()
+    # Корень медиа AniLibria на диске (save_path qB master). Сканирование только под ним.
+    anilibria_media_root: str = "/anilibria"
+    # Чанк BLAKE3 (~4 MiB, как в AniLibria_hasher).
+    file_hash_chunk_size: int = 4_194_304
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
