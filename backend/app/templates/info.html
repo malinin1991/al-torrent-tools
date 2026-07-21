@@ -83,6 +83,47 @@
   </table>
 </section>
 
+<section class="card">
+  <h2 style="margin-top:0;">Telegram</h2>
+  <table class="info-table">
+    <tr>
+      <th>Бот (сервис)</th>
+      <td>
+        {% if status.telegram.bot.ok %}
+        <span class="badge badge-ok">{{ status.telegram.bot.detail }}</span>
+        {% else %}
+        <span class="badge badge-warn">{{ status.telegram.bot.detail }}</span>
+        {% endif %}
+        {% if status.telegram.bot.heartbeat_age_sec is not none %}
+        <span class="muted">heartbeat {{ status.telegram.bot.heartbeat_age_sec }}с назад</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>API Telegram</th>
+      <td>
+        {% if status.telegram.api.ok %}
+        <span class="badge badge-ok">{{ status.telegram.api.detail }}</span>
+        {% if status.telegram.api.username %}<span class="muted">{{ status.telegram.api.username }}</span>{% endif %}
+        {% else %}
+        <span class="badge badge-warn">{{ status.telegram.api.detail }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr><th>Bot API URL</th><td><code>{{ status.telegram.base_url }}</code></td></tr>
+    <tr>
+      <th>Конфиг</th>
+      <td class="row" style="flex-wrap:wrap; gap:8px;">
+        {% if status.telegram.enabled %}<span class="badge badge-ok">включен</span>{% else %}<span class="badge badge-warn">выключен</span>{% endif %}
+        {% if status.telegram.has_token %}<span class="badge badge-ok">токен</span>{% else %}<span class="badge badge-warn">токен</span>{% endif %}
+        {% if status.telegram.has_chat_id %}<span class="badge badge-ok">chat_id</span>{% else %}<span class="badge badge-warn">chat_id</span>{% endif %}
+      </td>
+    </tr>
+    <tr><th>Отслеживаемых</th><td>{{ status.telegram.tracked_count }}</td></tr>
+    <tr><th>Очередь TG</th><td>{{ status.telegram.pending_outbox }} pending</td></tr>
+  </table>
+</section>
+
 <div class="grid">
   {% for role, qb in [("master", status.qb.master), ("slave", status.qb.slave)] %}
   <section class="card">

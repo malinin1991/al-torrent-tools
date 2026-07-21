@@ -150,6 +150,9 @@ async def _reclaim_stale_jobs() -> None:
 
 
 async def main() -> None:
+    from app.logging_filters import setup_redacted_logging
+
+    setup_redacted_logging(level=logging.INFO)
     with SessionLocal() as db:
         orphans = reclaim_orphan_jobs(
             db,

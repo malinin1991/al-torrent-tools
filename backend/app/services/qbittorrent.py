@@ -69,10 +69,43 @@ def should_wait_for_qb(exc: BaseException) -> bool:
 
 
 def is_qb_wait_error_text(error: str | None) -> bool:
-    """Сохранённый pipeline.error похож на временную недоступность/auth qB."""
+    """Сохранённый pipeline.error — временная недоступность/auth qB (не любой failed).
+
+    Не используем should_wait_for_qb(RuntimeError(text)): слишком широко
+    (любой текст с «timeout» / «unauthorized»).
+    """
     if not error or not str(error).strip():
         return False
-    return should_wait_for_qb(RuntimeError(str(error)))
+    message = str(error).strip().lower()
+    strong = (
+        "master недоступен",
+        "slave недоступен",
+        "master не настроен",
+        "slave не настроен",
+        "ошибка авторизации",
+        "failed to connect to qbittorrent",
+        "connection refused",
+        "failed to establish",
+        "max retries exceeded",
+        "name or service not known",
+        "nodename nor servname",
+        "network is unreachable",
+        "connection reset",
+        "server disconnected",
+        "temporarily unavailable",
+        "login failed",
+        "fails authentication",
+        "incorrect password",
+        "invalid username",
+    )
+    if any(item in message for item in strong):
+        return True
+    # Слабые маркеры — только в контексте qB / master / slave.
+    if ("timeout" in message or "timed out" in message) and any(
+        ctx in message for ctx in ("qbittorrent", "master", "slave", "waiting_master", "waiting_slave")
+    ):
+        return True
+    return False
 
 
 def qb_client_wait_message(role: str, exc: BaseException | None = None, *, missing: bool = False) -> str:

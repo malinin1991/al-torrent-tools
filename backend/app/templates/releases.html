@@ -13,7 +13,12 @@
 <details class="release-block">
   <summary class="release-summary">
     <div class="release-title">
-      <strong>{{ group.anime_name or group.release_alias or ("Release #" ~ group.release_id) }}</strong>
+      <div class="release-name-row">
+        <strong>{{ group.anime_name or group.release_alias or ("Release #" ~ group.release_id) }}</strong>
+        {% if group.tracked %}
+        <span class="badge badge-ok" title="{% if group.track_source == 'bot' %}добавлено ботом{% else %}отслеживание{% endif %}">Отслеживается</span>
+        {% endif %}
+      </div>
       {% if group.release_alias and group.anime_name %}
       <span class="muted">{{ group.release_alias }}</span>
       {% endif %}

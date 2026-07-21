@@ -31,6 +31,7 @@ from app.services.releases_view import list_release_groups
 from app.services.system_status import collect_system_status
 from app.services.telegram_notify import (
     SOURCE_UI,
+    normalize_telegram_bot_api_base,
     resolve_telegram_bot_api_base,
     test_telegram_get_me,
     upsert_tracked_release,
@@ -44,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    from app.logging_filters import setup_redacted_logging
+
+    setup_redacted_logging(level=logging.INFO)
     if settings.app_env.lower() != "dev" and settings.secret_key == "change-me":
         raise RuntimeError("Для окружения вне dev требуется задать SECRET_KEY")
     resolve_torrent_storage_root().mkdir(parents=True, exist_ok=True)
@@ -348,7 +352,10 @@ async def telegram_test_settings(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     token = telegram_bot_token.strip() or get_setting_value(db, "telegram_bot_token", "")
-    base_url = telegram_bot_api_base_url.strip() or resolve_telegram_bot_api_base(db)
+    # Пустое поле формы → дефолт api.telegram.org (не сырой пустой URL).
+    base_url = normalize_telegram_bot_api_base(
+        telegram_bot_api_base_url.strip() or resolve_telegram_bot_api_base(db)
+    )
     try:
         me = await test_telegram_get_me(token=token, base_url=base_url)
         username = me.get("username") or me.get("first_name") or me.get("id")

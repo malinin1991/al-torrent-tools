@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from urllib.parse import urljoin
 
 import httpx
 from sqlalchemy import select
@@ -33,11 +32,27 @@ def escape_markdown_v2(text: str) -> str:
     return "".join(f"\\{ch}" if ch in escape_chars else ch for ch in text)
 
 
-def resolve_telegram_bot_api_base(db: Session | None) -> str:
-    raw = get_setting_value(db, "telegram_bot_api_base_url", "").strip()
+def normalize_telegram_bot_api_base(base_url: str | None) -> str:
+    """Пустой base → api.telegram.org. Не использовать urljoin с токеном (в токене есть ':')."""
+    raw = (base_url or "").strip().rstrip("/")
     if not raw:
         return DEFAULT_BOT_API_BASE
+    if not raw.lower().startswith(("http://", "https://")):
+        raw = f"https://{raw}"
     return raw.rstrip("/")
+
+
+def build_telegram_api_url(base_url: str | None, token: str, method: str) -> str:
+    """Собирает URL вида {base}/bot{token}/{method} без urljoin (токен содержит ':')."""
+    api_base = normalize_telegram_bot_api_base(base_url)
+    cleaned_token = (token or "").strip()
+    cleaned_method = (method or "").strip().lstrip("/")
+    return f"{api_base}/bot{cleaned_token}/{cleaned_method}"
+
+
+def resolve_telegram_bot_api_base(db: Session | None) -> str:
+    raw = get_setting_value(db, "telegram_bot_api_base_url", "").strip()
+    return normalize_telegram_bot_api_base(raw)
 
 
 def is_telegram_enabled(db: Session | None) -> bool:
@@ -137,16 +152,19 @@ def build_torrent_notification_text(
     alias: str,
     torrents: list[dict[str, Any]],
 ) -> str:
-    """MarkdownV2-шаблон обновления торрентов (из Anilibria Tracker Bot)."""
+    """MarkdownV2-шаблон обновления торрентов (жирный — одиночные *, не **)."""
     message = (
-        f"🔔 **Обновление для [{escape_markdown_v2(title)}]"
-        f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(alias)})**\n\n"
+        f"🔔 *Обновление для [{escape_markdown_v2(title)}]"
+        f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(alias)})*\n\n"
     )
+    if not torrents:
+        message += "ℹ️ Торренты AVC/HEVC/AV1 не найдены\\."
+        return message
     for torrent in torrents:
         label = str(torrent.get("label") or torrent.get("type") or "торрент")
         codec_obj = torrent.get("codec")
         if isinstance(codec_obj, dict):
-            codec = str(codec_obj.get("description") or "N/A")
+            codec = str(codec_obj.get("description") or codec_obj.get("label") or "N/A")
         else:
             codec = str(codec_obj or "N/A")
         description = str(torrent.get("description") or "серии не указаны")
@@ -158,6 +176,74 @@ def build_torrent_notification_text(
     return message
 
 
+_CODEC_FAMILIES = ("AVC", "HEVC", "AV1")
+
+
+def classify_torrent_codec_family(torrent: dict[str, Any]) -> str | None:
+    """AVC / HEVC / AV1 по полям codec/label/type."""
+    parts: list[str] = []
+    codec = torrent.get("codec")
+    if isinstance(codec, dict):
+        for key in ("label", "value", "description"):
+            val = codec.get(key)
+            if isinstance(val, str) and val.strip():
+                parts.append(val)
+    elif isinstance(codec, str) and codec.strip():
+        parts.append(codec)
+    for key in ("label", "type"):
+        val = torrent.get(key)
+        if isinstance(val, dict):
+            for sub in ("label", "value", "description"):
+                text = val.get(sub)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+        elif isinstance(val, str) and val.strip():
+            parts.append(val)
+    blob = " ".join(parts).casefold()
+    if "av1" in blob:
+        return "AV1"
+    if "hevc" in blob or "x265" in blob or "h.265" in blob or "h265" in blob:
+        return "HEVC"
+    if "avc" in blob or "x264" in blob or "h.264" in blob or "h264" in blob:
+        return "AVC"
+    return None
+
+
+def _torrent_sort_key(torrent: dict[str, Any]) -> tuple[Any, ...]:
+    """Новее выше: updated_at / created_at / id."""
+    return (
+        str(torrent.get("updated_at") or ""),
+        str(torrent.get("created_at") or ""),
+        int(torrent["id"]) if isinstance(torrent.get("id"), int) else 0,
+    )
+
+
+def pick_latest_codec_torrents(torrents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """По одному последнему торренту на семейство кодека: AVC, HEVC, AV1 (если есть)."""
+    best: dict[str, dict[str, Any]] = {}
+    for item in torrents:
+        if not isinstance(item, dict):
+            continue
+        family = classify_torrent_codec_family(item)
+        if family is None:
+            continue
+        prev = best.get(family)
+        if prev is None or _torrent_sort_key(item) > _torrent_sort_key(prev):
+            best[family] = item
+    return [best[name] for name in _CODEC_FAMILIES if name in best]
+
+
+def normalize_torrents_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in ("data", "list", "items", "torrents"):
+            nested = payload.get(key)
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
 def enqueue_pipeline_telegram_notification(
     db: Session,
     pipeline: TorrentPipeline,
@@ -166,6 +252,10 @@ def enqueue_pipeline_telegram_notification(
     torrent_payload: dict[str, Any] | None = None,
 ) -> TorrentPipeline:
     """Если релиз отслеживается и TG включён — пишем в outbox; иначе tg_status=skipped."""
+    # Уже в очереди / отправлено — не дублируем (waiting_master → master_added).
+    if pipeline.tg_status in {TG_STATUS_QUEUED, TG_STATUS_SENT, TG_STATUS_PENDING}:
+        return pipeline
+
     if not is_release_tracked(db, pipeline.release_id):
         pipeline.tg_status = TG_STATUS_SKIPPED
         db.commit()
@@ -265,8 +355,7 @@ async def test_telegram_get_me(
     cleaned_token = (token or "").strip()
     if not cleaned_token:
         raise ValueError("Не задан токен Telegram-бота")
-    api_base = (base_url or DEFAULT_BOT_API_BASE).rstrip("/")
-    url = urljoin(f"{api_base}/", f"bot{cleaned_token}/getMe")
+    url = build_telegram_api_url(base_url, cleaned_token, "getMe")
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.get(url)
     data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}

@@ -8,13 +8,21 @@ import sys
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import QbClient
+from app.db.models import QbClient, TelegramOutbox, TrackedRelease
 from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import build_anilibria_client, get_setting_value, resolve_anilibria_settings
+from app.services.telegram_notify import (
+    OUTBOX_PENDING,
+    get_telegram_bot_token,
+    get_telegram_chat_id,
+    is_telegram_enabled,
+    resolve_telegram_bot_api_base,
+    test_telegram_get_me,
+)
 from app.services.torrent_archive import resolve_torrent_storage_root
 
 _APP_PACKAGES = (
@@ -27,10 +35,13 @@ _APP_PACKAGES = (
     "jinja2",
     "apscheduler",
     "qbittorrent-api",
+    "python-telegram-bot",
     "pydantic-settings",
     "pydantic",
     "python-multipart",
 )
+
+_TELEGRAM_HEARTBEAT_STALE_SEC = 120
 
 
 def _pkg_version(name: str) -> str:
@@ -56,6 +67,7 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
         asyncio.to_thread(_probe_qb_creds, slave_creds),
     )
     qb = {"master": master_status, "slave": slave_status}
+    telegram = await _probe_telegram(db)
 
     storage = resolve_torrent_storage_root()
     return {
@@ -76,6 +88,7 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
         },
         "database": database,
         "qb": qb,
+        "telegram": telegram,
         "storage": {
             "path": str(storage),
             "exists": storage.exists(),
@@ -113,6 +126,115 @@ async def _probe_anilibria(db: Session, *, has_token: bool) -> dict[str, Any]:
             result["token_valid"] = False
             result["token_error"] = str(exc)
     return result
+
+
+async def _probe_telegram(db: Session) -> dict[str, Any]:
+    enabled = is_telegram_enabled(db)
+    token = get_telegram_bot_token(db)
+    chat_id = get_telegram_chat_id(db)
+    base_url = resolve_telegram_bot_api_base(db)
+    has_token = bool(token)
+    has_chat_id = bool(chat_id)
+
+    tracked_count = db.scalar(
+        select(func.count()).select_from(TrackedRelease).where(TrackedRelease.enabled.is_(True))
+    ) or 0
+    pending_outbox = db.scalar(
+        select(func.count()).select_from(TelegramOutbox).where(TelegramOutbox.status == OUTBOX_PENDING)
+    ) or 0
+
+    bot_process = _telegram_bot_process_status(db)
+    api: dict[str, Any] = {
+        "ok": False,
+        "detail": "Токен не задан",
+        "username": None,
+        "bot_id": None,
+    }
+    if has_token:
+        try:
+            me = await test_telegram_get_me(token=token, base_url=base_url)
+            username = me.get("username")
+            api = {
+                "ok": True,
+                "detail": "API отвечает",
+                "username": f"@{username}" if username else None,
+                "bot_id": me.get("id"),
+            }
+        except Exception as exc:
+            api = {
+                "ok": False,
+                "detail": str(exc),
+                "username": None,
+                "bot_id": None,
+            }
+
+    configured = has_token and has_chat_id
+    if not enabled:
+        bot_detail = "Выключен в настройках"
+        bot_ok = False
+    elif not configured:
+        missing = []
+        if not has_token:
+            missing.append("токен")
+        if not has_chat_id:
+            missing.append("chat_id")
+        bot_detail = "Не настроен: " + ", ".join(missing)
+        bot_ok = False
+    elif bot_process["ok"] is True:
+        bot_detail = "Сервис работает"
+        bot_ok = True
+    elif bot_process["ok"] is False:
+        bot_detail = bot_process["detail"]
+        bot_ok = False
+    else:
+        bot_detail = "Настроен (heartbeat ещё не получен)"
+        bot_ok = False
+
+    return {
+        "enabled": enabled,
+        "configured": configured,
+        "has_token": has_token,
+        "has_chat_id": has_chat_id,
+        "base_url": base_url,
+        "tracked_count": int(tracked_count),
+        "pending_outbox": int(pending_outbox),
+        "bot": {
+            "ok": bot_ok,
+            "detail": bot_detail,
+            "heartbeat_at": bot_process.get("heartbeat_at"),
+            "heartbeat_age_sec": bot_process.get("age_sec"),
+        },
+        "api": api,
+    }
+
+
+def _telegram_bot_process_status(db: Session) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    raw = get_setting_value(db, "telegram_bot_heartbeat_at", "").strip()
+    if not raw:
+        return {"ok": None, "detail": "Нет heartbeat", "heartbeat_at": None, "age_sec": None}
+    try:
+        cleaned = raw.rstrip("Z")
+        hb = datetime.fromisoformat(cleaned)
+        if hb.tzinfo is None:
+            hb = hb.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - hb).total_seconds()
+    except Exception:
+        return {"ok": False, "detail": f"Битый heartbeat: {raw}", "heartbeat_at": raw, "age_sec": None}
+    if age <= _TELEGRAM_HEARTBEAT_STALE_SEC:
+        return {
+            "ok": True,
+            "detail": "Heartbeat свежий",
+            "heartbeat_at": raw,
+            "age_sec": int(age),
+        }
+    return {
+        "ok": False,
+        "detail": f"Heartbeat устарел ({int(age)}с)",
+        "heartbeat_at": raw,
+        "age_sec": int(age),
+    }
 
 
 def _probe_database(db: Session) -> dict[str, Any]:

@@ -760,16 +760,8 @@ class TorrentProcessor:
                     )
                 final_hash = sanitize_info_hash(torrent_info_hash(torrent_bytes))
                 pipeline = self._pipeline.create_discovered(final_hash, release_id, torrent_id)
-                enqueue_pipeline_telegram_notification(
-                    self._db,
-                    pipeline,
-                    release_payload=release_payload,
-                    torrent_payload={**torrent, "id": torrent_id},
-                )
-                self._db.refresh(pipeline)
                 self._add_log(
-                    f"Pipeline создан для торрента {torrent_id}: status={pipeline.status}, "
-                    f"tg_status={pipeline.tg_status}, hash={final_hash}",
+                    f"Pipeline создан для торрента {torrent_id}: status={pipeline.status}, hash={final_hash}",
                     "debug",
                 )
 
@@ -786,8 +778,16 @@ class TorrentProcessor:
                     "debug",
                 )
 
+                torrent_payload = {**torrent, "id": torrent_id}
+
                 if qb is None:
                     self._pipeline.mark_waiting_master(pipeline, self._master_wait_reason)
+                    enqueue_pipeline_telegram_notification(
+                        self._db,
+                        pipeline,
+                        release_payload=release_payload,
+                        torrent_payload=torrent_payload,
+                    )
                     self._mark_seen(torrent_id=torrent_id, info_hash=final_hash, release_id=release_id)
                     stats["waiting_master"] += 1
                     self._add_log(
@@ -812,6 +812,12 @@ class TorrentProcessor:
                         self._add_log(f"{self._master_wait_reason} (торрент {torrent_id})", "warning")
                         qb = None
                         self._pipeline.mark_waiting_master(pipeline, self._master_wait_reason)
+                        enqueue_pipeline_telegram_notification(
+                            self._db,
+                            pipeline,
+                            release_payload=release_payload,
+                            torrent_payload=torrent_payload,
+                        )
                         self._mark_seen(torrent_id=torrent_id, info_hash=final_hash, release_id=release_id)
                         stats["waiting_master"] += 1
                         continue
@@ -843,7 +849,16 @@ class TorrentProcessor:
                     )
 
                 self._pipeline.mark_master_added(pipeline)
-                self._add_log(f"Торрент {torrent_id} переведен в status=master_added", "debug")
+                enqueue_pipeline_telegram_notification(
+                    self._db,
+                    pipeline,
+                    release_payload=release_payload,
+                    torrent_payload=torrent_payload,
+                )
+                self._add_log(
+                    f"Торрент {torrent_id} переведен в status=master_added, tg_status={pipeline.tg_status}",
+                    "debug",
+                )
                 self._mark_seen(torrent_id=torrent_id, info_hash=final_hash, release_id=release_id)
                 stats["new"] += 1
                 self._add_log(

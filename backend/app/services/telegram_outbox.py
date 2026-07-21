@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import urljoin
 
 import httpx
 from sqlalchemy import select
@@ -13,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.models import TelegramOutbox
 from app.services.telegram_notify import (
     OUTBOX_PENDING,
+    build_telegram_api_url,
     get_telegram_bot_token,
     mark_outbox_attempt_failed,
     mark_outbox_sent,
@@ -40,8 +40,7 @@ async def send_outbox_message(
     chat_id: str,
     payload: dict[str, Any],
 ) -> None:
-    api_base = (base_url or "").rstrip("/")
-    url = urljoin(f"{api_base}/", f"bot{token}/sendMessage")
+    url = build_telegram_api_url(base_url, token, "sendMessage")
     body = {
         "chat_id": chat_id,
         "text": payload.get("text") or "",

@@ -72,7 +72,7 @@ class TrackedRelease(Base):
     """Релизы, отслеживаемые для Telegram-уведомлений (/add или чекбокс в UI)."""
 
     __tablename__ = "tracked_releases"
-    release_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    release_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     release_alias: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)

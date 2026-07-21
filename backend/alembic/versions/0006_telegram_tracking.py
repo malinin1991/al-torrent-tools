@@ -15,7 +15,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.create_table(
         "tracked_releases",
-        sa.Column("release_id", sa.Integer(), nullable=False),
+        sa.Column("release_id", sa.Integer(), autoincrement=False, nullable=False),
         sa.Column("release_alias", sa.String(length=255), nullable=False),
         sa.Column("title", sa.String(length=512), nullable=False, server_default=""),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),

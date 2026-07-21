@@ -1,7 +1,8 @@
-"""Обработчики команд Telegram-бота: /start /add /del /list."""
+"""Обработчики команд Telegram-бота: /start /add /del /list /update."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -16,8 +17,12 @@ from app.db.session import SessionLocal
 from app.services.runtime_settings import build_anilibria_client, get_setting_value
 from app.services.telegram_notify import (
     SOURCE_BOT,
+    build_torrent_notification_text,
     disable_tracked_by_alias,
     escape_markdown_v2,
+    list_enabled_tracked_releases,
+    normalize_torrents_payload,
+    pick_latest_codec_torrents,
     upsert_tracked_release,
 )
 
@@ -64,6 +69,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/add <url|alias> — добавить релиз в отслеживание\n"
         "/del <url|alias> — отключить отслеживание\n"
         "/list — список отслеживаемых\n"
+        "/update — последние AVC/HEVC/AV1 по каждому релизу\n"
         "/help — помощь"
     )
 
@@ -166,6 +172,76 @@ async def list_aliases(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
     except Exception as exc:
         logger.exception("Ошибка /list")
+        await update.message.reply_text(f"❌ Ошибка: {exc}")
+
+
+async def update_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """По каждому отслеживаемому релизу — сообщение с последними AVC/HEVC/AV1."""
+    if not await check_access(update) or update.message is None:
+        return
+
+    try:
+        with SessionLocal() as db:
+            tracked = list_enabled_tracked_releases(db)
+            rows = [
+                {
+                    "release_id": row.release_id,
+                    "release_alias": row.release_alias,
+                    "title": row.title,
+                }
+                for row in tracked
+            ]
+            client = build_anilibria_client(db)
+
+        if not rows:
+            await update.message.reply_text("📭 Нет отслеживаемых релизов")
+            return
+
+        await update.message.reply_text(f"🔄 Собираю торренты по {len(rows)} релизам…")
+
+        sent = 0
+        errors = 0
+        for row in rows:
+            title = row["title"] or row["release_alias"] or str(row["release_id"])
+            alias = row["release_alias"] or str(row["release_id"])
+            try:
+                payload = await client.get_torrents_for_release(
+                    row["release_id"],
+                    include=[
+                        "id",
+                        "hash",
+                        "label",
+                        "description",
+                        "codec",
+                        "quality",
+                        "type",
+                        "updated_at",
+                        "created_at",
+                    ],
+                )
+                selected = pick_latest_codec_torrents(normalize_torrents_payload(payload))
+                text = build_torrent_notification_text(
+                    title=title,
+                    alias=alias,
+                    torrents=selected,
+                )
+                await update.message.reply_text(
+                    text,
+                    parse_mode="MarkdownV2",
+                    disable_web_page_preview=True,
+                )
+                sent += 1
+                await asyncio.sleep(0.35)
+            except Exception as exc:
+                errors += 1
+                logger.exception("Ошибка /update для release_id=%s", row["release_id"])
+                await update.message.reply_text(f"❌ {title}: {exc}")
+
+        await update.message.reply_text(
+            f"✅ Готово: {sent} сообщений" + (f", ошибок: {errors}" if errors else "")
+        )
+    except Exception as exc:
+        logger.exception("Ошибка /update")
         await update.message.reply_text(f"❌ Ошибка: {exc}")
 
 

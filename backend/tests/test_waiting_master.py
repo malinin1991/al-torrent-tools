@@ -32,7 +32,10 @@ def test_is_qb_wait_error_text() -> None:
 
     assert is_qb_wait_error_text("Master недоступен: Connection refused") is True
     assert is_qb_wait_error_text("Reconcile: connection refused") is True
+    assert is_qb_wait_error_text("Failed to connect to qBittorrent. Connection Error") is True
     assert is_qb_wait_error_text("неверный hash") is False
+    assert is_qb_wait_error_text("HTTP timeout while fetching release metadata") is False
+    assert is_qb_wait_error_text("Master: Read timeout") is True
     assert is_qb_wait_error_text(None) is False
     assert is_qb_wait_error_text("") is False
 

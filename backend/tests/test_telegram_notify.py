@@ -9,15 +9,81 @@ from app.services.telegram_notify import (
     SOURCE_UI,
     TG_STATUS_QUEUED,
     TG_STATUS_SKIPPED,
+    build_telegram_api_url,
     build_torrent_notification_text,
     enqueue_pipeline_telegram_notification,
     escape_markdown_v2,
+    normalize_telegram_bot_api_base,
     upsert_tracked_release,
 )
 
 
 def test_escape_markdown_v2() -> None:
     assert escape_markdown_v2("a_b*c") == r"a\_b\*c"
+
+
+def test_build_telegram_api_url_with_colon_token() -> None:
+    """urljoin ломается на токене с ':' — собираем URL вручную."""
+    token = "7123456789:AAH-real-looking-token"
+    url = build_telegram_api_url("", token, "getMe")
+    assert url == f"https://api.telegram.org/bot{token}/getMe"
+    assert url.startswith("https://")
+
+
+def test_ptb_bot_api_base_url_no_trailing_slash() -> None:
+    """PTB: base + token → .../botTOKEN, не .../bot/TOKEN."""
+    from app.telegram_bot.__main__ import ptb_bot_api_base_url
+
+    assert ptb_bot_api_base_url("") == "https://api.telegram.org/bot"
+    assert ptb_bot_api_base_url("https://api.telegram.org") == "https://api.telegram.org/bot"
+    assert ptb_bot_api_base_url("https://api.telegram.org/") == "https://api.telegram.org/bot"
+    assert ptb_bot_api_base_url("https://api.telegram.org/bot") == "https://api.telegram.org/bot"
+    assert ptb_bot_api_base_url("https://api.telegram.org/bot/") == "https://api.telegram.org/bot"
+    assert ptb_bot_api_base_url("https://proxy.example") == "https://proxy.example/bot"
+
+def test_normalize_telegram_bot_api_base_empty_and_no_scheme() -> None:
+    assert normalize_telegram_bot_api_base("") == "https://api.telegram.org"
+    assert normalize_telegram_bot_api_base("   ") == "https://api.telegram.org"
+    assert normalize_telegram_bot_api_base("proxy.example:8081") == "https://proxy.example:8081"
+    assert normalize_telegram_bot_api_base("http://proxy.example") == "http://proxy.example"
+
+
+def test_classify_and_pick_latest_codec_torrents() -> None:
+    from app.services.telegram_notify import classify_torrent_codec_family, pick_latest_codec_torrents
+
+    torrents = [
+        {
+            "id": 1,
+            "label": "WEBRip 1080p",
+            "description": "1-10",
+            "codec": {"label": "AVC", "value": "x264/AVC"},
+            "updated_at": "2024-01-01T00:00:00Z",
+        },
+        {
+            "id": 2,
+            "label": "WEBRip 1080p",
+            "description": "1-12",
+            "codec": {"label": "AVC", "value": "x264/AVC"},
+            "updated_at": "2024-06-01T00:00:00Z",
+        },
+        {
+            "id": 3,
+            "label": "WEBRip 1080p HEVC",
+            "description": "1-12",
+            "codec": {"label": "HEVC", "value": "x265/HEVC"},
+            "updated_at": "2024-06-01T00:00:00Z",
+        },
+        {
+            "id": 4,
+            "label": "WEBRip 1080p AV1",
+            "description": "1-8",
+            "codec": {"label": "AV1", "value": "AV1"},
+            "updated_at": "2024-05-01T00:00:00Z",
+        },
+    ]
+    assert classify_torrent_codec_family(torrents[2]) == "HEVC"
+    picked = pick_latest_codec_torrents(torrents)
+    assert [t["id"] for t in picked] == [2, 3, 4]
 
 
 def test_build_torrent_notification_contains_title_and_series() -> None:
@@ -35,6 +101,9 @@ def test_build_torrent_notification_contains_title_and_series() -> None:
     assert "Тест" in text.replace("\\", "")
     assert "1\\-12" in text or "1-12" in text
     assert "HEVC" in text.replace("\\", "")
+    # MarkdownV2: жирный — одиночные *, не **
+    assert "**" not in text
+    assert text.startswith("🔔 *Обновление для")
 
 
 def test_upsert_tracked_release_creates_and_updates() -> None:
@@ -90,6 +159,15 @@ def test_enqueue_skipped_when_not_tracked() -> None:
     result = enqueue_pipeline_telegram_notification(db, pipeline)
     assert result.tg_status == TG_STATUS_SKIPPED
     assert db.add.call_count == 0
+
+
+def test_enqueue_noop_when_already_queued() -> None:
+    db = MagicMock()
+    pipeline = SimpleNamespace(id=1, release_id=10, torrent_id=100, tg_status=TG_STATUS_QUEUED)
+    result = enqueue_pipeline_telegram_notification(db, pipeline)
+    assert result.tg_status == TG_STATUS_QUEUED
+    assert db.add.call_count == 0
+    assert db.commit.call_count == 0
 
 
 def test_enqueue_creates_outbox_when_tracked_and_enabled() -> None:
