@@ -71,5 +71,28 @@ services:
       retries: 3
       start_period: 60s
 
+  telegram-bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: altt_telegram
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command: ["sh", "/app/scripts/entrypoint.sh", "python", "-m", "app.telegram_bot"]
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_telegram.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
 volumes:
   pg_data:

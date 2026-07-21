@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import TorrentArchive, TorrentPipeline
+from app.db.models import TorrentArchive, TorrentPipeline, TrackedRelease
 from app.services.torrent_qb_meta import (
     build_release_torrents_url,
     genres_from_quality_json,
@@ -42,6 +42,8 @@ class ReleaseGroup:
     release_url: str | None
     genres: list[str]
     torrents: list[ReleaseTorrentRow]
+    tracked: bool = False
+    track_source: str | None = None
 
 
 def format_bytes(size: int | None) -> str:
@@ -121,6 +123,7 @@ def list_release_groups(
     )
 
     pipeline_by_hash = _latest_pipeline_by_hash(db, [a.info_hash for a in archives])
+    tracked_by_id = _tracked_by_release_id(db, release_ids)
     site_url = resolve_anilibria_site_url()
 
     by_release: dict[int, list[TorrentArchive]] = {rid: [] for rid in release_ids}
@@ -157,6 +160,7 @@ def list_release_groups(
                     pipeline_error=error,
                 )
             )
+        tracked_row = tracked_by_id.get(release_id)
         groups.append(
             ReleaseGroup(
                 release_id=release_id,
@@ -171,6 +175,8 @@ def list_release_groups(
                 ),
                 genres=genres,
                 torrents=torrents,
+                tracked=bool(tracked_row and tracked_row.enabled),
+                track_source=tracked_row.source if tracked_row else None,
             )
         )
 
@@ -202,3 +208,10 @@ def _latest_pipeline_by_hash(
         if key not in result:
             result[key] = (row.status, row.error)
     return result
+
+
+def _tracked_by_release_id(db: Session, release_ids: list[int]) -> dict[int, TrackedRelease]:
+    if not release_ids:
+        return {}
+    rows = db.scalars(select(TrackedRelease).where(TrackedRelease.release_id.in_(release_ids))).all()
+    return {row.release_id: row for row in rows}

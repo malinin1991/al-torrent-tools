@@ -14,6 +14,7 @@ SECRET_SETTING_KEYS = frozenset(
         "anilibria_password",
         "qb_master_password",
         "qb_slave_password",
+        "telegram_bot_token",
     }
 )
 

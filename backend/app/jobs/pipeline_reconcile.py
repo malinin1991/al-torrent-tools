@@ -58,7 +58,7 @@ async def run_pipeline_reconcile(db: Session, job_id: int, params: dict[str, Any
                 "Reconcile с master: "
                 f"checked={stats['checked']}, sent={stats['sent_to_slave']}, "
                 f"waiting={stats['waiting']}, cancelled={stats['cancelled']}, "
-                f"errors={stats['errors']}"
+                f"recovered={stats.get('recovered', 0)}, errors={stats['errors']}"
             ),
         )
     )

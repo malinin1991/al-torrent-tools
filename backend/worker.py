@@ -19,6 +19,7 @@ from app.services.job_runner import (
     shutdown_cancel_active_jobs,
 )
 from app.services.pipeline import TorrentPipelineService
+from app.services.qbittorrent import qb_client_wait_message, should_wait_for_qb
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,15 @@ async def _poll_master_pipeline() -> None:
                     raise RuntimeError("Нет .torrent в архиве и не удалось загрузить файл")
                 pipeline_service.process_completion(pipeline, torrent_bytes)
             except Exception as exc:
+                if should_wait_for_qb(exc):
+                    # Не failed: master/slave временно недоступен — оставить master_added
+                    # или waiting (process_completion уже мог выставить waiting_slave).
+                    logger.warning(
+                        "Pipeline %s: %s — статус не меняем на failed",
+                        pipeline.id,
+                        qb_client_wait_message("master", exc),
+                    )
+                    continue
                 pipeline_service.mark_failed(pipeline, str(exc))
 
 

@@ -27,6 +27,7 @@ from app.services.release_checkpoint import (
     should_skip_by_torrents_fingerprint,
     torrents_fingerprint,
 )
+from app.services.telegram_notify import enqueue_pipeline_telegram_notification
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.torrent_qb_meta import (
     build_qb_torrent_name_from_payloads,
@@ -759,8 +760,16 @@ class TorrentProcessor:
                     )
                 final_hash = sanitize_info_hash(torrent_info_hash(torrent_bytes))
                 pipeline = self._pipeline.create_discovered(final_hash, release_id, torrent_id)
+                enqueue_pipeline_telegram_notification(
+                    self._db,
+                    pipeline,
+                    release_payload=release_payload,
+                    torrent_payload={**torrent, "id": torrent_id},
+                )
+                self._db.refresh(pipeline)
                 self._add_log(
-                    f"Pipeline создан для торрента {torrent_id}: status={pipeline.status}, hash={final_hash}",
+                    f"Pipeline создан для торрента {torrent_id}: status={pipeline.status}, "
+                    f"tg_status={pipeline.tg_status}, hash={final_hash}",
                     "debug",
                 )
 

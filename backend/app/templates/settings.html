@@ -94,6 +94,41 @@
   </section>
 
   <section class="settings-group card">
+    <h2>Telegram</h2>
+    <p class="muted">Уведомления о новых торрентах отслеживаемых релизов. Один chat_id. Bot API base URL — для прокси или локального Bot API.</p>
+    <div class="grid">
+      <label>Токен бота
+        <input class="input" type="password" name="telegram_bot_token" value="" placeholder="Оставьте пустым, чтобы не менять" autocomplete="off" />
+      </label>
+      <label>Chat ID
+        <input class="input" name="telegram_chat_id" value="{{ settings_map.get('telegram_chat_id', '') }}" placeholder="-100…" />
+      </label>
+      <label>Bot API base URL
+        <input class="input" name="telegram_bot_api_base_url" value="{{ settings_map.get('telegram_bot_api_base_url', '') }}" placeholder="пусто = https://api.telegram.org" />
+      </label>
+      <label class="row" style="align-items:center; gap:10px; margin-top:24px;">
+        <input type="checkbox" name="telegram_enabled" value="on" {% if settings_map.get('telegram_enabled', '') in ['1', 'true', 'yes', 'on'] %}checked{% endif %} />
+        Уведомления включены
+      </label>
+      <div class="settings-hint">
+        {% if has_telegram_token %}
+        <span class="badge badge-ok">Токен сохранён</span>
+        {% else %}
+        <span class="badge badge-warn">Токен не задан</span>
+        {% endif %}
+        <button
+          class="btn btn-secondary"
+          type="button"
+          hx-post="/settings/telegram-test"
+          hx-include="closest form"
+          hx-target="#settings-result"
+          hx-swap="innerHTML"
+        >Проверить Telegram (getMe)</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-group card">
     <h2>Джобы и интервалы</h2>
     <div class="grid">
       <label>Количество релизов до паузы

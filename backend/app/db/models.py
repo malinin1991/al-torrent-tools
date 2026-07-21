@@ -68,6 +68,37 @@ class ReleaseCheckpoint(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class TrackedRelease(Base):
+    """Релизы, отслеживаемые для Telegram-уведомлений (/add или чекбокс в UI)."""
+
+    __tablename__ = "tracked_releases"
+    release_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    release_alias: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="ui")  # bot|ui
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TelegramOutbox(Base):
+    """Очередь исходящих Telegram-сообщений (ретраи при недоступности API)."""
+
+    __tablename__ = "telegram_outbox"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pipeline_id: Mapped[int | None] = mapped_column(
+        ForeignKey("torrent_pipeline.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class TorrentPipeline(Base):
     __tablename__ = "torrent_pipeline"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -75,6 +106,8 @@ class TorrentPipeline(Base):
     release_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     torrent_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="discovered")
+    # skipped | pending | queued | sent — не блокирует master→slave
+    tg_status: Mapped[str] = mapped_column(String(16), nullable=False, default="skipped")
     master_added_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     slave_added_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

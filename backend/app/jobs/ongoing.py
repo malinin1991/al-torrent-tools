@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.db.models import ExtraUrl, JobLog, Setting
 from app.services.release_checkpoint import ReleaseRef, normalize_api_datetime, should_skip_unchanged
 from app.services.runtime_settings import build_anilibria_client
+from app.services.telegram_notify import list_enabled_tracked_releases
 from app.services.torrent_processor import TorrentProcessor
 
 
@@ -105,6 +106,11 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
                                 fresh_at=normalize_api_datetime(item.get("fresh_at")),
                             )
                         )
+
+    tracked_rows = list_enabled_tracked_releases(db)
+    _add_log(db, job_id, f"Ongoing: отслеживаемых релизов {len(tracked_rows)}")
+    for row in tracked_rows:
+        releases.append(ReleaseRef(release_id=row.release_id, alias=row.release_alias or None))
 
     unique_releases: dict[int, ReleaseRef] = {}
     for item in releases:

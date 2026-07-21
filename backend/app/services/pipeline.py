@@ -9,6 +9,7 @@ from app.db.models import ExtraUrl, JobLog, QbClient, TorrentArchive, TorrentPip
 from app.services.qbittorrent import (
     MASTER_UI_LABELS,
     ensure_announce_passkey,
+    is_qb_wait_error_text,
     map_qb_torrent_ui_state,
     qb_add_torrent,
     qb_client_wait_message,
@@ -172,6 +173,15 @@ class TorrentPipelineService:
             .order_by(TorrentPipeline.id.asc())
         ).all()
         return list(rows)
+
+    def get_failed_qb_wait_pipelines(self) -> list[TorrentPipeline]:
+        """failed с connection/auth-подобной ошибкой — кандидаты на recovery."""
+        rows = self._db.scalars(
+            select(TorrentPipeline)
+            .where(TorrentPipeline.status == self.STATUS_FAILED)
+            .order_by(TorrentPipeline.id.asc())
+        ).all()
+        return [row for row in rows if is_qb_wait_error_text(row.error)]
 
     def get_master_added_older_than(self, minutes: int) -> list[TorrentPipeline]:
         threshold = datetime.utcnow() - timedelta(minutes=minutes)
@@ -486,16 +496,69 @@ class TorrentPipelineService:
         - complete → досылка на slave
         - in_progress → ждём callback
         - missing → cancelled
+        - failed (connection-like) + торрент на master → recovery в master_added / slave
         """
         stats: dict[str, Any] = {
             "checked": 0,
             "sent_to_slave": 0,
             "waiting": 0,
             "cancelled": 0,
+            "recovered": 0,
             "errors": 0,
             "details": [],
         }
         candidates = self.get_pipelines_awaiting_slave()
+        failed_recoverable = self.get_failed_qb_wait_pipelines()
+        for pipeline in failed_recoverable:
+            stats["checked"] += 1
+            try:
+                state = self.classify_master_torrent(pipeline)
+                if state == "missing":
+                    # Ещё нет на master — waiting_master_retry дошлёт add.
+                    stats["waiting"] += 1
+                    stats["details"].append(
+                        {
+                            "id": pipeline.id,
+                            "hash": pipeline.info_hash,
+                            "action": "failed_await_master_retry",
+                        }
+                    )
+                    continue
+                self.mark_master_added(pipeline)
+                stats["recovered"] += 1
+                if state == "in_progress":
+                    stats["waiting"] += 1
+                    stats["details"].append(
+                        {
+                            "id": pipeline.id,
+                            "hash": pipeline.info_hash,
+                            "action": "recovered_master_added",
+                        }
+                    )
+                    continue
+                candidates = [*candidates, pipeline]
+            except Exception as exc:
+                if should_wait_for_qb(exc):
+                    stats["waiting"] += 1
+                    stats["details"].append(
+                        {
+                            "id": pipeline.id,
+                            "hash": pipeline.info_hash,
+                            "action": "waiting_qb",
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+                stats["errors"] += 1
+                stats["details"].append(
+                    {
+                        "id": pipeline.id,
+                        "hash": pipeline.info_hash,
+                        "action": "error",
+                        "error": str(exc),
+                    }
+                )
+
         for pipeline in candidates:
             stats["checked"] += 1
             try:
@@ -530,6 +593,17 @@ class TorrentPipelineService:
                         {"id": pipeline.id, "hash": pipeline.info_hash, "action": "sent_to_slave"}
                     )
             except Exception as exc:
+                if should_wait_for_qb(exc):
+                    stats["waiting"] += 1
+                    stats["details"].append(
+                        {
+                            "id": pipeline.id,
+                            "hash": pipeline.info_hash,
+                            "action": "waiting_qb",
+                            "error": str(exc),
+                        }
+                    )
+                    continue
                 stats["errors"] += 1
                 stats["details"].append(
                     {

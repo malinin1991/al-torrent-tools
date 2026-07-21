@@ -68,6 +68,13 @@ def should_wait_for_qb(exc: BaseException) -> bool:
     return is_qb_unavailable(exc) or is_qb_auth_error(exc)
 
 
+def is_qb_wait_error_text(error: str | None) -> bool:
+    """Сохранённый pipeline.error похож на временную недоступность/auth qB."""
+    if not error or not str(error).strip():
+        return False
+    return should_wait_for_qb(RuntimeError(str(error)))
+
+
 def qb_client_wait_message(role: str, exc: BaseException | None = None, *, missing: bool = False) -> str:
     """Текст для waiting_master / waiting_slave."""
     role_key = (role or "").strip().lower()

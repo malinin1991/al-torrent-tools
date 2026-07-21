@@ -216,6 +216,7 @@ def test_reconcile_with_master_actions() -> None:
     service.get_pipelines_awaiting_slave = MagicMock(  # type: ignore[method-assign]
         return_value=[waiting, missing, complete]
     )
+    service.get_failed_qb_wait_pipelines = MagicMock(return_value=[])  # type: ignore[method-assign]
 
     def classify(p: SimpleNamespace) -> str:
         return {1: "in_progress", 2: "missing", 3: "complete"}[p.id]
@@ -238,6 +239,57 @@ def test_reconcile_with_master_actions() -> None:
     assert stats["errors"] == 0
     service.mark_cancelled.assert_called_once()
     service.process_completion.assert_called_once()
+    service.mark_failed.assert_not_called()
+
+
+def test_reconcile_connection_error_does_not_mark_failed() -> None:
+    from qbittorrentapi.exceptions import APIConnectionError
+
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_MASTER_ADDED, pipeline_id=7)
+    service.get_pipelines_awaiting_slave = MagicMock(return_value=[pipeline])  # type: ignore[method-assign]
+    service.get_failed_qb_wait_pipelines = MagicMock(return_value=[])  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(  # type: ignore[method-assign]
+        side_effect=APIConnectionError("Connection refused")
+    )
+    service.mark_failed = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.reconcile_with_master(load_torrent_bytes=lambda p: b"torrent")
+
+    assert stats["errors"] == 0
+    assert stats["waiting"] == 1
+    assert pipeline.status == TorrentPipelineService.STATUS_MASTER_ADDED
+    service.mark_failed.assert_not_called()
+
+
+def test_reconcile_recovers_failed_when_seeding_on_master() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    failed = _pipeline(status=TorrentPipelineService.STATUS_FAILED, pipeline_id=9)
+    failed.error = "Master недоступен: Connection refused"
+    service.get_pipelines_awaiting_slave = MagicMock(return_value=[])  # type: ignore[method-assign]
+    service.get_failed_qb_wait_pipelines = MagicMock(return_value=[failed])  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="complete")  # type: ignore[method-assign]
+
+    def mark_added(p: SimpleNamespace) -> SimpleNamespace:
+        p.status = TorrentPipelineService.STATUS_MASTER_ADDED
+        p.error = None
+        return p
+
+    service.mark_master_added = MagicMock(side_effect=mark_added)  # type: ignore[method-assign]
+    service.process_completion = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, data: setattr(p, "status", TorrentPipelineService.STATUS_DONE) or p
+    )
+    service.mark_failed = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.reconcile_with_master(load_torrent_bytes=lambda p: b"torrent")
+
+    assert stats["recovered"] == 1
+    assert stats["sent_to_slave"] == 1
+    service.mark_master_added.assert_called_once()
+    service.process_completion.assert_called_once()
+    service.mark_failed.assert_not_called()
 
 
 def test_process_completion_slave_auth_error_goes_waiting(monkeypatch: pytest.MonkeyPatch) -> None:

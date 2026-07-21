@@ -33,9 +33,12 @@ def test_list_release_groups_exposes_genres() -> None:
     db.scalars.side_effect = [
         MagicMock(all=lambda: [archive]),  # archives
         MagicMock(all=lambda: []),  # pipelines
+        MagicMock(all=lambda: []),  # tracked
     ]
 
     result = list_release_groups(db, page=1, per_page=30)
 
     assert len(result["groups"]) == 1
     assert result["groups"][0].genres == ["Комедия", "Романтика"]
+    assert result["groups"][0].tracked is False
+    assert result["groups"][0].track_source is None

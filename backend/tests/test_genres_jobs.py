@@ -66,9 +66,18 @@ def test_ongoing_passes_tags_on_new_torrent(monkeypatch) -> None:
         lambda *_a, **_k: archive_svc,
     )
     pipeline = MagicMock()
-    pipeline.create_discovered.return_value = SimpleNamespace(status="discovered", id=1)
+    pipeline.create_discovered.return_value = SimpleNamespace(
+        status="discovered",
+        id=1,
+        release_id=10,
+        torrent_id=1,
+        tg_status="skipped",
+    )
     pipeline.mark_master_added.return_value = None
     processor._pipeline = pipeline
+
+    # MagicMock db.get иначе выглядит как «отслеживаемый» релиз
+    db.get.return_value = None
 
     qb_add = MagicMock(return_value=(True, True, True))
     monkeypatch.setattr("app.services.torrent_processor.qb_add_torrent", qb_add)

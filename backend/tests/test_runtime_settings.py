@@ -14,6 +14,7 @@ def test_mask_settings_dict_hides_secrets() -> None:
             "anilibria_password": "al-pass",
             "qb_master_password": "master-pass",
             "qb_slave_password": "",
+            "telegram_bot_token": "tg-secret",
             "scrape_pause_every": "10",
         }
     )
@@ -22,6 +23,7 @@ def test_mask_settings_dict_hides_secrets() -> None:
     assert masked["anilibria_password"] == "***"
     assert masked["qb_master_password"] == "***"
     assert masked["qb_slave_password"] == ""
+    assert masked["telegram_bot_token"] == "***"
     assert masked["scrape_pause_every"] == "10"
 
 

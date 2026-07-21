@@ -1,0 +1,22 @@
+<form class="track-toggle row" style="gap:8px; margin:0;">
+  <label class="row" style="gap:8px; margin:0;">
+    <input
+      type="checkbox"
+      name="enabled"
+      value="on"
+      {% if tracked %}checked{% endif %}
+      hx-post="/releases/{{ release_id }}/track"
+      hx-include="closest form"
+      hx-target="closest .track-toggle"
+      hx-swap="outerHTML"
+    />
+    Отслеживание
+  </label>
+  {% if track_source == 'bot' %}
+  <span class="badge badge-ok">бот</span>
+  {% elif tracked %}
+  <span class="badge badge-ok">отслеживается</span>
+  {% endif %}
+  <input type="hidden" name="release_alias" value="{{ release_alias or '' }}" />
+  <input type="hidden" name="title" value="{{ anime_name or '' }}" />
+</form>

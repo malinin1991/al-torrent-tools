@@ -16,7 +16,7 @@ from app.services.anilibria_auth import login_and_store_token
 from app.services.db_maintenance import reset_full, reset_operational_state
 from app.services.job_runner import JobAlreadyRunningError, JobRunner, UnknownJobTypeError
 from app.services.pipeline import TorrentPipelineService
-from app.services.qbittorrent import sanitize_info_hash, test_qb_connection
+from app.services.qbittorrent import qb_client_wait_message, sanitize_info_hash, should_wait_for_qb, test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, get_setting_value, mask_settings_dict
 from app.services.system_status import collect_system_status
 from app.services.torrent_archive import TorrentArchiveService
@@ -498,5 +498,12 @@ async def qb_complete_webhook(
     except HTTPException:
         raise
     except Exception as exc:
+        if should_wait_for_qb(exc):
+            return {
+                "ok": False,
+                "status": pipeline.status,
+                "pipeline_id": pipeline.id,
+                "message": qb_client_wait_message("master", exc),
+            }
         pipeline_service.mark_failed(pipeline, str(exc))
         raise HTTPException(status_code=500, detail=f"Ошибка обработки pipeline: {exc}") from exc

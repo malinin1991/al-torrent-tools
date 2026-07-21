@@ -13,7 +13,7 @@ from starlette.requests import Request
 
 from app.api.rest import job_runner, router as api_router
 from app.core.config import settings
-from app.db.models import ExtraUrl, Job, JobLog, QbClient, Setting, TorrentArchive, TorrentPipeline
+from app.db.models import ExtraUrl, Job, JobLog, QbClient, Setting, TorrentArchive, TorrentPipeline, TrackedRelease
 from app.db.session import SessionLocal, get_db
 from app.services.job_runner import (
     JobAlreadyRunningError,
@@ -29,6 +29,12 @@ from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, build_anilibria_client, get_setting_value
 from app.services.releases_view import list_release_groups
 from app.services.system_status import collect_system_status
+from app.services.telegram_notify import (
+    SOURCE_UI,
+    resolve_telegram_bot_api_base,
+    test_telegram_get_me,
+    upsert_tracked_release,
+)
 from app.services.torrent_archive import resolve_torrent_storage_root
 from app.utils.datetime_fmt import as_utc_iso
 
@@ -176,10 +182,16 @@ def settings_page(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
     settings_map = {row.key: row.value for row in rows}
     has_anilibria_token = bool((settings_map.get("anilibria_bearer_token") or "").strip())
     has_anilibria_passkey = bool((settings_map.get("anilibria_passkey") or "").strip())
+    has_telegram_token = bool((settings_map.get("telegram_bot_token") or "").strip())
     return templates.TemplateResponse(
         request,
         "settings.html",
-        {"settings_map": settings_map, "has_anilibria_token": has_anilibria_token, "has_anilibria_passkey": has_anilibria_passkey},
+        {
+            "settings_map": settings_map,
+            "has_anilibria_token": has_anilibria_token,
+            "has_anilibria_passkey": has_anilibria_passkey,
+            "has_telegram_token": has_telegram_token,
+        },
     )
 
 
@@ -199,6 +211,10 @@ def update_settings(
     qb_slave_port: str = Form(default="8080"),
     qb_slave_username: str = Form(default=""),
     qb_slave_password: str = Form(default=""),
+    telegram_bot_token: str = Form(default=""),
+    telegram_chat_id: str = Form(default=""),
+    telegram_bot_api_base_url: str = Form(default=""),
+    telegram_enabled: str | None = Form(default=None),
     scrape_pause_every: str = Form(default=str(settings.scrape_pause_every)),
     scrape_pause_sec: str = Form(default=str(settings.scrape_pause_sec)),
     ongoing_interval_sec: str = Form(default=str(settings.ongoing_interval_sec)),
@@ -222,6 +238,10 @@ def update_settings(
         "qb_slave_port": qb_slave_port,
         "qb_slave_username": qb_slave_username,
         "qb_slave_password": qb_slave_password,
+        "telegram_bot_token": telegram_bot_token,
+        "telegram_chat_id": telegram_chat_id,
+        "telegram_bot_api_base_url": telegram_bot_api_base_url,
+        "telegram_enabled": "true" if telegram_enabled == "on" else "false",
         "scrape_pause_every": scrape_pause_every,
         "scrape_pause_sec": scrape_pause_sec,
         "ongoing_interval_sec": ongoing_interval_sec,
@@ -312,6 +332,30 @@ async def qb_test_connection_settings(
         ok = True
     except Exception as exc:
         message = f"qBittorrent {role_value}: ошибка — {exc}"
+        ok = False
+    return templates.TemplateResponse(
+        request,
+        "partials/settings_result.html",
+        {"message": message, "ok": ok},
+    )
+
+
+@app.post("/settings/telegram-test", response_class=HTMLResponse)
+async def telegram_test_settings(
+    request: Request,
+    telegram_bot_token: str = Form(default=""),
+    telegram_bot_api_base_url: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    token = telegram_bot_token.strip() or get_setting_value(db, "telegram_bot_token", "")
+    base_url = telegram_bot_api_base_url.strip() or resolve_telegram_bot_api_base(db)
+    try:
+        me = await test_telegram_get_me(token=token, base_url=base_url)
+        username = me.get("username") or me.get("first_name") or me.get("id")
+        message = f"Telegram: OK — @{username} (id={me.get('id')}), base={base_url}"
+        ok = True
+    except Exception as exc:
+        message = f"Telegram: ошибка — {exc}"
         ok = False
     return templates.TemplateResponse(
         request,
@@ -540,8 +584,48 @@ def _pipeline_page_context(
             )
         except Exception:
             master_states = {}
+
+    archive_meta: dict[tuple[int, int], dict] = {}
+    if rows:
+        release_ids = {row.release_id for row in rows}
+        torrent_ids = {row.torrent_id for row in rows}
+        archives = db.scalars(
+            select(TorrentArchive).where(
+                TorrentArchive.release_id.in_(release_ids),
+                TorrentArchive.torrent_id.in_(torrent_ids),
+            )
+        ).all()
+        for archive in archives:
+            key = (archive.release_id, archive.torrent_id)
+            # Берём самую свежую запись
+            prev = archive_meta.get(key)
+            if prev is None or (archive.id or 0) > (prev.get("archive_id") or 0):
+                archive_meta[key] = {
+                    "archive_id": archive.id,
+                    "anime_name": archive.anime_name,
+                    "release_alias": archive.release_alias,
+                    "torrent_description": archive.torrent_description,
+                    "torrent_type": archive.torrent_type,
+                }
+
+    display_rows = []
+    for row in rows:
+        meta = archive_meta.get((row.release_id, row.torrent_id), {})
+        release_name = meta.get("anime_name") or meta.get("release_alias") or f"Release #{row.release_id}"
+        torrent_parts = [p for p in (meta.get("torrent_type"), meta.get("torrent_description")) if p]
+        torrent_label = " · ".join(torrent_parts) if torrent_parts else f"Torrent #{row.torrent_id}"
+        display_rows.append(
+            {
+                "row": row,
+                "release_name": release_name,
+                "torrent_label": torrent_label,
+                "ids_title": f"release_id={row.release_id} torrent_id={row.torrent_id}",
+            }
+        )
+
     return {
         "rows": rows,
+        "display_rows": display_rows,
         "master_states": master_states,
         "status": status or "",
     }
@@ -556,6 +640,62 @@ def releases_page(
 ) -> HTMLResponse:
     context = list_release_groups(db, search=search, page=page, per_page=30)
     return templates.TemplateResponse(request, "releases.html", context)
+
+
+@app.post("/releases/{release_id}/track", response_class=HTMLResponse)
+def toggle_release_tracking(
+    request: Request,
+    release_id: int,
+    enabled: str | None = Form(default=None),
+    release_alias: str = Form(default=""),
+    title: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    enabled_value = enabled == "on"
+    alias = (release_alias or "").strip()
+    title_value = (title or "").strip()
+    if not alias or not title_value:
+        archive = db.scalar(
+            select(TorrentArchive)
+            .where(TorrentArchive.release_id == release_id)
+            .order_by(TorrentArchive.id.desc())
+            .limit(1)
+        )
+        if archive is not None:
+            alias = alias or (archive.release_alias or "")
+            title_value = title_value or (archive.anime_name or alias or str(release_id))
+    if not alias:
+        alias = str(release_id)
+    if not title_value:
+        title_value = alias
+
+    existing = db.get(TrackedRelease, release_id)
+    if existing is None and not enabled_value:
+        tracked = False
+        source = None
+    else:
+        row = upsert_tracked_release(
+            db,
+            release_id=release_id,
+            release_alias=alias,
+            title=title_value,
+            source=SOURCE_UI,
+            enabled=enabled_value,
+        )
+        tracked = bool(row.enabled)
+        source = row.source
+
+    return templates.TemplateResponse(
+        request,
+        "partials/release_track_toggle.html",
+        {
+            "release_id": release_id,
+            "release_alias": alias,
+            "anime_name": title_value,
+            "tracked": tracked,
+            "track_source": source,
+        },
+    )
 
 
 @app.get("/archive", response_class=HTMLResponse)

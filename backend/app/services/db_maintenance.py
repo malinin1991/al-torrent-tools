@@ -3,21 +3,23 @@ from pathlib import Path
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Job, JobLog, ReleaseCheckpoint, SeenTorrent, TorrentArchive, TorrentPipeline
+from app.db.models import Job, JobLog, ReleaseCheckpoint, SeenTorrent, TelegramOutbox, TorrentArchive, TorrentPipeline
 from app.services.torrent_archive import resolve_torrent_storage_root
 
 
 def reset_operational_state(db: Session) -> dict[str, int]:
-    """Сброс джобов, seen, pipeline, checkpoints. Архив .torrent и настройки сохраняются."""
+    """Сброс джобов, seen, pipeline, checkpoints, outbox. Архив .torrent и настройки сохраняются."""
     jobs = db.scalar(select(func.count()).select_from(Job)) or 0
     logs = db.scalar(select(func.count()).select_from(JobLog)) or 0
     seen = db.scalar(select(func.count()).select_from(SeenTorrent)) or 0
     pipeline = db.scalar(select(func.count()).select_from(TorrentPipeline)) or 0
     checkpoints = db.scalar(select(func.count()).select_from(ReleaseCheckpoint)) or 0
+    outbox = db.scalar(select(func.count()).select_from(TelegramOutbox)) or 0
 
     db.execute(delete(JobLog))
     db.execute(delete(Job))
     db.execute(delete(SeenTorrent))
+    db.execute(delete(TelegramOutbox))
     db.execute(delete(TorrentPipeline))
     db.execute(delete(ReleaseCheckpoint))
     db.commit()
@@ -28,6 +30,7 @@ def reset_operational_state(db: Session) -> dict[str, int]:
         "seen_torrents_removed": seen,
         "pipeline_removed": pipeline,
         "checkpoints_removed": checkpoints,
+        "outbox_removed": outbox,
         "archive_kept": db.scalar(select(func.count()).select_from(TorrentArchive)) or 0,
     }
 
