@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import JobLog, TorrentArchive, TorrentFile
+from app.db.models import JobLog
+from app.services.qb_inventory import build_inventory, connect_master
 from app.services.torrent_files_meta import (
     QB_INCOMPLETE_SUFFIX,
     is_under_media_root,
@@ -24,23 +24,20 @@ def _add_log(db: Session, job_id: int, message: str, level: str = "info") -> Non
     db.commit()
 
 
-def collect_known_paths(db: Session) -> set[Path]:
-    """Пути из torrent_files для api_present торрентов."""
-    present_hashes = set(
-        db.scalars(
-            select(TorrentArchive.info_hash).where(TorrentArchive.api_present.is_(True))
-        ).all()
-    )
-    present_hashes = {(h or "").strip().lower() for h in present_hashes if h}
-    if not present_hashes:
-        return set()
-    rows = db.scalars(
-        select(TorrentFile.full_path).where(
-            TorrentFile.info_hash.in_(present_hashes),
-            TorrentFile.full_path.isnot(None),
-        )
-    ).all()
-    return {Path(p).resolve() for p in rows if p}
+def media_root_is_writable(media_root: Path) -> bool:
+    """Проверка, что apply сможет удалять файлы (не read-only mount)."""
+    probe = media_root / ".altt_write_probe"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True
+    except OSError:
+        try:
+            if probe.exists():
+                probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
 
 
 def find_orphan_files(
@@ -93,12 +90,48 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
         _add_log(db, job_id, f"orphan_cleanup: корень недоступен: {media_root}", "warning")
         return
 
-    known = collect_known_paths(db)
-    _add_log(db, job_id, f"orphan_cleanup: известных путей из torrent_files={len(known)}")
+    qb = connect_master(db)
+    if qb is None:
+        _add_log(db, job_id, "orphan_cleanup: master qB не настроен — abort", "error")
+        return
+
+    def log_fn(message: str) -> None:
+        _add_log(db, job_id, f"orphan_cleanup: {message}", "debug")
+
+    # Те же валидные раздачи, что и hash_backfill (без «не зарегистрирован»).
+    inventory = build_inventory(db, qb, log_fn=log_fn)
+    known = {Path(item.full_path).resolve() for item in inventory.files}
+    _add_log(
+        db,
+        job_id,
+        f"orphan_cleanup: валидных раздач={len(inventory.valid_hashes)}, "
+        f"известных путей={len(known)}, invalid_skipped={inventory.skipped_invalid}",
+    )
+
+    # Hard-stop: пустой inventory → apply запрещён (иначе снесём всю медиатеку).
+    if not known:
+        _add_log(
+            db,
+            job_id,
+            "orphan_cleanup: qB не вернул путей валидных раздач — "
+            "проверьте master и mount /anilibria",
+            "warning",
+        )
+        if apply:
+            apply = False
+            _add_log(
+                db,
+                job_id,
+                "orphan_cleanup: APPLY ОТМЕНЁН — отказ удалять при пустом inventory",
+                "error",
+            )
+            # Не считаем orphan’ов как «всё на диске» — слишком опасно даже для лога.
+            _add_log(db, job_id, "orphan_cleanup: сканирование ФС пропущено (защита)")
+            return
+
     orphans = find_orphan_files(media_root=media_root, known=known)
     _add_log(db, job_id, f"orphan_cleanup: найдено orphan={len(orphans)}")
 
-    # Ограничим лог первыми N
     preview = orphans[:100]
     for path in preview:
         _add_log(db, job_id, f"orphan: {path}")
@@ -107,13 +140,25 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
 
     deleted = 0
     if apply:
+        if not media_root_is_writable(media_root):
+            raise RuntimeError(
+                "orphan_cleanup apply: /anilibria недоступен для записи "
+                "(проверьте mount rw у api/worker). Удаление отменено."
+            )
+        errors = 0
         for path in orphans:
             try:
                 path.unlink()
                 deleted += 1
             except OSError as exc:
+                errors += 1
                 _add_log(db, job_id, f"orphan_cleanup: не удалось удалить {path}: {exc}", "error")
-        _add_log(db, job_id, f"orphan_cleanup: удалено={deleted}")
+        _add_log(db, job_id, f"orphan_cleanup: удалено={deleted}, ошибок={errors}")
+        if errors and deleted == 0:
+            raise RuntimeError(
+                f"orphan_cleanup apply: ни один файл не удалён (ошибок={errors}). "
+                "Вероятно read-only mount."
+            )
     else:
         _add_log(
             db,

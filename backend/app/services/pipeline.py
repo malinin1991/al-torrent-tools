@@ -227,7 +227,10 @@ class TorrentPipelineService:
             )
             return pipeline
         if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
-            return self._add_to_slave(pipeline, torrent_bytes)
+            result = self._add_to_slave(pipeline, torrent_bytes)
+            # Повторная попытка: поставить hash, если раньше не удалось / не ставили.
+            self._enqueue_hash_torrent(result)
+            return result
         if pipeline.status != self.STATUS_MASTER_ADDED:
             raise RuntimeError(
                 f"Pipeline {pipeline.id} нельзя завершить из status={pipeline.status}"
@@ -241,9 +244,13 @@ class TorrentPipelineService:
                     f"Pipeline {pipeline.id}: пропуск race/повтор, status={pipeline.status}",
                     "debug",
                 )
+                # Даже на race: убедимся, что hash_torrent поставлен.
+                self._enqueue_hash_torrent(pipeline)
                 return pipeline
             if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
-                return self._add_to_slave(pipeline, torrent_bytes)
+                result = self._add_to_slave(pipeline, torrent_bytes)
+                self._enqueue_hash_torrent(result)
+                return result
             raise RuntimeError(
                 f"Pipeline {pipeline.id} нельзя завершить из status={pipeline.status}"
             )
@@ -254,8 +261,28 @@ class TorrentPipelineService:
         self._enqueue_hash_torrent(result)
         return result
 
+    def _hash_torrent_already_done_or_queued(self, info_hash: str) -> bool:
+        """Не дублировать hash_torrent, если уже pending/running/success для этого hash."""
+        from app.db.models import Job
+        from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING, STATUS_SUCCESS
+
+        normalized = (info_hash or "").strip().lower()
+        if not normalized:
+            return False
+        rows = self._db.scalars(
+            select(Job).where(
+                Job.type == "hash_torrent",
+                Job.status.in_((STATUS_PENDING, STATUS_RUNNING, STATUS_SUCCESS)),
+            )
+        ).all()
+        for job in rows:
+            params = job.params_json or {}
+            if str(params.get("info_hash") or "").strip().lower() == normalized:
+                return True
+        return False
+
     def _enqueue_hash_torrent(self, pipeline: TorrentPipeline) -> None:
-        """После master_complete — фоновый hash_torrent без блокировки slave."""
+        """Фоновый hash_torrent; идемпотентно (не дублирует success/pending/running)."""
         from app.api.rest import job_runner
         from app.db.models import TorrentArchive
         from app.services.job_runner import JobAlreadyRunningError, UnknownJobTypeError
@@ -272,6 +299,12 @@ class TorrentPipelineService:
         if archive is not None and not archive.api_present:
             self._add_log(
                 f"Pipeline {pipeline.id}: hash_torrent пропуск (api_present=false)",
+                "debug",
+            )
+            return
+        if self._hash_torrent_already_done_or_queued(pipeline.info_hash):
+            self._add_log(
+                f"Pipeline {pipeline.id}: hash_torrent уже был/в очереди — пропуск",
                 "debug",
             )
             return

@@ -6,16 +6,24 @@
   <div class="row">
     <button class="btn" hx-post="/actions/run/ongoing" hx-target="#action-result" hx-swap="innerHTML">Запустить ongoing</button>
     <button class="btn" hx-post="/actions/run/full_sync" hx-target="#action-result" hx-swap="innerHTML">Запустить full sync</button>
-    <button class="btn" hx-post="/actions/run/hash_backfill" hx-target="#action-result" hx-swap="innerHTML">Hash backfill</button>
+    <button class="btn" hx-post="/actions/run/hash_backfill" hx-target="#action-result" hx-swap="innerHTML">Hash backfill (qB inventory)</button>
     <form hx-post="/actions/run/orphan_cleanup" hx-target="#action-result" hx-swap="innerHTML">
       <input type="hidden" name="dry_run" value="true" />
+      <input type="hidden" name="apply" value="false" />
       <button class="btn" type="submit">Orphan cleanup (dry-run)</button>
+    </form>
+    <form hx-post="/actions/run/orphan_cleanup" hx-target="#action-result" hx-swap="innerHTML"
+          onsubmit="return confirm('Удалить orphan-файлы с диска? Действие необратимо.');">
+      <input type="hidden" name="dry_run" value="false" />
+      <input type="hidden" name="apply" value="true" />
+      <button class="btn btn-danger" type="submit">Orphan cleanup (удалить)</button>
     </form>
     <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML">
       <input type="hidden" name="dry_run" value="true" />
       <button class="btn" type="submit">Cleanup (dry-run)</button>
     </form>
-    <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML">
+    <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML"
+          onsubmit="return confirm('Удалить торренты по cleanup-правилам?');">
       <input type="hidden" name="dry_run" value="false" />
       <button class="btn btn-danger" type="submit">Cleanup (удалить)</button>
     </form>

@@ -518,6 +518,22 @@ class TorrentProcessor:
             + (f", tags={batch['tags']}" if batch.get("tags") else "")
         )
 
+    async def refresh_api_present_only(self, release_id: int) -> dict[str, int]:
+        """Обновить api_present по списку торрентов из API без скачивания."""
+        torrents_payload = await self._al_client.get_torrents_for_release(release_id, include=["id"])
+        torrents = self._iter_torrents(torrents_payload)
+        present_ids: set[int] = set()
+        for torrent in torrents:
+            tid = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
+            if tid is not None:
+                present_ids.add(tid)
+        stats = update_api_present_for_release(self._db, release_id, present_ids)
+        self._add_log(
+            f"Релиз {release_id}: api_present refresh true={stats['true']}, false={stats['false']}",
+            "debug",
+        )
+        return stats
+
     async def process_release(
         self,
         release_id: int,

@@ -29,7 +29,7 @@ services:
     volumes:
       - ./backend:/app
       - ./data/torrents:/app/data/torrents
-      - ./data/anilibria:/anilibria:ro
+      - ./data/anilibria:/anilibria
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,7 +63,7 @@ services:
     volumes:
       - ./backend:/app
       - ./data/torrents:/app/data/torrents
-      - ./data/anilibria:/anilibria:ro
+      - ./data/anilibria:/anilibria
     depends_on:
       postgres:
         condition: service_healthy

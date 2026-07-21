@@ -31,7 +31,7 @@
       {% endif %}
     </div>
     <div class="release-meta muted">
-      <span>{{ group.torrent_count }} торр.</span>
+      <span>{{ group.torrents|length }} акт.{% if group.archived_torrents %}, {{ group.archived_torrents|length }} арх.{% endif %}</span>
       {% if group.category %}<span>{{ group.category }}</span>{% endif %}
       <span>
         {% if group.last_updated %}

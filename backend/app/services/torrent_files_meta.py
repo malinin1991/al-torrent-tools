@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import qbittorrentapi
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.services.qbittorrent import _decode_bencode
@@ -140,6 +144,97 @@ def resolve_full_path(save_path: str, relative_path: str, *, media_root: Path | 
         )
         return None
     return candidate
+
+
+def extract_qb_file_name(qb_file: Any) -> str | None:
+    """Относительный путь файла из torrents/files."""
+    for attr in ("name", "file_name", "fileName"):
+        raw = getattr(qb_file, attr, None)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        if isinstance(qb_file, dict):
+            value = qb_file.get(attr)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def extract_qb_torrent_hash(torrent: Any) -> str | None:
+    for attr in ("hash", "infohash_v1", "info_hash"):
+        raw = getattr(torrent, attr, None)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip().lower()
+        if isinstance(torrent, dict):
+            value = torrent.get(attr)
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+    return None
+
+
+def collect_known_paths_from_qb(
+    db: Session,
+    *,
+    log_fn: Callable[[str], None] | None = None,
+) -> set[Path]:
+    """Пути файлов из master qB под ANILIBRIA_MEDIA_ROOT (без хеширования)."""
+    from sqlalchemy import select
+
+    from app.db.models import QbClient
+
+    media_root = resolve_media_root()
+    master = db.scalar(select(QbClient).where(QbClient.role == "master", QbClient.enabled.is_(True)).limit(1))
+    if master is None:
+        if log_fn:
+            log_fn("qB master не настроен — пути из клиента недоступны")
+        return set()
+
+    qb = qbittorrentapi.Client(
+        host=master.host,
+        port=master.port,
+        username=master.username,
+        password=master.password_encrypted,
+    )
+    qb.auth_log_in()
+
+    known: set[Path] = set()
+    torrents = list(qb.torrents_info() or [])
+    under_root = 0
+    for index, torrent in enumerate(torrents, start=1):
+        save_path = extract_qb_save_path(torrent)
+        if not save_path:
+            continue
+        base = Path(save_path).resolve()
+        anchor = base if base.is_dir() else base.parent
+        if not is_under_media_root(anchor, media_root=media_root):
+            continue
+        under_root += 1
+        info_hash = extract_qb_torrent_hash(torrent)
+        if not info_hash:
+            continue
+        if base.is_file() and is_under_media_root(base, media_root=media_root):
+            known.add(base)
+
+        try:
+            qb_files = qb.torrents_files(torrent_hash=info_hash) or []
+        except Exception as exc:
+            if log_fn:
+                log_fn(f"torrents_files {info_hash[:12]}…: {exc}")
+            continue
+
+        for qb_file in qb_files:
+            rel_name = extract_qb_file_name(qb_file)
+            if not rel_name:
+                continue
+            resolved = resolve_full_path(save_path, rel_name, media_root=media_root)
+            if resolved is not None:
+                known.add(resolved.resolve())
+
+        if log_fn and index % 100 == 0:
+            log_fn(f"qB: обработано торрентов {index}/{len(torrents)}, путей={len(known)}")
+
+    if log_fn:
+        log_fn(f"qB: торрентов под {media_root}={under_root}, известных путей={len(known)}")
+    return known
 
 
 def path_exists_including_incomplete(path: Path) -> bool:

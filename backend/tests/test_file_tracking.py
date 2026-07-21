@@ -173,7 +173,7 @@ def test_process_completion_enqueues_hash_without_blocking_slave(monkeypatch: py
     service._add_to_slave.assert_called_once()
 
 
-def test_process_completion_retry_does_not_enqueue_hash_again() -> None:
+def test_process_completion_retry_enqueues_hash_if_needed() -> None:
     db = MagicMock()
     service = TorrentPipelineService(db)
     pipeline = SimpleNamespace(
@@ -200,7 +200,26 @@ def test_process_completion_retry_does_not_enqueue_hash_again() -> None:
 
     assert result.status == TorrentPipelineService.STATUS_DONE
     service._add_to_slave.assert_called_once()
-    enqueue.assert_not_called()
+    enqueue.assert_called_once_with(done)
+
+
+def test_enqueue_hash_skips_when_already_success() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = SimpleNamespace(
+        id=1,
+        info_hash="abc123",
+        release_id=10,
+        torrent_id=20,
+        status=TorrentPipelineService.STATUS_DONE,
+    )
+    db.scalar.return_value = SimpleNamespace(api_present=True)
+    service._hash_torrent_already_done_or_queued = MagicMock(return_value=True)  # type: ignore[method-assign]
+    service._add_log = MagicMock()  # type: ignore[method-assign]
+
+    service._enqueue_hash_torrent(pipeline)
+
+    service._hash_torrent_already_done_or_queued.assert_called_once_with("abc123")
 
 
 def test_filter_duplicate_changes_skips_repeated_missing() -> None:

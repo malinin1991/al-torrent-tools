@@ -1,17 +1,21 @@
-"""Backfill хеширования: seeding на master, api_present, чекпоинт по папкам."""
+"""Полный проход: qB-inventory → BLAKE3+gate → prune БД."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
-import qbittorrentapi
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import Job, JobLog, QbClient, Setting, TorrentArchive
-from app.services.file_tracker import FileTrackerService
-from app.services.torrent_files_meta import extract_qb_save_path, is_under_media_root, resolve_media_root
+from app.db.models import Job, JobLog, Setting
+from app.services.qb_inventory import (
+    build_inventory,
+    connect_master,
+    hash_inventory_files,
+    prune_stale_inventory,
+    upsert_torrent_files_inventory,
+)
+from app.services.torrent_files_meta import resolve_media_root
 
 CHECKPOINT_KEY = "hash_backfill_checkpoint"
 
@@ -36,33 +40,11 @@ def _set_checkpoint(db: Session, value: str) -> None:
     db.commit()
 
 
-def _master_client(db: Session) -> qbittorrentapi.Client | None:
-    master = db.scalar(select(QbClient).where(QbClient.role == "master", QbClient.enabled.is_(True)).limit(1))
-    if master is None:
-        return None
-    qb = qbittorrentapi.Client(
-        host=master.host,
-        port=master.port,
-        username=master.username,
-        password=master.password_encrypted,
-    )
-    qb.auth_log_in()
-    return qb
-
-
-def _is_seeding(torrent: Any) -> bool:
-    progress = float(getattr(torrent, "progress", 0.0) or 0.0)
-    state = str(getattr(torrent, "state", "") or "").lower()
-    if progress >= 1.0:
-        return True
-    return state in {
-        "uploading",
-        "stalledup",
-        "queuedup",
-        "forcedup",
-        "pausedup",
-        "stoppedup",
-    }
+def _touch_job(db: Session, job_id: int) -> None:
+    job = db.get(Job, job_id)
+    if job is not None:
+        job.error = None
+        db.commit()
 
 
 async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) -> None:
@@ -74,99 +56,75 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
     media_root = resolve_media_root()
     _add_log(db, job_id, f"hash_backfill: media_root={media_root}")
 
-    qb = _master_client(db)
+    qb = connect_master(db)
     if qb is None:
         raise RuntimeError("hash_backfill: master qB не настроен")
 
-    archives = list(
-        db.scalars(
-            select(TorrentArchive)
-            .where(TorrentArchive.api_present.is_(True))
-            .order_by(TorrentArchive.info_hash.asc(), TorrentArchive.id.asc())
-        ).all()
-    )
-    # Уникальные hash → последний archive
-    by_hash: dict[str, TorrentArchive] = {}
-    for archive in archives:
-        by_hash[archive.info_hash.lower()] = archive
+    def log_fn(message: str) -> None:
+        _add_log(db, job_id, f"hash_backfill: {message}", "debug")
 
-    checkpoint = _get_checkpoint(db)
+    inventory = build_inventory(db, qb, log_fn=log_fn)
     _add_log(
         db,
         job_id,
-        f"hash_backfill: кандидатов api_present={len(by_hash)}, checkpoint={checkpoint or '(start)'}",
+        f"hash_backfill: inventory valid={len(inventory.valid_hashes)}, "
+        f"files={len(inventory.files)}, invalid={inventory.skipped_invalid}, "
+        f"skipped_path={inventory.skipped_path}",
     )
 
-    # Группируем по save_path (папка), обход в 1 поток
-    folders: dict[str, list[TorrentArchive]] = {}
-    skipped_path = 0
-    skipped_seed = 0
-    for info_hash, archive in sorted(by_hash.items(), key=lambda x: x[0]):
-        try:
-            torrents = qb.torrents_info(hashes=info_hash)
-        except Exception as exc:
-            _add_log(db, job_id, f"hash_backfill: qB error {info_hash[:12]}…: {exc}", "warning")
-            continue
-        if not torrents:
-            continue
-        torrent = torrents[0]
-        if not _is_seeding(torrent):
-            skipped_seed += 1
-            continue
-        save_path = extract_qb_save_path(torrent)
-        if not save_path:
-            skipped_path += 1
-            continue
-        from pathlib import Path
+    upserted = upsert_torrent_files_inventory(db, inventory)
+    _add_log(db, job_id, f"hash_backfill: upsert torrent_files={upserted}")
 
-        base = Path(save_path).resolve()
-        if not is_under_media_root(base, media_root=media_root):
-            skipped_path += 1
-            continue
-        folder_key = str(base if base.is_dir() else base.parent)
-        folders.setdefault(folder_key, []).append(archive)
+    # Группировка по папкам, обход в 1 поток с чекпоинтом
+    folders: dict[str, list] = {}
+    for item in inventory.files:
+        folders.setdefault(item.folder_key, []).append(item)
 
     folder_keys = sorted(folders.keys())
+    checkpoint = _get_checkpoint(db)
     if checkpoint:
         folder_keys = [k for k in folder_keys if k > checkpoint]
+        _add_log(db, job_id, f"hash_backfill: resume после checkpoint={checkpoint}")
 
-    tracker = FileTrackerService(db, job_id=job_id)
-    processed = 0
+    total_hashed = 0
+    total_gated = 0
+    total_missing = 0
     for folder in folder_keys:
         _add_log(db, job_id, f"hash_backfill: папка {folder}")
-        for archive in folders[folder]:
-            result = tracker.track_torrent(
-                info_hash=archive.info_hash,
-                torrent_id=archive.torrent_id,
-                release_id=archive.release_id,
-                notify=False,
-            )
-            processed += 1
-            if result.skipped_reason:
-                _add_log(
-                    db,
-                    job_id,
-                    f"hash_backfill: пропуск {archive.info_hash[:12]}… — {result.skipped_reason}",
-                    "debug",
-                )
-            else:
-                _add_log(
-                    db,
-                    job_id,
-                    f"hash_backfill: {archive.info_hash[:12]}… "
-                    f"files={result.files_upserted} hashed={result.hashed} gated={result.gated}",
-                    "debug",
-                )
-            # Обновляем статус джоба чтобы stale-reclaim не убил долгий backfill
-            job = db.get(Job, job_id)
-            if job is not None:
-                job.error = None
-                db.commit()
+        stats = hash_inventory_files(
+            db,
+            folders[folder],
+            selected_only=True,
+            log_fn=lambda msg: _add_log(db, job_id, msg, "info"),
+        )
+        total_hashed += stats["hashed"]
+        total_gated += stats["gated"]
+        total_missing += stats["missing"]
         _set_checkpoint(db, folder)
+        _touch_job(db, job_id)
 
+    pruned = prune_stale_inventory(db, inventory)
+    if pruned.get("skipped"):
+        _add_log(
+            db,
+            job_id,
+            "hash_backfill: prune пропущен — пустой inventory (защита БД)",
+            "warning",
+        )
+    else:
+        _add_log(
+            db,
+            job_id,
+            f"hash_backfill: prune torrent_files={pruned['torrent_files']}, "
+            f"disk_hashes={pruned['disk_hashes']}",
+        )
+
+    # Полный проход завершён — сбрасываем checkpoint для следующего запуска.
+    _set_checkpoint(db, "")
     _add_log(
         db,
         job_id,
-        f"hash_backfill: готово processed={processed}, "
-        f"skipped_seed={skipped_seed}, skipped_path={skipped_path}, folders={len(folder_keys)}",
+        f"hash_backfill: готово folders={len(folder_keys)}, "
+        f"hashed={total_hashed}, gated={total_gated}, missing={total_missing}, "
+        f"invalid_skipped={inventory.skipped_invalid}",
     )

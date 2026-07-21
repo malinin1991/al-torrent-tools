@@ -85,6 +85,40 @@ def _tracker_host_present(trackers: list[Any], host: str) -> bool:
     return any(needle in _tracker_url(tracker) for tracker in trackers)
 
 
+def match_cleanup_rule(torrent: Any, rules: list[CleanupRule]) -> tuple[bool, str, bool]:
+    """(matched, reason, delete_files) по cleanup-правилам («не зарегистрирован» и т.п.)."""
+    trackers = _tracker_list(getattr(torrent, "trackers", None))
+    state_enum = getattr(torrent, "state_enum", None)
+    is_errored = bool(getattr(state_enum, "is_errored", False))
+
+    matched = False
+    reason = ""
+    delete_files = False
+    for rule in rules:
+        should_remove = False
+        rule_reason = ""
+        for tracker in trackers:
+            if _tracker_matches_rule(tracker, rule):
+                should_remove = True
+                rule_reason = "tracker"
+                break
+        if (
+            not should_remove
+            and rule.include_errored
+            and is_errored
+            and _tracker_host_present(trackers, rule.tracker_host)
+        ):
+            should_remove = True
+            rule_reason = "errored"
+        if should_remove:
+            matched = True
+            if not reason:
+                reason = rule_reason
+            if rule.delete_files:
+                delete_files = True
+    return matched, reason, delete_files
+
+
 def find_removable_torrents(
     torrent_list: list[Any],
     rules: list[CleanupRule],
@@ -94,39 +128,19 @@ def find_removable_torrents(
         torrent_hash = str(getattr(torrent, "hash", "")).lower()
         if not torrent_hash:
             continue
-
-        state_enum = getattr(torrent, "state_enum", None)
-        trackers = _tracker_list(getattr(torrent, "trackers", None))
-        is_errored = bool(getattr(state_enum, "is_errored", False))
-
-        for rule in rules:
-            should_remove = False
-            reason = ""
-            for tracker in trackers:
-                if _tracker_matches_rule(tracker, rule):
-                    should_remove = True
-                    reason = "tracker"
-                    break
-            # Errored только если торрент связан с tracker_host правила — не все errored подряд.
-            if (
-                not should_remove
-                and rule.include_errored
-                and is_errored
-                and _tracker_host_present(trackers, rule.tracker_host)
-            ):
-                should_remove = True
-                reason = "errored"
-            if should_remove:
-                current = removable.get(torrent_hash)
-                if current is None:
-                    removable[torrent_hash] = {
-                        "hash": torrent_hash,
-                        "name": str(getattr(torrent, "name", torrent_hash)),
-                        "delete_files": bool(rule.delete_files),
-                        "reason": reason,
-                    }
-                elif rule.delete_files:
-                    current["delete_files"] = True
+        matched, reason, delete_files = match_cleanup_rule(torrent, rules)
+        if not matched:
+            continue
+        current = removable.get(torrent_hash)
+        if current is None:
+            removable[torrent_hash] = {
+                "hash": torrent_hash,
+                "name": str(getattr(torrent, "name", torrent_hash)),
+                "delete_files": delete_files,
+                "reason": reason,
+            }
+        elif delete_files:
+            current["delete_files"] = True
     return list(removable.values())
 
 

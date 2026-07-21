@@ -139,6 +139,8 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
                 f"(updated_at={ref.updated_at or '-'}, fresh_at={ref.fresh_at or '-'})",
                 level="debug",
             )
+            # Актуальность торрентов в UI всё равно обновляем (лёгкий запрос id).
+            await processor.refresh_api_present_only(ref.release_id)
             continue
 
         processed += 1
