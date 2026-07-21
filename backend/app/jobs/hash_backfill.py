@@ -7,7 +7,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import Job, JobLog, Setting
+from app.services.file_hasher import clamp_hash_workers
 from app.services.qb_inventory import (
     build_inventory,
     connect_master,
@@ -15,6 +17,7 @@ from app.services.qb_inventory import (
     prune_stale_inventory,
     upsert_torrent_files_inventory,
 )
+from app.services.runtime_settings import get_setting_value
 from app.services.torrent_files_meta import resolve_media_root
 
 CHECKPOINT_KEY = "hash_backfill_checkpoint"
@@ -89,17 +92,24 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
     total_hashed = 0
     total_gated = 0
     total_missing = 0
+    total_errors = 0
+    workers = clamp_hash_workers(
+        get_setting_value(db, "file_hash_workers", str(settings.file_hash_workers))
+    )
+    _add_log(db, job_id, f"hash_backfill: workers={workers}")
     for folder in folder_keys:
         _add_log(db, job_id, f"hash_backfill: папка {folder}")
         stats = hash_inventory_files(
             db,
             folders[folder],
             selected_only=True,
+            workers=workers,
             log_fn=lambda msg: _add_log(db, job_id, msg, "info"),
         )
         total_hashed += stats["hashed"]
         total_gated += stats["gated"]
         total_missing += stats["missing"]
+        total_errors += stats.get("errors", 0)
         _set_checkpoint(db, folder)
         _touch_job(db, job_id)
 
@@ -126,5 +136,5 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
         job_id,
         f"hash_backfill: готово folders={len(folder_keys)}, "
         f"hashed={total_hashed}, gated={total_gated}, missing={total_missing}, "
-        f"invalid_skipped={inventory.skipped_invalid}",
+        f"errors={total_errors}, invalid_skipped={inventory.skipped_invalid}",
     )

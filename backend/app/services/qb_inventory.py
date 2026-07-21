@@ -13,9 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import CleanupRule, DiskFileHash, QbClient, TorrentArchive, TorrentFile
-from app.services.file_hasher import upsert_disk_hash
 from app.services.torrent_cleanup import match_cleanup_rule
 from app.services.torrent_files_meta import (
+    extract_qb_content_path,
     extract_qb_file_name,
     extract_qb_file_priorities,
     extract_qb_save_path,
@@ -43,6 +43,8 @@ class InventoryFile:
 class InventoryResult:
     files: list[InventoryFile] = field(default_factory=list)
     valid_hashes: set[str] = field(default_factory=set)
+    # torrents_files упал — prune не должен сносить уже сохранённые torrent_files/hashes.
+    failed_hashes: set[str] = field(default_factory=set)
     skipped_invalid: int = 0
     skipped_path: int = 0
     torrents_under_root: int = 0
@@ -85,6 +87,7 @@ def enrich_with_trackers(qb: qbittorrentapi.Client, torrents: list[Any]) -> list
                 state_enum=getattr(torrent, "state_enum", None),
                 trackers=trackers,
                 save_path=extract_qb_save_path(torrent),
+                content_path=extract_qb_content_path(torrent),
                 progress=getattr(torrent, "progress", None),
                 state=getattr(torrent, "state", None),
                 _raw=torrent,
@@ -127,10 +130,12 @@ def build_inventory(
     candidates: list[Any] = []
     for torrent in enriched:
         save_path = torrent.save_path
-        if not save_path:
+        content_path = getattr(torrent, "content_path", None)
+        if not save_path and not content_path:
             result.skipped_path += 1
             continue
-        base = Path(save_path).resolve()
+        anchor_raw = save_path or content_path
+        base = Path(anchor_raw).resolve()
         anchor = base if base.is_dir() else base.parent
         if not is_under_media_root(anchor, media_root=media_root):
             result.skipped_path += 1
@@ -153,7 +158,8 @@ def build_inventory(
     meta = archive_meta_by_hash(db, candidate_hashes)
 
     for index, torrent in enumerate(candidates, start=1):
-        save_path = torrent.save_path
+        save_path = torrent.save_path or getattr(torrent, "content_path", None)
+        content_path = getattr(torrent, "content_path", None)
         assert save_path
         base = Path(save_path).resolve()
         folder_key = str(base if base.is_dir() else base.parent)
@@ -164,7 +170,8 @@ def build_inventory(
         except Exception as exc:
             if log_fn:
                 log_fn(f"torrents_files {torrent.hash[:12]}…: {exc}")
-            # Не добавляем в valid_hashes — иначе prune снесёт корректные torrent_files.
+            # Не в valid_hashes и помечаем failed — prune сохранит старые строки.
+            result.failed_hashes.add(torrent.hash)
             continue
 
         result.valid_hashes.add(torrent.hash)
@@ -190,7 +197,12 @@ def build_inventory(
             selected = True
             if priorities:
                 selected = priorities.get(file_index, 0) > 0
-            resolved = resolve_full_path(save_path, rel_name, media_root=media_root)
+            resolved = resolve_full_path(
+                save_path,
+                rel_name,
+                content_path=content_path,
+                media_root=media_root,
+            )
             if resolved is None:
                 continue
             result.files.append(
@@ -215,8 +227,8 @@ def build_inventory(
     if log_fn:
         log_fn(
             f"inventory: под {media_root} torrents={result.torrents_under_root}, "
-            f"valid={len(result.valid_hashes)}, invalid={result.skipped_invalid}, "
-            f"files={len(result.files)}"
+            f"valid={len(result.valid_hashes)}, failed_files={len(result.failed_hashes)}, "
+            f"invalid={result.skipped_invalid}, files={len(result.files)}"
         )
     return result
 
@@ -270,20 +282,31 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
 
 
 def prune_stale_inventory(db: Session, inventory: InventoryResult) -> dict[str, int]:
-    """Удалить torrent_files / disk_file_hashes, которых нет в актуальном inventory."""
+    """Удалить torrent_files / disk_file_hashes, которых нет в актуальном inventory.
+
+    Hash с failed torrents_files не трогаем (временный сбой qB).
+    """
     if not inventory.valid_hashes:
         # Пустой inventory (сбой qB / всё отфильтровано) — не трогаем БД.
         return {"torrent_files": 0, "disk_hashes": 0, "skipped": 1}
 
-    known_paths = {item.full_path for item in inventory.files}
-    known_hashes = set(inventory.valid_hashes)
+    protect_hashes = {(h or "").strip().lower() for h in inventory.failed_hashes if h}
+    known_hashes = {(h or "").strip().lower() for h in inventory.valid_hashes if h}
+    known_paths = {item.full_path for item in inventory.files if item.full_path}
 
-    # torrent_files: чужие info_hash или пути вне inventory
     tf_rows = list(db.scalars(select(TorrentFile)).all())
+    # Пути failed-раздач защищаем и в disk_file_hashes.
+    for row in tf_rows:
+        info_hash = (row.info_hash or "").strip().lower()
+        if info_hash in protect_hashes and row.full_path:
+            known_paths.add(row.full_path)
+
     tf_deleted = 0
     for row in tf_rows:
         info_hash = (row.info_hash or "").strip().lower()
         full_path = row.full_path
+        if info_hash in protect_hashes:
+            continue
         if info_hash not in known_hashes:
             db.delete(row)
             tf_deleted += 1
@@ -292,7 +315,7 @@ def prune_stale_inventory(db: Session, inventory: InventoryResult) -> dict[str, 
             db.delete(row)
             tf_deleted += 1
 
-    # disk_file_hashes под media_root, которых нет в known
+    # disk_file_hashes под media_root, которых нет в known (+ protected)
     media_root = resolve_media_root()
     dh_rows = list(db.scalars(select(DiskFileHash)).all())
     dh_deleted = 0
@@ -319,22 +342,34 @@ def hash_inventory_files(
     files: list[InventoryFile],
     *,
     selected_only: bool = True,
+    workers: int | None = None,
     log_fn: Callable[[str], None] | None = None,
 ) -> dict[str, int]:
-    """BLAKE3+gate для файлов inventory, которые есть на диске."""
-    hashed = 0
-    gated = 0
+    """BLAKE3+gate для файлов inventory, которые есть на диске.
+
+    workers>1 — чтение/хеш в пуле потоков; запись в БД только из вызывающего потока.
+    """
+    from app.services.file_hasher import clamp_hash_workers, hash_paths_parallel
+
+    paths: list[Path] = []
     missing = 0
     for item in files:
         if selected_only and not item.selected:
             continue
         path = Path(item.full_path)
-        if not path.is_file():
-            missing += 1
-            continue
-        result = upsert_disk_hash(db, path, log_fn=log_fn)
-        if result.skipped_gate:
-            gated += 1
+        if path.is_file():
+            paths.append(path)
         else:
-            hashed += 1
-    return {"hashed": hashed, "gated": gated, "missing": missing}
+            missing += 1
+
+    worker_count = clamp_hash_workers(1 if workers is None else workers)
+    if log_fn and paths:
+        log_fn(f"хеширование: файлов={len(paths)}, workers={worker_count}")
+
+    stats = hash_paths_parallel(db, paths, workers=worker_count, log_fn=log_fn)
+    return {
+        "hashed": stats["hashed"],
+        "gated": stats["gated"],
+        "missing": missing,
+        "errors": stats.get("errors", 0),
+    }

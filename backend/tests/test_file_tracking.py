@@ -222,6 +222,69 @@ def test_enqueue_hash_skips_when_already_success() -> None:
     service._hash_torrent_already_done_or_queued.assert_called_once_with("abc123")
 
 
+def test_hash_torrent_already_done_allows_retry_after_failed() -> None:
+    """failed не попадает в select pending/running/success → можно enqueue снова."""
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    db.scalars.return_value.all.return_value = []
+    assert service._hash_torrent_already_done_or_queued("abc123") is False
+
+    success_job = SimpleNamespace(params_json={"info_hash": "abc123"})
+    db.scalars.return_value.all.return_value = [success_job]
+    assert service._hash_torrent_already_done_or_queued("abc123") is True
+
+
+def test_hash_torrent_soft_skip_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from app.jobs import hash_torrent as mod
+
+    db = MagicMock()
+    tracker = MagicMock()
+    tracker.track_torrent.return_value = SimpleNamespace(
+        skipped_reason="торрент не api_present (архивный)",
+        files_upserted=0,
+        hashed=0,
+        gated=0,
+        errors=0,
+        changes=[],
+    )
+    monkeypatch.setattr(mod, "FileTrackerService", MagicMock(return_value=tracker))
+    asyncio.run(
+        mod.run_hash_torrent(
+            db,
+            1,
+            {"info_hash": "a" * 40, "torrent_id": 1, "release_id": 2},
+        )
+    )
+
+
+def test_hash_torrent_retriable_skip_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from app.jobs import hash_torrent as mod
+
+    db = MagicMock()
+    tracker = MagicMock()
+    tracker.track_torrent.return_value = SimpleNamespace(
+        skipped_reason="нет .torrent в архиве",
+        files_upserted=0,
+        hashed=0,
+        gated=0,
+        errors=0,
+        changes=[],
+    )
+    monkeypatch.setattr(mod, "FileTrackerService", MagicMock(return_value=tracker))
+    with pytest.raises(RuntimeError, match="нет \\.torrent"):
+        asyncio.run(
+            mod.run_hash_torrent(
+                db,
+                1,
+                {"info_hash": "a" * 40, "torrent_id": 1, "release_id": 2},
+            )
+        )
+
+
 def test_filter_duplicate_changes_skips_repeated_missing() -> None:
     db = MagicMock()
     service = FileTrackerService(db)

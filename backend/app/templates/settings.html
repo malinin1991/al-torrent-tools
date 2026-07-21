@@ -149,7 +149,11 @@
       <label>Возраст master для polling fallback, мин
         <input class="input" name="pipeline_master_min_age_min" value="{{ settings_map.get('pipeline_master_min_age_min', '5') }}" />
       </label>
+      <label>Потоки хеширования файлов (1–8)
+        <input class="input" name="file_hash_workers" value="{{ settings_map.get('file_hash_workers', '3') }}" type="number" min="1" max="8" step="1" />
+      </label>
     </div>
+    <p class="muted" style="margin-top:8px;">Для <code>hash_backfill</code> и <code>hash_torrent</code>. Рекомендация Unraid (6 data + cache, Ryzen 2700): <strong>3</strong>. Больше — быстрее, но выше нагрузка на массив.</p>
   </section>
 
   <div style="margin-top: 12px;">

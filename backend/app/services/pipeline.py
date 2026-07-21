@@ -228,7 +228,8 @@ class TorrentPipelineService:
             return pipeline
         if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
             result = self._add_to_slave(pipeline, torrent_bytes)
-            # Повторная попытка: поставить hash, если раньше не удалось / не ставили.
+            # Повтор: поставить hash, если earlier failed/cancelled или ещё не ставили.
+            # Уже success / pending / running — не дублируем.
             self._enqueue_hash_torrent(result)
             return result
         if pipeline.status != self.STATUS_MASTER_ADDED:
@@ -262,7 +263,12 @@ class TorrentPipelineService:
         return result
 
     def _hash_torrent_already_done_or_queued(self, info_hash: str) -> bool:
-        """Не дублировать hash_torrent, если уже pending/running/success для этого hash."""
+        """Не дублировать hash_torrent.
+
+        pending/running — уже в работе.
+        success — идемпотентность после успешного прохода (мягкий skip api_present тоже success).
+        failed/cancelled — можно поставить снова (например не было .torrent в архиве).
+        """
         from app.db.models import Job
         from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING, STATUS_SUCCESS
 
@@ -282,7 +288,7 @@ class TorrentPipelineService:
         return False
 
     def _enqueue_hash_torrent(self, pipeline: TorrentPipeline) -> None:
-        """Фоновый hash_torrent; идемпотентно (не дублирует success/pending/running)."""
+        """Фоновый hash_torrent; не дублирует pending/running/success (failed — можно снова)."""
         from app.api.rest import job_runner
         from app.db.models import TorrentArchive
         from app.services.job_runner import JobAlreadyRunningError, UnknownJobTypeError

@@ -82,8 +82,21 @@ def _bdecode_str(value: bytes | str) -> str:
 
 
 def extract_qb_save_path(torrent_info: Any) -> str | None:
-    """save_path / content_path из torrents_info."""
-    for attr in ("save_path", "savePath", "content_path", "contentPath"):
+    """Каталог загрузки (save_path), без content_path — иначе ломается join с name файла."""
+    for attr in ("save_path", "savePath"):
+        raw = getattr(torrent_info, attr, None)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        if isinstance(torrent_info, dict):
+            value = torrent_info.get(attr)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def extract_qb_content_path(torrent_info: Any) -> str | None:
+    """Корень контента торрента (папка/файл) — запасной якорь для резолва."""
+    for attr in ("content_path", "contentPath"):
         raw = getattr(torrent_info, attr, None)
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
@@ -115,35 +128,78 @@ def extract_qb_file_priorities(qb_files: Any) -> dict[int, int]:
     return priorities
 
 
-def resolve_full_path(save_path: str, relative_path: str, *, media_root: Path | None = None) -> Path | None:
-    """Абсолютный путь только под ANILIBRIA_MEDIA_ROOT; иначе None."""
+def resolve_full_path(
+    save_path: str,
+    relative_path: str,
+    *,
+    content_path: str | None = None,
+    media_root: Path | None = None,
+) -> Path | None:
+    """Абсолютный путь под ANILIBRIA_MEDIA_ROOT.
+
+    Учитывает типичные раскладки qB:
+    - save_path=/anilibria/2012 + name=Show/ep.mkv
+    - save_path уже = .../Show, а name всё ещё Show/ep.mkv (без дубля)
+    - content_path как запасной якорь
+    """
     root = media_root or resolve_media_root()
-    base = Path(save_path)
-    candidate = (base / relative_path).resolve() if not Path(relative_path).is_absolute() else Path(relative_path).resolve()
-    # qB иногда отдаёт content_path уже как полный путь к файлу/папке.
-    if not is_under_media_root(candidate, media_root=root):
-        # Попробуем save_path как корень контента (multi-file: save_path уже включает name).
-        alt = Path(save_path).resolve()
-        if alt.name == Path(relative_path).parts[0]:
-            candidate = (alt.parent / relative_path).resolve()
-        elif is_under_media_root(alt, media_root=root) and alt.is_file():
-            candidate = alt
-        else:
-            logger.warning(
-                "Путь вне ANILIBRIA_MEDIA_ROOT, пропуск: save_path=%s relative=%s → %s",
-                save_path,
-                relative_path,
-                candidate,
-            )
-            return None
-    if not is_under_media_root(candidate, media_root=root):
-        logger.warning(
-            "Путь вне ANILIBRIA_MEDIA_ROOT, пропуск: %s (root=%s)",
-            candidate,
-            root,
-        )
-        return None
-    return candidate
+    rel = Path(relative_path)
+    bases: list[Path] = []
+    if save_path.strip():
+        bases.append(Path(save_path))
+    if content_path and content_path.strip():
+        bases.append(Path(content_path))
+
+    candidates: list[Path] = []
+    if rel.is_absolute():
+        candidates.append(rel)
+    else:
+        for base in bases:
+            # Если base уже = корневая папка торрента, а name начинается с неё —
+            # сначала варианты без дубля (иначе fallback вернёт несуществующий путь).
+            if rel.parts and base.name == rel.parts[0]:
+                candidates.append(base.parent / rel)
+                if len(rel.parts) > 1:
+                    candidates.append(base / Path(*rel.parts[1:]))
+            candidates.append(base / rel)
+        # content_path = Show, name = Show/ep.mkv → Show/ep.mkv
+        if content_path and rel.parts and Path(content_path).name == rel.parts[0] and len(rel.parts) > 1:
+            candidates.append(Path(content_path) / Path(*rel.parts[1:]))
+
+    seen: set[str] = set()
+    under_root: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        key = str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not is_under_media_root(resolved, media_root=root):
+            continue
+        under_root.append(resolved)
+        if resolved.is_file() or path_exists_including_incomplete(resolved):
+            return resolved
+
+    if under_root:
+        # Файл ещё не на диске: предпочитаем кандидата с существующим parent dir.
+        for candidate in under_root:
+            try:
+                if candidate.parent.is_dir():
+                    return candidate
+            except OSError:
+                continue
+        return under_root[0]
+
+    logger.warning(
+        "Путь вне ANILIBRIA_MEDIA_ROOT или не резолвится: save_path=%s content_path=%s relative=%s",
+        save_path,
+        content_path,
+        relative_path,
+    )
+    return None
 
 
 def extract_qb_file_name(qb_file: Any) -> str | None:
@@ -201,9 +257,11 @@ def collect_known_paths_from_qb(
     under_root = 0
     for index, torrent in enumerate(torrents, start=1):
         save_path = extract_qb_save_path(torrent)
-        if not save_path:
+        content_path = extract_qb_content_path(torrent)
+        if not save_path and not content_path:
             continue
-        base = Path(save_path).resolve()
+        anchor_raw = save_path or content_path or ""
+        base = Path(anchor_raw).resolve()
         anchor = base if base.is_dir() else base.parent
         if not is_under_media_root(anchor, media_root=media_root):
             continue
@@ -225,7 +283,12 @@ def collect_known_paths_from_qb(
             rel_name = extract_qb_file_name(qb_file)
             if not rel_name:
                 continue
-            resolved = resolve_full_path(save_path, rel_name, media_root=media_root)
+            resolved = resolve_full_path(
+                save_path or content_path or "",
+                rel_name,
+                content_path=content_path,
+                media_root=media_root,
+            )
             if resolved is not None:
                 known.add(resolved.resolve())
 

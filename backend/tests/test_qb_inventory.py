@@ -210,8 +210,94 @@ def test_build_inventory_skips_valid_hash_when_torrents_files_fails(monkeypatch)
 
     result = mod.build_inventory(MagicMock(), qb)
     assert "a" * 40 not in result.valid_hashes
+    assert "a" * 40 in result.failed_hashes
     assert result.files == []
 
+
+def test_prune_stale_inventory_keeps_failed_hashes(monkeypatch, tmp_path: Path) -> None:
+    """Временный сбой torrents_files не должен сносить torrent_files этой раздачи."""
+    media_root = tmp_path / "anilibria"
+    media_root.mkdir()
+    keep = media_root / "Show" / "ep01.mkv"
+    keep.parent.mkdir(parents=True)
+    keep.write_bytes(b"ok")
+    other = media_root / "Other" / "ep01.mkv"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(b"x")
+
+    monkeypatch.setattr("app.services.qb_inventory.resolve_media_root", lambda: media_root)
+
+    failed_hash = "a" * 40
+    valid_hash = "b" * 40
+    keep_failed_tf = SimpleNamespace(
+        info_hash=failed_hash,
+        relative_path="Show/ep01.mkv",
+        full_path=str(keep.resolve()),
+    )
+    keep_valid_tf = SimpleNamespace(
+        info_hash=valid_hash,
+        relative_path="Other/ep01.mkv",
+        full_path=str(other.resolve()),
+    )
+    stale_tf = SimpleNamespace(
+        info_hash="c" * 40,
+        relative_path="gone.mkv",
+        full_path=str((media_root / "gone.mkv").resolve()),
+    )
+    keep_failed_dh = SimpleNamespace(full_path=str(keep.resolve()))
+    keep_valid_dh = SimpleNamespace(full_path=str(other.resolve()))
+    stale_dh = SimpleNamespace(full_path=str((media_root / "gone.mkv").resolve()))
+
+    tf_rows = [keep_failed_tf, keep_valid_tf, stale_tf]
+    dh_rows = [keep_failed_dh, keep_valid_dh, stale_dh]
+    call_n = {"n": 0}
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    def fake_scalars(_stmt):
+        call_n["n"] += 1
+        if call_n["n"] == 1:
+            return FakeScalars(tf_rows)
+        return FakeScalars(dh_rows)
+
+    deleted: list[object] = []
+    db = MagicMock()
+    db.scalars.side_effect = fake_scalars
+    db.delete.side_effect = lambda obj: deleted.append(obj)
+
+    inventory = InventoryResult(
+        valid_hashes={valid_hash},
+        failed_hashes={failed_hash},
+        files=[
+            InventoryFile(
+                info_hash=valid_hash,
+                torrent_id=1,
+                release_id=1,
+                relative_path="Other/ep01.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path=str(other.resolve()),
+                folder_key=str(other.parent.resolve()),
+            )
+        ],
+    )
+    pruned = prune_stale_inventory(db, inventory)
+    assert pruned["skipped"] == 0
+    assert keep_failed_tf not in deleted
+    assert keep_valid_tf not in deleted
+    assert stale_tf in deleted
+    assert keep_failed_dh not in deleted
+    assert keep_valid_dh not in deleted
+    assert stale_dh in deleted
+
+
+def test_hash_backfill_clears_checkpoint_after_success(monkeypatch) -> None:
     import asyncio
     from pathlib import Path
 
@@ -228,11 +314,188 @@ def test_build_inventory_skips_valid_hash_when_torrents_files_fails(monkeypatch)
         lambda *_a, **_k: InventoryResult(valid_hashes={"a" * 40}, files=[]),
     )
     monkeypatch.setattr(mod, "upsert_torrent_files_inventory", lambda *_a, **_k: 0)
-    monkeypatch.setattr(mod, "prune_stale_inventory", lambda *_a, **_k: {"torrent_files": 0, "disk_hashes": 0, "skipped": 0})
+    monkeypatch.setattr(
+        mod,
+        "prune_stale_inventory",
+        lambda *_a, **_k: {"torrent_files": 0, "disk_hashes": 0, "skipped": 0},
+    )
     monkeypatch.setattr(mod, "_add_log", lambda *_a, **_k: None)
     monkeypatch.setattr(mod, "_get_checkpoint", lambda _db: "zzz")
     monkeypatch.setattr(mod, "_set_checkpoint", lambda _db, value: calls["checkpoint"].append(value))
     monkeypatch.setattr(mod, "_touch_job", lambda *_a, **_k: None)
+    monkeypatch.setattr(mod, "get_setting_value", lambda *_a, **_k: "3")
+    monkeypatch.setattr(mod, "clamp_hash_workers", lambda *_a, **_k: 3)
 
     asyncio.run(mod.run_hash_backfill(db, 1, {}))
     assert calls["checkpoint"][-1] == ""
+
+
+def test_resolve_full_path_dedupes_save_path_equals_torrent_root(tmp_path: Path) -> None:
+    """qB: save_path уже = папка шоу, name всё ещё Show/ep.mkv — без двойного пути."""
+    from app.services.torrent_files_meta import resolve_full_path
+
+    media_root = tmp_path / "anilibria"
+    show = media_root / "2012" / "Sankarea [BD-Rip] [720p]"
+    ep = show / "Sankarea_[01].mkv"
+    ep.parent.mkdir(parents=True)
+    ep.write_bytes(b"x")
+
+    save_path = str(show)
+    rel = "Sankarea [BD-Rip] [720p]/Sankarea_[01].mkv"
+    resolved = resolve_full_path(save_path, rel, media_root=media_root)
+    assert resolved is not None
+    assert resolved.resolve() == ep.resolve()
+    assert "Sankarea [BD-Rip] [720p]/Sankarea [BD-Rip] [720p]" not in str(resolved)
+
+
+def test_resolve_full_path_parent_save_path(tmp_path: Path) -> None:
+    from app.services.torrent_files_meta import resolve_full_path
+
+    media_root = tmp_path / "anilibria"
+    year = media_root / "2012"
+    show = year / "Show"
+    ep = show / "ep01.mkv"
+    ep.parent.mkdir(parents=True)
+    ep.write_bytes(b"x")
+
+    resolved = resolve_full_path(str(year), "Show/ep01.mkv", media_root=media_root)
+    assert resolved is not None
+    assert resolved.resolve() == ep.resolve()
+
+
+def test_orphan_known_includes_deduped_paths(monkeypatch, tmp_path: Path) -> None:
+    """Файлы на диске не считаются orphan, если save_path = корневая папка торрента."""
+    from app.jobs.orphan_cleanup import find_orphan_files
+    from app.services import qb_inventory as mod
+
+    media_root = tmp_path / "anilibria"
+    show = media_root / "2012" / "Sankarea [BD-Rip] [720p]"
+    files = [
+        show / "Sankarea_[01].mkv",
+        show / "Sankarea_[02].mkv",
+    ]
+    show.mkdir(parents=True)
+    for f in files:
+        f.write_bytes(b"ok")
+    orphan = media_root / "2012" / "orphan.mkv"
+    orphan.write_bytes(b"x")
+
+    info_hash = "a" * 40
+    torrent = SimpleNamespace(
+        hash=info_hash,
+        name="Sankarea",
+        save_path=str(show),
+        content_path=str(show),
+        state_enum=SimpleNamespace(is_errored=False),
+        trackers=[],
+    )
+    qb_files = [
+        SimpleNamespace(
+            name=f"Sankarea [BD-Rip] [720p]/{f.name}",
+            index=i,
+            size=2,
+            priority=1,
+        )
+        for i, f in enumerate(files)
+    ]
+    qb = MagicMock()
+    qb.torrents_info.return_value = [torrent]
+    qb.torrents_files.return_value = qb_files
+
+    monkeypatch.setattr(mod, "resolve_media_root", lambda: media_root)
+    monkeypatch.setattr(mod, "load_cleanup_rules", lambda _db: [])
+    monkeypatch.setattr(mod, "enrich_with_trackers", lambda _qb, torrents: list(torrents))
+    monkeypatch.setattr(mod, "archive_meta_by_hash", lambda _db, _h: {info_hash: (1, 1)})
+
+    inventory = mod.build_inventory(MagicMock(), qb)
+    known = {Path(item.full_path).resolve() for item in inventory.files}
+    assert files[0].resolve() in known
+    assert files[1].resolve() in known
+
+    orphans = find_orphan_files(media_root=media_root, known=known)
+    assert orphan.resolve() in orphans
+    assert files[0].resolve() not in orphans
+    assert files[1].resolve() not in orphans
+
+
+def test_clamp_hash_workers() -> None:
+    from app.services.file_hasher import clamp_hash_workers, normalize_file_hash_workers_setting
+
+    assert clamp_hash_workers(3) == 3
+    assert clamp_hash_workers(0) == 1
+    assert clamp_hash_workers(99) == 8
+    assert clamp_hash_workers("4") == 4
+    assert clamp_hash_workers("nope") == 3
+    assert normalize_file_hash_workers_setting("999") == "8"
+    assert normalize_file_hash_workers_setting("bad") == "3"
+
+
+def test_resolve_full_path_missing_file_prefers_deduped(tmp_path: Path) -> None:
+    """Без файла на диске — не удваиваем папку (parent dir существует)."""
+    from app.services.torrent_files_meta import resolve_full_path
+
+    media_root = tmp_path / "anilibria"
+    show = media_root / "2012" / "Sankarea [BD-Rip] [720p]"
+    show.mkdir(parents=True)
+    expected = show / "Sankarea_[01].mkv"
+
+    resolved = resolve_full_path(
+        str(show),
+        "Sankarea [BD-Rip] [720p]/Sankarea_[01].mkv",
+        media_root=media_root,
+    )
+    assert resolved is not None
+    assert resolved.resolve() == expected.resolve()
+    assert resolved.parent == show.resolve()
+
+
+def test_hash_paths_parallel_isolates_errors(tmp_path: Path, monkeypatch) -> None:
+    from app.services import file_hasher as mod
+
+    good = tmp_path / "good.mkv"
+    bad = tmp_path / "bad.mkv"
+    good.write_bytes(b"ok-data")
+    bad.write_bytes(b"bad-data")
+
+    db = MagicMock()
+    db.scalar.return_value = None
+    added: list[object] = []
+    db.add.side_effect = lambda obj: added.append(obj)
+
+    real_hash = mod.hash_file_blake3
+
+    def flaky_hash(path, **kwargs):
+        if Path(path).name == "bad.mkv":
+            raise OSError("I/O error")
+        return real_hash(path, **kwargs)
+
+    monkeypatch.setattr(mod, "hash_file_blake3", flaky_hash)
+
+    stats = mod.hash_paths_parallel(db, [good, bad], workers=2)
+    assert stats["hashed"] == 1
+    assert stats["errors"] == 1
+    assert stats["gated"] == 0
+    assert len(added) == 1
+
+
+def test_hash_paths_parallel_workers_hash_multiple(tmp_path: Path) -> None:
+    from app.services.file_hasher import hash_paths_parallel
+
+    files = []
+    for i in range(4):
+        p = tmp_path / f"f{i}.mkv"
+        p.write_bytes(f"content-{i}".encode())
+        files.append(p)
+
+    db = MagicMock()
+    db.scalar.return_value = None
+    added: list[object] = []
+    db.add.side_effect = lambda obj: added.append(obj)
+
+    stats = hash_paths_parallel(db, files, workers=3)
+    assert stats["hashed"] == 4
+    assert stats["errors"] == 0
+    assert stats["gated"] == 0
+    assert len(added) == 4
+    hashes = {row.content_hash for row in added}
+    assert len(hashes) == 4

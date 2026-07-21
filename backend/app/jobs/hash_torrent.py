@@ -9,6 +9,13 @@ from sqlalchemy.orm import Session
 from app.db.models import JobLog
 from app.services.file_tracker import FileTrackerService
 
+# Мягкий пропуск: джоб success (нечего делать, retry не нужен).
+_SOFT_SKIP_REASONS = frozenset(
+    {
+        "торрент не api_present (архивный)",
+    }
+)
+
 
 def _add_log(db: Session, job_id: int, message: str, level: str = "info") -> None:
     db.add(JobLog(job_id=job_id, level=level, message=message))
@@ -35,7 +42,10 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
     )
     if result.skipped_reason:
         _add_log(db, job_id, f"hash_torrent: пропуск — {result.skipped_reason}", "warning")
-        return
+        if result.skipped_reason in _SOFT_SKIP_REASONS:
+            return
+        # Retriable: нет .torrent / пустой hash и т.п. → failed, можно поставить снова.
+        raise RuntimeError(f"hash_torrent: {result.skipped_reason}")
     kinds: dict[str, int] = {}
     for change in result.changes:
         kinds[change.kind] = kinds.get(change.kind, 0) + 1
@@ -44,5 +54,6 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
         db,
         job_id,
         f"hash_torrent: готово files={result.files_upserted}, "
-        f"hashed={result.hashed}, gated={result.gated}, changes: {kinds_text}",
+        f"hashed={result.hashed}, gated={result.gated}, errors={result.errors}, "
+        f"changes: {kinds_text}",
     )

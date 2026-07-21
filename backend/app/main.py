@@ -27,6 +27,7 @@ from app.services.db_maintenance import reset_full, reset_operational_state
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, build_anilibria_client, get_setting_value
+from app.services.file_hasher import normalize_file_hash_workers_setting
 from app.services.releases_view import list_release_groups
 from app.services.system_status import collect_system_status
 from app.services.telegram_notify import (
@@ -227,8 +228,10 @@ def update_settings(
     pipeline_reconcile_interval_sec: str = Form(
         default=str(settings.pipeline_reconcile_interval_sec)
     ),
+    file_hash_workers: str = Form(default=str(settings.file_hash_workers)),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    workers_clamped = normalize_file_hash_workers_setting(file_hash_workers)
     form_data = {
         "anilibria_base_url": anilibria_base_url,
         "anilibria_fallback_base_url": anilibria_fallback_base_url,
@@ -252,6 +255,7 @@ def update_settings(
         "cleanup_interval_sec": cleanup_interval_sec,
         "pipeline_master_min_age_min": pipeline_master_min_age_min,
         "pipeline_reconcile_interval_sec": pipeline_reconcile_interval_sec,
+        "file_hash_workers": workers_clamped,
     }
     for key, value in form_data.items():
         row = db.get(Setting, key)

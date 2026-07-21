@@ -12,6 +12,7 @@ import qbittorrentapi
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import (
     DiskFileHash,
     FileChangeEvent,
@@ -21,9 +22,10 @@ from app.db.models import (
     TorrentFile,
     TrackedRelease,
 )
-from app.services.file_hasher import upsert_disk_hash
+from app.services.file_hasher import clamp_hash_workers, hash_paths_parallel
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.torrent_files_meta import (
+    extract_qb_content_path,
     extract_qb_file_priorities,
     extract_qb_save_path,
     is_under_media_root,
@@ -59,6 +61,7 @@ class TrackTorrentResult:
     files_upserted: int = 0
     hashed: int = 0
     gated: int = 0
+    errors: int = 0
     changes: list[FileChange] = field(default_factory=list)
     skipped_reason: str | None = None
 
@@ -114,7 +117,7 @@ class FileTrackerService:
             return result
 
         file_metas = parse_torrent_file_list(torrent_bytes)
-        save_path, priorities = self._qb_paths_and_priorities(normalized_hash)
+        save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
 
         previous = {
             row.relative_path: row
@@ -133,8 +136,13 @@ class FileTrackerService:
             if priorities:
                 selected = priorities.get(meta.file_index, 0) > 0
             full_path: str | None = None
-            if save_path:
-                resolved = resolve_full_path(save_path, meta.relative_path, media_root=media_root)
+            if save_path or content_path:
+                resolved = resolve_full_path(
+                    save_path or content_path or "",
+                    meta.relative_path,
+                    content_path=content_path,
+                    media_root=media_root,
+                )
                 if resolved is not None:
                     full_path = str(resolved)
 
@@ -185,6 +193,9 @@ class FileTrackerService:
         rows = list(
             self._db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized_hash)).all()
         )
+        to_hash: list[Path] = []
+        path_to_rel: dict[str, str] = {}
+        old_hashes: dict[str, str] = {}
         for row in rows:
             if hash_selected_only and not row.selected:
                 continue
@@ -207,34 +218,57 @@ class FileTrackerService:
                 self._log(f"Путь вне media root, пропуск хеша: {path}", "warning")
                 continue
 
+            try:
+                full = str(path.resolve())
+            except OSError as exc:
+                self._log(f"хеш пропуск `{path}`: {exc}", "warning")
+                result.errors += 1
+                continue
             prev_hash = self._db.scalar(
-                select(DiskFileHash).where(DiskFileHash.full_path == str(path.resolve())).limit(1)
+                select(DiskFileHash).where(DiskFileHash.full_path == full).limit(1)
             )
-            old_content = prev_hash.content_hash if prev_hash else None
-            hash_result = upsert_disk_hash(
+            if prev_hash and prev_hash.content_hash:
+                old_hashes[full] = prev_hash.content_hash
+            to_hash.append(path)
+            path_to_rel[full] = row.relative_path
+
+        workers = clamp_hash_workers(
+            get_setting_value(self._db, "file_hash_workers", str(settings.file_hash_workers))
+        )
+        if to_hash:
+            self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
+            stats = hash_paths_parallel(
                 self._db,
-                path,
+                to_hash,
+                workers=workers,
                 log_fn=lambda msg: self._log(msg, "info"),
             )
-            if hash_result.skipped_gate:
-                result.gated += 1
-            else:
-                result.hashed += 1
-                if old_content and old_content != hash_result.content_hash:
+            result.hashed = stats["hashed"]
+            result.gated = stats["gated"]
+            result.errors += stats.get("errors", 0)
+            for full, rel in path_to_rel.items():
+                old_content = old_hashes.get(full)
+                if not old_content:
+                    continue
+                new_row = self._db.scalar(
+                    select(DiskFileHash).where(DiskFileHash.full_path == full).limit(1)
+                )
+                if new_row and new_row.content_hash and new_row.content_hash != old_content:
                     result.changes.append(
                         FileChange(
                             kind=KIND_MODIFIED,
-                            relative_path=row.relative_path,
-                            full_path=hash_result.full_path,
-                            details={"old_hash": old_content, "new_hash": hash_result.content_hash},
+                            relative_path=rel,
+                            full_path=full,
+                            details={"old_hash": old_content, "new_hash": new_row.content_hash},
                         )
                     )
 
-        # Orphan под save_path относительно активных torrent_files этого торрента
-        if save_path:
+        # Orphan под корнем торрента относительно активных torrent_files
+        orphan_root = save_path or content_path
+        if orphan_root:
             result.changes.extend(
                 self._find_orphans_under_save_path(
-                    save_path=save_path,
+                    save_path=orphan_root,
                     known_full_paths={r.full_path for r in rows if r.full_path},
                     media_root=media_root,
                 )
@@ -413,13 +447,15 @@ class FileTrackerService:
         passkey = get_setting_value(self._db, "anilibria_passkey", "")
         return ensure_announce_passkey(path.read_bytes(), passkey)
 
-    def _qb_paths_and_priorities(self, info_hash: str) -> tuple[str | None, dict[int, int]]:
+    def _qb_paths_and_priorities(
+        self, info_hash: str
+    ) -> tuple[str | None, str | None, dict[int, int]]:
         master = self._db.scalar(
             select(QbClient).where(QbClient.role == "master", QbClient.enabled.is_(True)).limit(1)
         )
         if master is None:
             self._log("hash_torrent: master qB не настроен — пути без priority", "warning")
-            return None, {}
+            return None, None, {}
         try:
             qb = qbittorrentapi.Client(
                 host=master.host,
@@ -431,14 +467,15 @@ class FileTrackerService:
             torrents = qb.torrents_info(hashes=info_hash)
             if not torrents:
                 self._log(f"hash_torrent: торрент {info_hash[:12]}… нет на master", "warning")
-                return None, {}
+                return None, None, {}
             save_path = extract_qb_save_path(torrents[0])
+            content_path = extract_qb_content_path(torrents[0])
             qb_files = qb.torrents_files(torrent_hash=info_hash)
             priorities = extract_qb_file_priorities(qb_files)
-            return save_path, priorities
+            return save_path, content_path, priorities
         except Exception as exc:
             self._log(f"hash_torrent: ошибка qB master: {exc}", "warning")
-            return None, {}
+            return None, None, {}
 
 
 def update_api_present_for_release(

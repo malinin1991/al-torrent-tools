@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     anilibria_media_root: str = "/anilibria"
     # Чанк BLAKE3 (~4 MiB, как в AniLibria_hasher).
     file_hash_chunk_size: int = 4_194_304
+    # Параллельное хеширование: 3 ≈ щадящий режим для Unraid (6 data + cache), Ryzen 2700.
+    # Диапазон 1–8, настраивается в UI (file_hash_workers).
+    file_hash_workers: int = 3
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

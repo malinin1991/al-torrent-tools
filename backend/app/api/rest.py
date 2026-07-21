@@ -17,6 +17,7 @@ from app.jobs.waiting_master_retry import run_waiting_master_retry
 from app.jobs.waiting_slave_retry import run_waiting_slave_retry
 from app.services.anilibria_auth import login_and_store_token
 from app.services.db_maintenance import reset_full, reset_operational_state
+from app.services.file_hasher import normalize_file_hash_workers_setting
 from app.services.job_runner import JobAlreadyRunningError, JobRunner, UnknownJobTypeError
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import qb_client_wait_message, sanitize_info_hash, should_wait_for_qb, test_qb_connection
@@ -159,6 +160,8 @@ def put_settings(items: list[SettingsIn], db: Session = Depends(get_db)) -> dict
         value_to_store = item.value
         if item.key in SECRET_SETTING_KEYS and not item.value.strip() and row is not None:
             value_to_store = row.value
+        if item.key == "file_hash_workers":
+            value_to_store = normalize_file_hash_workers_setting(value_to_store)
         if row is None:
             row = Setting(key=item.key, value=value_to_store)
             db.add(row)
