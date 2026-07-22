@@ -205,19 +205,30 @@ def hash_paths_parallel(
     open_fn: Callable[..., object] | None = None,
     progress_total: int | None = None,
     progress_start: int = 0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, int]:
     """Gate на вызывающем потоке; BLAKE3 в ThreadPoolExecutor; upsert в БД последовательно.
 
     Ошибка одного файла не валит весь проход (errors++).
     Лог в начале хеша: ``[worker] [index/total] хеширую `path` (N.NN MB|GB)``.
     index считает gate+hash (сквозной прогресс по файлам).
+
+    should_stop: кооперативная остановка — текущие файлы в потоках дожимаются,
+    новые не стартуют. Уже записанные хеши остаются в БД (progress_index / gated / hashed).
     """
     worker_count = clamp_hash_workers(workers)
     hashed = 0
     gated = 0
     errors = 0
+    stopped = 0
     if not paths:
-        return {"hashed": 0, "gated": 0, "errors": 0, "progress_index": progress_start}
+        return {
+            "hashed": 0,
+            "gated": 0,
+            "errors": 0,
+            "progress_index": progress_start,
+            "stopped": 0,
+        }
 
     unique: list[Path] = []
     seen: set[str] = set()
@@ -258,8 +269,14 @@ def hash_paths_parallel(
         else:
             pending_logs.put(message)
 
+    def _stop_requested() -> bool:
+        return bool(should_stop and should_stop())
+
     need_hash: list[tuple[str, int, float]] = []
-    for path in unique:
+    for path_i, path in enumerate(unique):
+        if path_i > 0 and path_i % 50 == 0 and _stop_requested():
+            stopped = 1
+            break
         try:
             resolved = path.resolve()
             full_path = str(resolved)
@@ -292,6 +309,15 @@ def hash_paths_parallel(
     if gated:
         db.commit()
 
+    if stopped:
+        return {
+            "hashed": hashed,
+            "gated": gated,
+            "errors": errors,
+            "progress_index": progress_index,
+            "stopped": 1,
+        }
+
     batch_files = gated + len(need_hash)
     display_total = progress_total if progress_total and progress_total > 0 else (progress_start + batch_files)
     if display_total < 1:
@@ -323,6 +349,7 @@ def hash_paths_parallel(
             "gated": gated,
             "errors": errors,
             "progress_index": progress_index,
+            "stopped": stopped,
         }
 
     def _record_success(full_path: str, size: int, mtime: float, digest: str) -> None:
@@ -355,6 +382,9 @@ def hash_paths_parallel(
 
     if worker_count <= 1:
         for item in need_hash:
+            if _stop_requested():
+                stopped = 1
+                break
             full_path, size, mtime = item
             try:
                 _, path, size, mtime, digest = _worker(item, 1)
@@ -376,19 +406,41 @@ def hash_paths_parallel(
             slots.put(worker_id)
 
     with ThreadPoolExecutor(max_workers=worker_count) as pool:
-        futures = {pool.submit(_worker_with_slot, item): item[0] for item in need_hash}
-        pending = set(futures)
-        # Периодический flush: «хеширую» появляется в JobLog до конца первого файла.
-        while pending:
-            done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+        items_iter = iter(need_hash)
+        futures: dict[object, str] = {}
+
+        def _submit_next() -> bool:
+            """True если задача поставлена."""
+            if _stop_requested():
+                return False
+            try:
+                item = next(items_iter)
+            except StopIteration:
+                return False
+            fut = pool.submit(_worker_with_slot, item)
+            futures[fut] = item[0]
+            return True
+
+        for _ in range(worker_count):
+            if not _submit_next():
+                break
+
+        while futures:
+            if _stop_requested():
+                stopped = 1
+            done, _pending = wait(list(futures.keys()), timeout=0.5, return_when=FIRST_COMPLETED)
             _flush_logs()
             for fut in done:
-                full_path = futures[fut]
+                full_path = futures.pop(fut)
                 try:
                     _worker_id, path, size, mtime, digest = fut.result()
                     _record_success(path, size, mtime, digest)
                 except Exception as exc:  # noqa: BLE001 — изоляция одного файла
                     _record_error(full_path, exc)
+                if stopped or _stop_requested():
+                    stopped = 1
+                else:
+                    _submit_next()
     _flush_logs()
     db.commit()
     return _stats()

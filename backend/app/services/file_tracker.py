@@ -239,15 +239,27 @@ class FileTrackerService:
         )
         if to_hash:
             self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
+            stop_fn = None
+            if self._job_id is not None:
+                from app.services.job_runner import is_stop_requested
+
+                job_id = self._job_id
+                stop_fn = lambda: is_stop_requested(self._db, job_id)
             stats = hash_paths_parallel(
                 self._db,
                 to_hash,
                 workers=workers,
                 log_fn=lambda msg: self._log(msg, "info"),
+                should_stop=stop_fn,
             )
             result.hashed = stats["hashed"]
             result.gated = stats["gated"]
             result.errors += stats.get("errors", 0)
+            if stats.get("stopped"):
+                from app.services.job_runner import JobStopRequested
+
+                self._log("hash_torrent: остановка по запросу (прогресс хешей сохранён)", "warning")
+                raise JobStopRequested()
             for full, rel in path_to_rel.items():
                 old_content = old_hashes.get(full)
                 if not old_content:

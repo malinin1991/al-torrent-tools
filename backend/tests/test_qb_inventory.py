@@ -525,3 +525,89 @@ def test_hash_paths_parallel_progress_index_includes_errors(tmp_path: Path, monk
     assert stats["hashed"] == 1
     assert stats["errors"] == 1
     assert stats["progress_index"] == 12  # start + both attempts
+    assert stats["stopped"] == 0
+
+
+def test_hash_paths_parallel_stops_between_files(tmp_path: Path) -> None:
+    """Stop: текущий файл дожимается, следующие не стартуют; hashed сохранён."""
+    from app.services.file_hasher import hash_paths_parallel
+
+    files = []
+    for i in range(5):
+        p = tmp_path / f"f{i}.mkv"
+        p.write_bytes(f"content-{i}".encode())
+        files.append(p)
+
+    db = MagicMock()
+    db.scalar.return_value = None
+    added: list[object] = []
+    db.add.side_effect = lambda obj: added.append(obj)
+
+    def should_stop() -> bool:
+        return len(added) >= 1
+
+    stats = hash_paths_parallel(db, files, workers=1, should_stop=should_stop)
+    assert stats["stopped"] == 1
+    assert stats["hashed"] == 1
+    assert len(added) == 1
+
+
+def test_hash_paths_parallel_stop_waits_inflight_workers(tmp_path: Path, monkeypatch) -> None:
+    """При stop in-flight воркеры дожимают файл, новые задачи не ставятся."""
+    import concurrent.futures
+    import threading
+
+    from app.services import file_hasher as mod
+
+    files = []
+    for i in range(6):
+        p = tmp_path / f"f{i}.mkv"
+        p.write_bytes(f"x{i}".encode())
+        files.append(p)
+
+    db = MagicMock()
+    db.scalar.return_value = None
+    added: list[object] = []
+    db.add.side_effect = lambda obj: added.append(obj)
+
+    started = threading.Event()
+    release = threading.Event()
+    stop_flag = {"v": False}
+    active = {"n": 0}
+    lock = threading.Lock()
+
+    real_hash = mod.hash_file_blake3
+
+    def slow_hash(path, **kwargs):
+        with lock:
+            active["n"] += 1
+            if active["n"] >= 2:
+                started.set()
+        assert release.wait(timeout=5)
+        try:
+            return real_hash(path, **kwargs)
+        finally:
+            with lock:
+                active["n"] -= 1
+
+    monkeypatch.setattr(mod, "hash_file_blake3", slow_hash)
+
+    def runner():
+        return mod.hash_paths_parallel(
+            db,
+            files,
+            workers=2,
+            should_stop=lambda: stop_flag["v"],
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        fut = pool.submit(runner)
+        assert started.wait(timeout=5)
+        stop_flag["v"] = True
+        release.set()
+        stats = fut.result(timeout=10)
+
+    assert stats["stopped"] == 1
+    # Стартовали ≤2 (окно воркеров), новые после stop не брались.
+    assert 1 <= stats["hashed"] <= 2
+    assert len(added) == stats["hashed"]

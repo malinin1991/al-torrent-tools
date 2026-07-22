@@ -128,6 +128,7 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
             log_fn=lambda msg: _add_log(db, job_id, msg, "info"),
             progress_total=progress_total,
             progress_start=progress_start,
+            should_stop=lambda: is_stop_requested(db, job_id),
         )
         total_hashed += stats["hashed"]
         total_gated += stats["gated"]
@@ -135,8 +136,18 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
         total_errors += stats.get("errors", 0)
         # Сквозной индекс из hasher (учитывает hash-ошибки после выдачи номера).
         progress_start = int(stats.get("progress_index", progress_start + stats["hashed"] + stats["gated"]))
-        _set_checkpoint(db, folder)
         _touch_job(db, job_id)
+        if stats.get("stopped"):
+            # Чекпоинт папки не двигаем: недоделанная папка повторится, gate пропустит уже хешированное.
+            _add_log(
+                db,
+                job_id,
+                f"hash_backfill: остановка по запросу (папка {folder}, "
+                f"hashed={stats['hashed']}, gated={stats['gated']}; прогресс в disk_file_hashes сохранён)",
+                "warning",
+            )
+            raise JobStopRequested()
+        _set_checkpoint(db, folder)
 
     pruned = prune_stale_inventory(db, inventory)
     if pruned.get("skipped"):

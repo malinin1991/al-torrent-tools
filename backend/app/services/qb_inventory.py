@@ -346,10 +346,12 @@ def hash_inventory_files(
     log_fn: Callable[[str], None] | None = None,
     progress_total: int | None = None,
     progress_start: int = 0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, int]:
     """BLAKE3+gate для файлов inventory, которые есть на диске.
 
     workers>1 — чтение/хеш в пуле потоков; запись в БД только из вызывающего потока.
+    should_stop — кооперативная остановка между файлами (текущие дожимаются).
     """
     from app.services.file_hasher import clamp_hash_workers, hash_paths_parallel
 
@@ -375,6 +377,7 @@ def hash_inventory_files(
         log_fn=log_fn,
         progress_total=progress_total,
         progress_start=progress_start,
+        should_stop=should_stop,
     )
     return {
         "hashed": stats["hashed"],
@@ -382,4 +385,5 @@ def hash_inventory_files(
         "missing": missing,
         "errors": stats.get("errors", 0),
         "progress_index": stats.get("progress_index", progress_start),
+        "stopped": int(stats.get("stopped", 0) or 0),
     }
