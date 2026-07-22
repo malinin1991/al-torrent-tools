@@ -26,6 +26,25 @@ SOURCE_UI = "ui"
 
 DEFAULT_BOT_API_BASE = "https://api.telegram.org"
 
+# Лимиты текста для TG notify (Telegram message ≤ 4096).
+_TRACK_NOTIFY_TITLE_MAX = 300
+_TELEGRAM_TEXT_MAX = 4096
+
+
+def truncate_telegram_text(text: str, max_len: int = _TELEGRAM_TEXT_MAX) -> str:
+    """Обрезает текст под лимит Telegram (с ellipsis)."""
+    value = text or ""
+    if len(value) <= max_len:
+        return value
+    if max_len <= 1:
+        return value[:max_len]
+    return value[: max_len - 1] + "…"
+
+
+def _safe_notify_title(title: str) -> str:
+    cleaned = (title or "").strip() or "релиз"
+    return truncate_telegram_text(cleaned, _TRACK_NOTIFY_TITLE_MAX)
+
 
 def escape_markdown_v2(text: str) -> str:
     escape_chars = r"_*[]()~`>#+-=|{}.!"
@@ -91,9 +110,11 @@ def upsert_tracked_release(
     title: str = "",
     source: str = SOURCE_UI,
     enabled: bool = True,
+    commit: bool = True,
 ) -> TrackedRelease:
     alias = (release_alias or "").strip().strip("/")
     title_value = (title or "").strip() or alias or str(release_id)
+    title_value = truncate_telegram_text(title_value, 512)
     source_value = source if source in {SOURCE_BOT, SOURCE_UI} else SOURCE_UI
     row = db.get(TrackedRelease, release_id)
     if row is None:
@@ -114,8 +135,11 @@ def upsert_tracked_release(
         # bot имеет приоритет бейджа; ui не затирает bot
         if source_value == SOURCE_BOT or row.source != SOURCE_BOT:
             row.source = source_value
-    db.commit()
-    db.refresh(row)
+    if commit:
+        db.commit()
+        db.refresh(row)
+    else:
+        db.flush()
     return row
 
 
@@ -313,6 +337,46 @@ def enqueue_file_changes_notification(
             ev.notified_at = now
     db.commit()
     db.refresh(outbox)
+    return outbox
+
+
+def enqueue_tracking_toggle_notification(
+    db: Session,
+    *,
+    enabled: bool,
+    title: str,
+    commit: bool = True,
+) -> TelegramOutbox | None:
+    """Outbox: тексты как у /add|/del. Без parse_mode (plain text)."""
+    if not is_telegram_enabled(db):
+        return None
+    chat_id = get_telegram_chat_id(db)
+    if not chat_id:
+        return None
+    title_value = _safe_notify_title(title)
+    prefix = "✅ Добавлен: " if enabled else "✅ Отключен: "
+    text = truncate_telegram_text(f"{prefix}{title_value}", _TELEGRAM_TEXT_MAX)
+    payload = {
+        "disable_web_page_preview": True,
+        "text": text,
+        "kind": "tracking_toggle",
+        "enabled": bool(enabled),
+        "title": title_value,
+    }
+    outbox = TelegramOutbox(
+        pipeline_id=None,
+        chat_id=chat_id,
+        payload_json=payload,
+        status=OUTBOX_PENDING,
+        attempts=0,
+        created_at=datetime.utcnow(),
+    )
+    db.add(outbox)
+    if commit:
+        db.commit()
+        db.refresh(outbox)
+    else:
+        db.flush()
     return outbox
 
 

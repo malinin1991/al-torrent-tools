@@ -4,6 +4,10 @@
 <div class="card" style="margin-bottom:12px;">
   <form method="get" action="/releases" class="row">
     <input class="input" style="max-width:320px;" name="search" placeholder="Поиск по названию / alias" value="{{ search }}" />
+    <label class="row" style="gap:6px; margin:0;">
+      <input type="checkbox" name="tracked_only" value="on" {% if tracked_only %}checked{% endif %} />
+      Отображать только отслеживаемое
+    </label>
     <button class="btn" type="submit">Найти</button>
   </form>
   <p class="muted" style="margin:10px 0 0;">Релизов: {{ total }}. Страница {{ page }} из {{ total_pages }}. Сортировка — по последнему торренту.</p>
@@ -92,6 +96,7 @@
                 <li>
                   {% if f.status == 'new' %}<span class="badge badge-ok">новый</span>
                   {% elif f.status == 'changed' %}<span class="badge">изменён</span>
+                  {% elif f.status == 'checking' %}<span class="badge">проверка</span>
                   {% elif f.status == 'removed' %}<span class="badge badge-warn">удалён</span>
                   {% elif f.status == 'missing' %}<span class="badge badge-warn">missing</span>
                   {% else %}<span class="badge muted">ok</span>{% endif %}
@@ -159,12 +164,13 @@
 <div class="card"><p class="muted">Релизов пока нет.</p></div>
 {% endfor %}
 
+{% set tracked_qs = '&tracked_only=on' if tracked_only else '' %}
 <div class="row" style="margin-top:12px;">
   {% if page > 1 %}
-  <a class="btn" href="/releases?search={{ search }}&page={{ page - 1 }}">Назад</a>
+  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}&page={{ page - 1 }}">Назад</a>
   {% endif %}
   {% if page < total_pages %}
-  <a class="btn" href="/releases?search={{ search }}&page={{ page + 1 }}">Вперёд</a>
+  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}&page={{ page + 1 }}">Вперёд</a>
   {% endif %}
 </div>
 {% endblock %}

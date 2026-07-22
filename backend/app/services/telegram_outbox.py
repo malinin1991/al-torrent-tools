@@ -41,12 +41,14 @@ async def send_outbox_message(
     payload: dict[str, Any],
 ) -> None:
     url = build_telegram_api_url(base_url, token, "sendMessage")
-    body = {
+    body: dict[str, Any] = {
         "chat_id": chat_id,
         "text": payload.get("text") or "",
-        "parse_mode": payload.get("parse_mode") or "MarkdownV2",
         "disable_web_page_preview": bool(payload.get("disable_web_page_preview", True)),
     }
+    parse_mode = payload.get("parse_mode")
+    if isinstance(parse_mode, str) and parse_mode.strip():
+        body["parse_mode"] = parse_mode.strip()
     async with httpx.AsyncClient(timeout=20.0) as client:
         response = await client.post(url, json=body)
     data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}

@@ -9,8 +9,17 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import FileChangeEvent, TorrentArchive, TorrentFile, TorrentPipeline, TrackedRelease
+from app.db.models import (
+    DiskFileHash,
+    FileChangeEvent,
+    Job,
+    TorrentArchive,
+    TorrentFile,
+    TorrentPipeline,
+    TrackedRelease,
+)
 from app.services.file_tracker import file_status_for_ui
+from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
 from app.services.torrent_qb_meta import (
     build_release_torrents_url,
     genres_from_quality_json,
@@ -27,7 +36,7 @@ class ReleaseFileRow:
     size: int
     selected: bool
     full_path: str | None
-    status: str  # new|changed|removed|missing|ok
+    status: str  # new|changed|removed|missing|checking|ok
 
 
 @dataclass
@@ -80,6 +89,7 @@ def list_release_groups(
     db: Session,
     *,
     search: str | None = None,
+    tracked_only: bool = False,
     page: int = 1,
     per_page: int = 30,
 ) -> dict[str, Any]:
@@ -87,6 +97,7 @@ def list_release_groups(
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
     search_text = (search or "").strip()
+    only_tracked = bool(tracked_only)
 
     stats_query = (
         select(
@@ -108,6 +119,9 @@ def list_release_groups(
             .distinct()
         )
         stats_query = stats_query.where(TorrentArchive.release_id.in_(matching_ids))
+    if only_tracked:
+        tracked_ids = select(TrackedRelease.release_id).where(TrackedRelease.enabled.is_(True))
+        stats_query = stats_query.where(TorrentArchive.release_id.in_(tracked_ids))
 
     total = db.scalar(select(func.count()).select_from(stats_query.subquery())) or 0
     total_pages = max(1, (total + per_page - 1) // per_page)
@@ -124,6 +138,7 @@ def list_release_groups(
         return {
             "groups": [],
             "search": search_text,
+            "tracked_only": only_tracked,
             "page": page,
             "per_page": per_page,
             "total": total,
@@ -142,6 +157,18 @@ def list_release_groups(
     tracked_by_id = _tracked_by_release_id(db, release_ids)
     files_by_hash = _files_by_hash(db, [a.info_hash for a in archives])
     events_by_torrent = _recent_events_by_torrent(db, release_ids)
+    all_full_paths = [
+        f.full_path
+        for files in files_by_hash.values()
+        for f in files
+        if f.full_path
+    ]
+    hashes_by_path = _disk_hashes_by_path(db, all_full_paths)
+    active_hash_jobs = (
+        _info_hashes_with_active_hash_job(db, list(files_by_hash.keys()))
+        if files_by_hash
+        else set()
+    )
     site_url = resolve_anilibria_site_url()
 
     by_release: dict[int, list[TorrentArchive]] = {rid: [] for rid in release_ids}
@@ -165,9 +192,12 @@ def list_release_groups(
         archived: list[ReleaseTorrentRow] = []
         for item in items:
             status, error = pipeline_by_hash.get(item.info_hash.lower(), (None, None))
+            info_hash_key = item.info_hash.lower()
             file_rows = _build_file_rows(
-                files_by_hash.get(item.info_hash.lower(), []),
+                files_by_hash.get(info_hash_key, []),
                 events_by_torrent.get(item.torrent_id, {}),
+                hashes_by_path,
+                hash_job_active=info_hash_key in active_hash_jobs,
             )
             row = ReleaseTorrentRow(
                 archive_id=item.id,
@@ -211,6 +241,7 @@ def list_release_groups(
     return {
         "groups": groups,
         "search": search_text,
+        "tracked_only": only_tracked,
         "page": page,
         "per_page": per_page,
         "total": total,
@@ -229,11 +260,16 @@ def split_active_archived(
 
 def _build_file_rows(
     files: list[TorrentFile],
-    events_by_path: dict[str, set[str]],
+    events_by_path: dict[str, str],
+    hashes_by_path: dict[str, DiskFileHash] | None = None,
+    *,
+    hash_job_active: bool = False,
 ) -> list[ReleaseFileRow]:
+    hash_map = hashes_by_path or {}
     rows: list[ReleaseFileRow] = []
     for item in files:
-        kinds = events_by_path.get(item.relative_path, set())
+        latest_kind = events_by_path.get(item.relative_path)
+        disk_hash = hash_map.get(item.full_path) if item.full_path else None
         rows.append(
             ReleaseFileRow(
                 relative_path=item.relative_path,
@@ -243,11 +279,23 @@ def _build_file_rows(
                 status=file_status_for_ui(
                     relative_path=item.relative_path,
                     full_path=item.full_path,
-                    recent_kinds=kinds,
+                    latest_kind=latest_kind,
+                    disk_hash=disk_hash,
+                    hash_job_active=hash_job_active,
                 ),
             )
         )
     return rows
+
+
+def _disk_hashes_by_path(db: Session, paths: list[str]) -> dict[str, DiskFileHash]:
+    normalized = sorted({(p or "").strip() for p in paths if p})
+    if not normalized:
+        return {}
+    rows = list(
+        db.scalars(select(DiskFileHash).where(DiskFileHash.full_path.in_(normalized))).all()
+    )
+    return {row.full_path: row for row in rows}
 
 
 def _files_by_hash(db: Session, hashes: list[str]) -> dict[str, list[TorrentFile]]:
@@ -270,18 +318,20 @@ def _files_by_hash(db: Session, hashes: list[str]) -> dict[str, list[TorrentFile
 def _recent_events_by_torrent(
     db: Session,
     release_ids: list[int],
-) -> dict[int, dict[str, set[str]]]:
-    """torrent_id → relative_path → set(kinds)."""
+) -> dict[int, dict[str, str]]:
+    """torrent_id → relative_path → latest kind в окне (не set всех kinds)."""
     if not release_ids:
         return {}
     since = datetime.utcnow() - _EVENT_WINDOW
     rows = db.scalars(
-        select(FileChangeEvent).where(
+        select(FileChangeEvent)
+        .where(
             FileChangeEvent.release_id.in_(release_ids),
             FileChangeEvent.created_at >= since,
         )
+        .order_by(FileChangeEvent.id.desc())
     ).all()
-    result: dict[int, dict[str, set[str]]] = {}
+    result: dict[int, dict[str, str]] = {}
     for row in rows:
         if row.torrent_id is None:
             continue
@@ -289,8 +339,30 @@ def _recent_events_by_torrent(
         if not path_key:
             continue
         by_path = result.setdefault(row.torrent_id, {})
-        by_path.setdefault(path_key, set()).add(row.kind)
+        # Первый встретившийся после id DESC — актуальный kind.
+        if path_key not in by_path:
+            by_path[path_key] = row.kind
     return result
+
+
+def _info_hashes_with_active_hash_job(db: Session, info_hashes: list[str]) -> set[str]:
+    """info_hash с pending/running job hash_torrent (для бейджа «проверка»)."""
+    wanted = {(h or "").strip().lower() for h in info_hashes if h}
+    if not wanted:
+        return set()
+    rows = db.scalars(
+        select(Job).where(
+            Job.type == "hash_torrent",
+            Job.status.in_((STATUS_PENDING, STATUS_RUNNING)),
+        )
+    ).all()
+    active: set[str] = set()
+    for job in rows:
+        params = job.params_json or {}
+        key = str(params.get("info_hash") or "").strip().lower()
+        if key and key in wanted:
+            active.add(key)
+    return active
 
 
 def _latest_pipeline_by_hash(

@@ -528,17 +528,31 @@ def file_status_for_ui(
     *,
     relative_path: str,
     full_path: str | None,
-    recent_kinds: set[str],
+    latest_kind: str | None = None,
+    disk_hash: Any | None = None,
+    hash_job_active: bool = False,
 ) -> str:
-    """Бейдж для UI: new / changed / removed / missing / ok."""
-    if KIND_REMOVED in recent_kinds:
+    """Бейдж для UI: latest event kind, иначе checking (при active hash job) / ok.
+
+    checking — только если есть pending/running hash_torrent и DiskFileHash с content_hash
+    (без FS-stat на list page).
+    """
+    if latest_kind == KIND_REMOVED:
         return "removed"
-    if KIND_MISSING in recent_kinds:
+    if latest_kind == KIND_MISSING:
         return "missing"
-    if KIND_ADDED in recent_kinds:
+    if latest_kind == KIND_ADDED:
         return "new"
-    if KIND_MODIFIED in recent_kinds:
+    if latest_kind == KIND_MODIFIED:
         return "changed"
     if full_path and not path_exists_including_incomplete(Path(full_path)):
         return "missing"
+    if hash_job_active and _has_stored_content_hash(disk_hash):
+        return "checking"
     return "ok"
+
+
+def _has_stored_content_hash(disk_hash: Any | None) -> bool:
+    if disk_hash is None:
+        return False
+    return bool(getattr(disk_hash, "content_hash", None) or "")

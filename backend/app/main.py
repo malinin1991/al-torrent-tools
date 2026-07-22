@@ -33,6 +33,7 @@ from app.services.releases_view import list_release_groups
 from app.services.system_status import collect_system_status
 from app.services.telegram_notify import (
     SOURCE_UI,
+    enqueue_tracking_toggle_notification,
     normalize_telegram_bot_api_base,
     resolve_telegram_bot_api_base,
     test_telegram_get_me,
@@ -657,10 +658,14 @@ def _pipeline_page_context(
 def releases_page(
     request: Request,
     search: str | None = Query(default=None),
+    tracked_only: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = list_release_groups(db, search=search, page=page, per_page=30)
+    only_tracked = tracked_only == "on"
+    context = list_release_groups(
+        db, search=search, tracked_only=only_tracked, page=page, per_page=30
+    )
     return templates.TemplateResponse(request, "releases.html", context)
 
 
@@ -692,6 +697,7 @@ def toggle_release_tracking(
         title_value = alias
 
     existing = db.get(TrackedRelease, release_id)
+    was_enabled = bool(existing is not None and existing.enabled)
     if existing is None and not enabled_value:
         tracked = False
         source = None
@@ -703,9 +709,19 @@ def toggle_release_tracking(
             title=title_value,
             source=SOURCE_UI,
             enabled=enabled_value,
+            commit=False,
         )
         tracked = bool(row.enabled)
         source = row.source
+        # Title/alias для TG — из DB после upsert, не сырой Form.
+        if tracked != was_enabled:
+            enqueue_tracking_toggle_notification(
+                db,
+                enabled=tracked,
+                title=(row.title or row.release_alias or str(release_id)),
+                commit=False,
+            )
+        db.commit()
 
     return templates.TemplateResponse(
         request,

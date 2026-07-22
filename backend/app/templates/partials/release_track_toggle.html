@@ -12,9 +12,6 @@
     />
     Отслеживание
   </label>
-  {% if track_source == 'bot' %}
-  <span class="badge badge-ok">бот</span>
-  {% endif %}
   <input type="hidden" name="release_alias" value="{{ release_alias or '' }}" />
   <input type="hidden" name="title" value="{{ anime_name or '' }}" />
 </form>
