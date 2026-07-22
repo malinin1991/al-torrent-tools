@@ -261,6 +261,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                         file_index=item.file_index,
                         selected=item.selected,
                         full_path=item.full_path,
+                        ui_status="new",
                         created_at=now,
                         updated_at=now,
                     )
@@ -273,6 +274,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                 row.selected = item.selected
                 row.full_path = item.full_path
                 row.updated_at = now
+                # Не трогаем sticky ui_status — его выставляет file_tracker.
             upserted += 1
         for rel, row in existing.items():
             if rel not in seen_paths:
@@ -285,6 +287,8 @@ def prune_stale_inventory(db: Session, inventory: InventoryResult) -> dict[str, 
     """Удалить torrent_files / disk_file_hashes, которых нет в актуальном inventory.
 
     Hash с failed torrents_files не трогаем (временный сбой qB).
+    Hash, сохранённые в torrent_archive (в т.ч. superseded/архивные) — не трогаем:
+    это история состава по каждому торренту релиза.
     """
     if not inventory.valid_hashes:
         # Пустой inventory (сбой qB / всё отфильтровано) — не трогаем БД.
@@ -295,7 +299,23 @@ def prune_stale_inventory(db: Session, inventory: InventoryResult) -> dict[str, 
     known_paths = {item.full_path for item in inventory.files if item.full_path}
 
     tf_rows = list(db.scalars(select(TorrentFile)).all())
-    # Пути failed-раздач защищаем и в disk_file_hashes.
+    # Архивные hash защищаем точечно: только кандидаты на удаление (не весь archive).
+    candidate_hashes = {
+        (row.info_hash or "").strip().lower()
+        for row in tf_rows
+        if (row.info_hash or "").strip()
+    } - known_hashes - protect_hashes
+    if candidate_hashes:
+        archive_protect = {
+            (h or "").strip().lower()
+            for h in db.scalars(
+                select(TorrentArchive.info_hash).where(TorrentArchive.info_hash.in_(candidate_hashes))
+            ).all()
+            if h
+        }
+        protect_hashes |= archive_protect
+
+    # Пути failed-раздач и архивной истории защищаем и в disk_file_hashes.
     for row in tf_rows:
         info_hash = (row.info_hash or "").strip().lower()
         if info_hash in protect_hashes and row.full_path:

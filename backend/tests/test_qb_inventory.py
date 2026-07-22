@@ -107,9 +107,11 @@ def test_prune_stale_inventory_removes_unknown_paths(monkeypatch, tmp_path: Path
 
     def fake_scalars(_stmt):
         call_n["n"] += 1
-        # Первый select — TorrentFile, второй — DiskFileHash
+        # 1) TorrentFile, 2) archive protect для кандидатов, 3) DiskFileHash
         if call_n["n"] == 1:
             return FakeScalars(tf_rows)
+        if call_n["n"] == 2:
+            return FakeScalars([])  # stale hash b не в архиве → удаляем
         return FakeScalars(dh_rows)
 
     deleted: list[object] = []
@@ -143,6 +145,74 @@ def test_prune_stale_inventory_removes_unknown_paths(monkeypatch, tmp_path: Path
     assert stale_dh in deleted
     assert keep_tf not in deleted
     assert keep_dh not in deleted
+
+
+def test_prune_keeps_torrent_files_for_archived_hashes(monkeypatch, tmp_path: Path) -> None:
+    """Состав archived/superseded торрента не сносится prune."""
+    media_root = tmp_path / "anilibria"
+    media_root.mkdir()
+    known = media_root / "Show" / "ep01.mkv"
+    known.parent.mkdir(parents=True)
+    known.write_bytes(b"ok")
+    hist = media_root / "Show" / "old.mkv"
+    hist.write_bytes(b"old")
+
+    monkeypatch.setattr("app.services.qb_inventory.resolve_media_root", lambda: media_root)
+
+    keep_tf = SimpleNamespace(
+        info_hash="a" * 40,
+        relative_path="Show/ep01.mkv",
+        full_path=str(known.resolve()),
+    )
+    history_tf = SimpleNamespace(
+        info_hash="c" * 40,
+        relative_path="Show/old.mkv",
+        full_path=str(hist.resolve()),
+    )
+    call_n = {"n": 0}
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    def fake_scalars(_stmt):
+        call_n["n"] += 1
+        # 1) TorrentFile, 2) archive protect кандидатов, 3) DiskFileHash
+        if call_n["n"] == 1:
+            return FakeScalars([keep_tf, history_tf])
+        if call_n["n"] == 2:
+            return FakeScalars(["c" * 40])  # history hash в архиве
+        return FakeScalars([])
+
+    deleted: list[object] = []
+    db = MagicMock()
+    db.scalars.side_effect = fake_scalars
+    db.delete.side_effect = lambda obj: deleted.append(obj)
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=1,
+                release_id=10,
+                relative_path="Show/ep01.mkv",
+                size=2,
+                file_index=0,
+                selected=True,
+                full_path=str(known.resolve()),
+                folder_key=str(known.parent.resolve()),
+            )
+        ],
+    )
+
+    pruned = prune_stale_inventory(db, inventory)
+    assert pruned["torrent_files"] == 0
+    assert history_tf not in deleted
+    assert keep_tf not in deleted
 
 
 def test_load_cleanup_rules_filters_slave_only() -> None:
@@ -261,8 +331,11 @@ def test_prune_stale_inventory_keeps_failed_hashes(monkeypatch, tmp_path: Path) 
 
     def fake_scalars(_stmt):
         call_n["n"] += 1
+        # 1) TorrentFile, 2) archive protect кандидатов (c), 3) DiskFileHash
         if call_n["n"] == 1:
             return FakeScalars(tf_rows)
+        if call_n["n"] == 2:
+            return FakeScalars([])  # stale c не в архиве
         return FakeScalars(dh_rows)
 
     deleted: list[object] = []

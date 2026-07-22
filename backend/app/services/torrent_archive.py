@@ -165,16 +165,48 @@ class TorrentArchiveService:
         return None
 
     def _find_archive_for_upsert(self, torrent_id: int, info_hash: str) -> TorrentArchive | None:
-        by_torrent_id = self._db.scalar(
-            select(TorrentArchive).where(TorrentArchive.torrent_id == torrent_id).limit(1)
-        )
-        if by_torrent_id is not None:
-            return by_torrent_id
+        """Найти строку для обновления без воскрешения чужой superseded-версии.
 
-        by_hash = self._db.scalars(select(TorrentArchive).where(TorrentArchive.info_hash == info_hash)).all()
-        if len(by_hash) == 1:
-            return by_hash[0]
-        return None
+        1) активная запись с тем же info_hash
+        2) активная запись того же torrent_id (возможно другой hash → supersede)
+        3) superseded с тем же hash, только если нет другой активной версии torrent_id
+        """
+        normalized = (info_hash or "").strip().lower()
+        active_same_hash = self._db.scalar(
+            select(TorrentArchive)
+            .where(
+                TorrentArchive.info_hash == normalized,
+                TorrentArchive.superseded.is_(False),
+            )
+            .order_by(TorrentArchive.id.desc())
+            .limit(1)
+        )
+        if active_same_hash is not None:
+            return active_same_hash
+
+        active_same_torrent = self._db.scalar(
+            select(TorrentArchive)
+            .where(
+                TorrentArchive.torrent_id == torrent_id,
+                TorrentArchive.superseded.is_(False),
+            )
+            .order_by(TorrentArchive.id.desc())
+            .limit(1)
+        )
+        if active_same_torrent is not None:
+            return active_same_torrent
+
+        # Нет активных: можно поднять историю с тем же hash (ре-добавление).
+        return self._db.scalar(
+            select(TorrentArchive)
+            .where(
+                TorrentArchive.info_hash == normalized,
+                TorrentArchive.torrent_id == torrent_id,
+                TorrentArchive.superseded.is_(True),
+            )
+            .order_by(TorrentArchive.id.desc())
+            .limit(1)
+        )
 
     def save_torrent(
         self,
@@ -200,6 +232,13 @@ class TorrentArchiveService:
             release_payload,
         )
         archive = self._find_archive_for_upsert(torrent_id, safe_hash)
+        if archive is not None and (archive.info_hash or "").strip().lower() != safe_hash.lower():
+            # Новая версия того же torrent_id — старую оставляем в истории релиза.
+            archive.superseded = True
+            archive.api_present = False
+            self._db.commit()
+            archive = None
+
         if archive is None:
             archive = TorrentArchive(
                 info_hash=safe_hash,
@@ -214,6 +253,8 @@ class TorrentArchiveService:
                 quality_json=quality_json,
                 file_path=str(relative_path),
                 file_size=self._to_file_size(torrent_payload),
+                api_present=True,
+                superseded=False,
             )
             self._db.add(archive)
         else:
@@ -231,6 +272,8 @@ class TorrentArchiveService:
             archive.quality_json = quality_json
             archive.file_path = str(relative_path)
             archive.file_size = self._to_file_size(torrent_payload)
+            archive.api_present = True
+            archive.superseded = False
 
         self._db.commit()
         self._db.refresh(archive)

@@ -49,6 +49,15 @@ KIND_ORPHAN = "orphan"
 
 EVENT_KINDS = frozenset({KIND_ADDED, KIND_REMOVED, KIND_MODIFIED, KIND_MISSING, KIND_ORPHAN})
 
+# Sticky UI-статусы на torrent_files (привязаны к торренту, не к диску).
+UI_STATUS_NEW = "new"
+UI_STATUS_OK = "ok"
+UI_STATUS_CHANGED = "changed"
+UI_STATUS_REMOVED = "removed"
+UI_STATUS_CHECKING = "checking"
+
+_STICKY_FINAL = frozenset({UI_STATUS_NEW, UI_STATUS_CHANGED})
+
 
 @dataclass
 class FileChange:
@@ -68,6 +77,24 @@ class TrackTorrentResult:
     skipped_reason: str | None = None
 
 
+@dataclass
+class _PreparedTrack:
+    normalized_hash: str
+    torrent_bytes: bytes
+    archive: TorrentArchive | None
+    skipped_reason: str | None = None
+
+
+@dataclass
+class _CompositionSync:
+    result: TrackTorrentResult
+    events: list[FileChangeEvent]
+    is_baseline: bool
+    save_path: str | None
+    content_path: str | None
+    newly_added_paths: set[str] = field(default_factory=set)
+
+
 class FileTrackerService:
     def __init__(self, db: Session, job_id: int | None = None) -> None:
         self._db = db
@@ -80,6 +107,38 @@ class FileTrackerService:
         self._db.add(JobLog(job_id=self._job_id, level=level, message=message))
         self._db.commit()
 
+    def sync_torrent_composition(
+        self,
+        *,
+        info_hash: str,
+        torrent_id: int,
+        release_id: int,
+        torrent_bytes: bytes | None = None,
+        notify: bool = True,
+    ) -> TrackTorrentResult:
+        """Только состав: upsert torrent_files + сразу persist added/removed (без BLAKE3).
+
+        Нужен на master_added, чтобы UI успел показать «новый» пока идёт закачка.
+        """
+        prepared = self._prepare_track(info_hash=info_hash, torrent_id=torrent_id, torrent_bytes=torrent_bytes)
+        if prepared.skipped_reason:
+            return TrackTorrentResult(skipped_reason=prepared.skipped_reason)
+        synced = self._sync_composition(
+            normalized_hash=prepared.normalized_hash,
+            torrent_id=torrent_id,
+            release_id=release_id,
+            torrent_bytes=prepared.torrent_bytes,
+        )
+        if synced.events and notify:
+            self._maybe_notify_telegram(
+                release_id=release_id,
+                torrent_id=torrent_id,
+                events=synced.events,
+                archive=prepared.archive,
+                baseline=synced.is_baseline,
+            )
+        return synced.result
+
     def track_torrent(
         self,
         *,
@@ -91,111 +150,43 @@ class FileTrackerService:
         notify: bool = True,
     ) -> TrackTorrentResult:
         """Upsert состава, хеш выбранных файлов, запись событий изменений."""
-        result = TrackTorrentResult()
-        normalized_hash = (info_hash or "").strip().lower()
-        if not normalized_hash:
-            result.skipped_reason = "пустой info_hash"
-            return result
+        prepared = self._prepare_track(info_hash=info_hash, torrent_id=torrent_id, torrent_bytes=torrent_bytes)
+        if prepared.skipped_reason:
+            return TrackTorrentResult(skipped_reason=prepared.skipped_reason)
 
-        archive = self._db.scalar(
-            select(TorrentArchive)
-            .where(
-                (TorrentArchive.info_hash == normalized_hash)
-                | (TorrentArchive.torrent_id == torrent_id)
-            )
-            .order_by(TorrentArchive.id.desc())
-            .limit(1)
+        synced = self._sync_composition(
+            normalized_hash=prepared.normalized_hash,
+            torrent_id=torrent_id,
+            release_id=release_id,
+            torrent_bytes=prepared.torrent_bytes,
         )
-        if archive is not None and not archive.api_present:
-            result.skipped_reason = "торрент не api_present (архивный)"
-            self._log(f"hash_torrent: пропуск {normalized_hash[:12]}… — api_present=false", "debug")
-            return result
+        result = synced.result
+        save_path = synced.save_path
+        content_path = synced.content_path
+        newly_added_paths = set(synced.newly_added_paths)
 
-        if torrent_bytes is None:
-            torrent_bytes = self._load_torrent_bytes(archive, torrent_id=torrent_id, info_hash=normalized_hash)
-        if torrent_bytes is None:
-            result.skipped_reason = "нет .torrent в архиве"
-            self._log(f"hash_torrent: нет файла для {normalized_hash[:12]}…", "warning")
-            return result
-
-        file_metas = parse_torrent_file_list(torrent_bytes)
-        save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
-
-        previous = {
-            row.relative_path: row
-            for row in self._db.scalars(
-                select(TorrentFile).where(TorrentFile.info_hash == normalized_hash)
-            ).all()
-        }
-        previous_paths = set(previous.keys())
-        is_baseline = not previous_paths
-        current_paths: set[str] = set()
-        now = datetime.utcnow()
         media_root = resolve_media_root()
-
-        for meta in file_metas:
-            current_paths.add(meta.relative_path)
-            selected = True
-            if priorities:
-                selected = priorities.get(meta.file_index, 0) > 0
-            full_path: str | None = None
-            if save_path or content_path:
-                resolved = resolve_full_path(
-                    save_path or content_path or "",
-                    meta.relative_path,
-                    content_path=content_path,
-                    media_root=media_root,
-                )
-                if resolved is not None:
-                    full_path = str(resolved)
-
-            row = previous.get(meta.relative_path)
-            if row is None:
-                row = TorrentFile(
-                    torrent_id=torrent_id,
-                    info_hash=normalized_hash,
-                    release_id=release_id,
-                    relative_path=meta.relative_path,
-                    size=meta.size,
-                    file_index=meta.file_index,
-                    selected=selected,
-                    full_path=full_path,
-                    created_at=now,
-                    updated_at=now,
-                )
-                self._db.add(row)
-                # В т.ч. первый снимок (раньше пропускали baseline → в UI всё было «ok»).
-                result.changes.append(
-                    FileChange(kind=KIND_ADDED, relative_path=meta.relative_path, full_path=full_path)
-                )
-            else:
-                row.torrent_id = torrent_id
-                row.release_id = release_id
-                row.size = meta.size
-                row.file_index = meta.file_index
-                row.selected = selected
-                row.full_path = full_path
-                row.updated_at = now
-            result.files_upserted += 1
-
-        removed_paths = previous_paths - current_paths
-        for rel in removed_paths:
-            old = previous[rel]
-            result.changes.append(
-                FileChange(
-                    kind=KIND_REMOVED,
-                    relative_path=rel,
-                    full_path=old.full_path,
-                )
-            )
-            self._db.delete(old)
-
-        self._db.commit()
+        hash_phase_changes: list[FileChange] = []
 
         # Diff B/C: хеш и missing для выбранных
         rows = list(
-            self._db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized_hash)).all()
+            self._db.scalars(
+                select(TorrentFile).where(TorrentFile.info_hash == prepared.normalized_hash)
+            ).all()
         )
+        # Settle-baseline: ещё нет ok/changed (в т.ч. после early sync на master_added).
+        hash_baseline = self._is_hash_settle_baseline(rows)
+        rows_by_rel = {row.relative_path: row for row in rows}
+
+        # Incremental composition TG сразу; baseline-сводку — после hash-settle.
+        if synced.events and notify and not hash_baseline:
+            self._maybe_notify_telegram(
+                release_id=release_id,
+                torrent_id=torrent_id,
+                events=synced.events,
+                archive=prepared.archive,
+                baseline=False,
+            )
         to_hash: list[Path] = []
         path_to_rel: dict[str, str] = {}
         old_hashes: dict[str, str] = {}
@@ -206,7 +197,7 @@ class FileTrackerService:
                 continue
             path = Path(row.full_path)
             if not path_exists_including_incomplete(path):
-                result.changes.append(
+                hash_phase_changes.append(
                     FileChange(
                         kind=KIND_MISSING,
                         relative_path=row.relative_path,
@@ -238,6 +229,7 @@ class FileTrackerService:
         workers = clamp_hash_workers(
             get_setting_value(self._db, "file_hash_workers", str(settings.file_hash_workers))
         )
+        settled_rels: set[str] = set()
         if to_hash:
             self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
             stop_fn = None
@@ -263,20 +255,57 @@ class FileTrackerService:
                 raise JobStopRequested()
             for full, rel in path_to_rel.items():
                 old_content = old_hashes.get(full)
-                if not old_content:
-                    continue
                 new_row = self._db.scalar(
                     select(DiskFileHash).where(DiskFileHash.full_path == full).limit(1)
                 )
-                if new_row and new_row.content_hash and new_row.content_hash != old_content:
-                    result.changes.append(
+                new_content = (new_row.content_hash if new_row else None) or ""
+                file_row = rows_by_rel.get(rel)
+                if file_row is None:
+                    continue
+                if old_content and new_content and new_content != old_content:
+                    hash_phase_changes.append(
                         FileChange(
                             kind=KIND_MODIFIED,
                             relative_path=rel,
                             full_path=full,
-                            details={"old_hash": old_content, "new_hash": new_row.content_hash},
+                            details={"old_hash": old_content, "new_hash": new_content},
                         )
                     )
+                    self._settle_ui_status(
+                        file_row,
+                        newly_added=rel in newly_added_paths,
+                        is_baseline=hash_baseline,
+                        mismatch=True,
+                        compared=True,
+                    )
+                else:
+                    # gate skip / hash match / первый хеш без old
+                    self._settle_ui_status(
+                        file_row,
+                        newly_added=rel in newly_added_paths,
+                        is_baseline=hash_baseline,
+                        mismatch=False,
+                        compared=bool(old_content),
+                    )
+                settled_rels.add(rel)
+
+        # Unselected / без пути / missing на первом hash-settle → ok (кроме .!qB).
+        if hash_baseline:
+            for row in rows:
+                if row.relative_path in settled_rels:
+                    continue
+                if row.full_path and is_incomplete_path(Path(row.full_path)):
+                    continue
+                self._settle_ui_status(
+                    row,
+                    newly_added=row.relative_path in newly_added_paths,
+                    is_baseline=True,
+                    mismatch=False,
+                    compared=False,
+                )
+            self._db.commit()
+        elif to_hash:
+            self._db.commit()
 
         # Orphan только под корнем контента торрента (не общий save_path года).
         known_paths = {r.full_path for r in rows if r.full_path}
@@ -287,7 +316,7 @@ class FileTrackerService:
             media_root=media_root,
         )
         if orphan_root is not None:
-            result.changes.extend(
+            hash_phase_changes.extend(
                 self._find_orphans_under_root(
                     root=orphan_root,
                     known_full_paths=known_paths,
@@ -295,21 +324,280 @@ class FileTrackerService:
                 )
             )
 
-        filtered_changes = self._filter_duplicate_changes(torrent_id=torrent_id, changes=result.changes)
-        events = self._persist_events(
+        result.changes.extend(hash_phase_changes)
+        filtered_changes = self._filter_duplicate_changes(
+            torrent_id=torrent_id,
+            info_hash=prepared.normalized_hash,
+            changes=hash_phase_changes,
+        )
+        hash_events = self._persist_events(
             release_id=release_id,
             torrent_id=torrent_id,
+            info_hash=prepared.normalized_hash,
             changes=filtered_changes,
         )
-        if events and notify:
+        if notify and hash_baseline:
+            baseline_events = [e for e in synced.events if e.kind == KIND_ADDED]
+            if not baseline_events:
+                baseline_events = self._load_added_events_for_hash(
+                    torrent_id=torrent_id,
+                    info_hash=prepared.normalized_hash,
+                )
+            if baseline_events:
+                self._maybe_notify_telegram(
+                    release_id=release_id,
+                    torrent_id=torrent_id,
+                    events=baseline_events,
+                    archive=prepared.archive,
+                    baseline=True,
+                )
+        elif hash_events and notify:
             self._maybe_notify_telegram(
                 release_id=release_id,
                 torrent_id=torrent_id,
-                events=events,
-                archive=archive,
-                baseline=is_baseline,
+                events=hash_events,
+                archive=prepared.archive,
+                baseline=False,
             )
         return result
+
+    @staticmethod
+    def _is_hash_settle_baseline(rows: list[TorrentFile]) -> bool:
+        """Первый hash-settle версии: ещё нет sticky ok/changed (early sync оставил new)."""
+        if not rows:
+            return True
+        settled = {UI_STATUS_OK, UI_STATUS_CHANGED}
+        return not any((row.ui_status or "").strip().lower() in settled for row in rows)
+
+    @staticmethod
+    def _settle_ui_status(
+        row: TorrentFile,
+        *,
+        newly_added: bool,
+        is_baseline: bool,
+        mismatch: bool,
+        compared: bool,
+    ) -> None:
+        """Sticky ui_status: new/changed не откатываем; ok — только сравнение с прошлой версией.
+
+        - incremental added → new навсегда
+        - baseline после первого hash → ok (снимок принят)
+        - mismatch у не-new → changed навсегда
+        - match у не-new/не-changed → ok
+        """
+        current = (row.ui_status or UI_STATUS_OK).strip().lower()
+        if newly_added and not is_baseline:
+            row.ui_status = UI_STATUS_NEW
+            return
+        if current == UI_STATUS_NEW and not is_baseline:
+            # Incremental «новый» — финальный для этого торрента.
+            return
+        if mismatch and compared:
+            row.ui_status = UI_STATUS_CHANGED
+            return
+        if current == UI_STATUS_CHANGED:
+            return
+        if is_baseline or compared:
+            row.ui_status = UI_STATUS_OK
+            return
+        # Первый хеш без old_hash на уже существующей строке — фиксируем ok.
+        if current not in _STICKY_FINAL:
+            row.ui_status = UI_STATUS_OK
+
+    def _prepare_track(
+        self,
+        *,
+        info_hash: str,
+        torrent_id: int,
+        torrent_bytes: bytes | None,
+    ) -> _PreparedTrack:
+        normalized_hash = (info_hash or "").strip().lower()
+        if not normalized_hash:
+            return _PreparedTrack(
+                normalized_hash="",
+                torrent_bytes=b"",
+                archive=None,
+                skipped_reason="пустой info_hash",
+            )
+
+        # Строго эта версия по info_hash; fallback — активная запись torrent_id.
+        archive = self._db.scalar(
+            select(TorrentArchive)
+            .where(TorrentArchive.info_hash == normalized_hash)
+            .order_by(TorrentArchive.superseded.asc(), TorrentArchive.id.desc())
+            .limit(1)
+        )
+        if archive is None:
+            archive = self._db.scalar(
+                select(TorrentArchive)
+                .where(
+                    TorrentArchive.torrent_id == torrent_id,
+                    TorrentArchive.superseded.is_(False),
+                )
+                .order_by(TorrentArchive.id.desc())
+                .limit(1)
+            )
+        if archive is not None and not archive.api_present:
+            self._log(f"hash_torrent: пропуск {normalized_hash[:12]}… — api_present=false", "debug")
+            return _PreparedTrack(
+                normalized_hash=normalized_hash,
+                torrent_bytes=b"",
+                archive=archive,
+                skipped_reason="торрент не api_present (архивный)",
+            )
+
+        if torrent_bytes is None:
+            torrent_bytes = self._load_torrent_bytes(archive, torrent_id=torrent_id, info_hash=normalized_hash)
+        if torrent_bytes is None:
+            self._log(f"hash_torrent: нет файла для {normalized_hash[:12]}…", "warning")
+            return _PreparedTrack(
+                normalized_hash=normalized_hash,
+                torrent_bytes=b"",
+                archive=archive,
+                skipped_reason="нет .torrent в архиве",
+            )
+        return _PreparedTrack(
+            normalized_hash=normalized_hash,
+            torrent_bytes=torrent_bytes,
+            archive=archive,
+        )
+
+    def _sync_composition(
+        self,
+        *,
+        normalized_hash: str,
+        torrent_id: int,
+        release_id: int,
+        torrent_bytes: bytes,
+    ) -> _CompositionSync:
+        """Upsert torrent_files и сразу пишет added/removed (heal, если events потеряны)."""
+        result = TrackTorrentResult()
+        file_metas = parse_torrent_file_list(torrent_bytes)
+        save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
+
+        previous = {
+            row.relative_path: row
+            for row in self._db.scalars(
+                select(TorrentFile).where(TorrentFile.info_hash == normalized_hash)
+            ).all()
+        }
+        previous_paths = set(previous.keys())
+        # Baseline: нет строк ИЛИ строки есть (inventory/stop), но added ещё не писали.
+        had_added_events = self._torrent_has_kind(
+            torrent_id=torrent_id, info_hash=normalized_hash, kind=KIND_ADDED
+        )
+        is_baseline = not previous_paths or not had_added_events
+        current_paths: set[str] = set()
+        now = datetime.utcnow()
+        media_root = resolve_media_root()
+        composition_changes: list[FileChange] = []
+        newly_added_paths: set[str] = set()
+
+        for meta in file_metas:
+            current_paths.add(meta.relative_path)
+            selected = True
+            if priorities:
+                selected = priorities.get(meta.file_index, 0) > 0
+            full_path: str | None = None
+            if save_path or content_path:
+                resolved = resolve_full_path(
+                    save_path or content_path or "",
+                    meta.relative_path,
+                    content_path=content_path,
+                    media_root=media_root,
+                )
+                if resolved is not None:
+                    full_path = str(resolved)
+
+            row = previous.get(meta.relative_path)
+            if row is None:
+                row = TorrentFile(
+                    torrent_id=torrent_id,
+                    info_hash=normalized_hash,
+                    release_id=release_id,
+                    relative_path=meta.relative_path,
+                    size=meta.size,
+                    file_index=meta.file_index,
+                    selected=selected,
+                    full_path=full_path,
+                    ui_status=UI_STATUS_NEW,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self._db.add(row)
+                composition_changes.append(
+                    FileChange(kind=KIND_ADDED, relative_path=meta.relative_path, full_path=full_path)
+                )
+                newly_added_paths.add(meta.relative_path)
+            else:
+                row.torrent_id = torrent_id
+                row.release_id = release_id
+                row.size = meta.size
+                row.file_index = meta.file_index
+                row.selected = selected
+                row.full_path = full_path
+                row.updated_at = now
+                # Heal: inventory/stop успели записать torrent_files без события added.
+                if not self._has_prior_event(
+                    torrent_id=torrent_id,
+                    info_hash=normalized_hash,
+                    kind=KIND_ADDED,
+                    relative_path=meta.relative_path,
+                    full_path=full_path,
+                ):
+                    row.ui_status = UI_STATUS_NEW
+                    composition_changes.append(
+                        FileChange(
+                            kind=KIND_ADDED,
+                            relative_path=meta.relative_path,
+                            full_path=full_path,
+                        )
+                    )
+                    newly_added_paths.add(meta.relative_path)
+            result.files_upserted += 1
+
+        removed_paths = previous_paths - current_paths
+        for rel in removed_paths:
+            old = previous[rel]
+            composition_changes.append(
+                FileChange(
+                    kind=KIND_REMOVED,
+                    relative_path=rel,
+                    full_path=old.full_path,
+                )
+            )
+            self._db.delete(old)
+
+        self._db.commit()
+        result.changes.extend(composition_changes)
+        events = self._persist_events(
+            release_id=release_id,
+            torrent_id=torrent_id,
+            info_hash=normalized_hash,
+            changes=composition_changes,
+        )
+        return _CompositionSync(
+            result=result,
+            events=events,
+            is_baseline=is_baseline,
+            save_path=save_path,
+            content_path=content_path,
+            newly_added_paths=newly_added_paths,
+        )
+
+    def _torrent_has_kind(self, *, torrent_id: int, info_hash: str, kind: str) -> bool:
+        """Есть ли событие kind для этой версии торрента (строго по info_hash)."""
+        normalized = (info_hash or "").strip().lower()
+        stmt = select(FileChangeEvent.id).where(
+            FileChangeEvent.torrent_id == torrent_id,
+            FileChangeEvent.kind == kind,
+        )
+        if normalized:
+            # Не учитываем legacy NULL: они относятся к неизвестной/старой версии.
+            stmt = stmt.where(FileChangeEvent.info_hash == normalized)
+        else:
+            stmt = stmt.where(FileChangeEvent.info_hash.is_(None))
+        return self._db.scalar(stmt.limit(1)) is not None
 
     def _find_orphans_under_root(
         self,
@@ -354,6 +642,7 @@ class FileTrackerService:
         self,
         *,
         torrent_id: int,
+        info_hash: str,
         changes: list[FileChange],
     ) -> list[FileChange]:
         """Не дублировать повторные missing/modified/removed/orphan для того же пути."""
@@ -365,6 +654,7 @@ class FileTrackerService:
                 continue
             if not self._has_prior_event(
                 torrent_id=torrent_id,
+                info_hash=info_hash,
                 kind=change.kind,
                 relative_path=change.relative_path,
                 full_path=change.full_path,
@@ -376,6 +666,7 @@ class FileTrackerService:
         self,
         *,
         torrent_id: int,
+        info_hash: str | None = None,
         kind: str,
         relative_path: str | None,
         full_path: str | None,
@@ -384,6 +675,12 @@ class FileTrackerService:
             FileChangeEvent.torrent_id == torrent_id,
             FileChangeEvent.kind == kind,
         )
+        normalized = (info_hash or "").strip().lower()
+        if normalized:
+            # Строго эта версия: legacy NULL не смешиваем с новым info_hash.
+            stmt = stmt.where(FileChangeEvent.info_hash == normalized)
+        else:
+            stmt = stmt.where(FileChangeEvent.info_hash.is_(None))
         if relative_path:
             stmt = stmt.where(FileChangeEvent.relative_path == relative_path)
         elif full_path:
@@ -398,10 +695,12 @@ class FileTrackerService:
         release_id: int,
         torrent_id: int,
         changes: list[FileChange],
+        info_hash: str | None = None,
     ) -> list[FileChangeEvent]:
         if not changes:
             return []
         now = datetime.utcnow()
+        normalized_hash = (info_hash or "").strip().lower() or None
         events: list[FileChangeEvent] = []
         for change in changes:
             if change.kind not in EVENT_KINDS:
@@ -409,6 +708,7 @@ class FileTrackerService:
             event = FileChangeEvent(
                 release_id=release_id,
                 torrent_id=torrent_id,
+                info_hash=normalized_hash,
                 kind=change.kind,
                 relative_path=change.relative_path,
                 full_path=change.full_path,
@@ -453,6 +753,37 @@ class FileTrackerService:
             baseline=baseline,
         )
 
+    def _load_added_events_for_hash(
+        self,
+        *,
+        torrent_id: int,
+        info_hash: str,
+    ) -> list[FileChangeEvent]:
+        """Уникальные added по relative_path для baseline-уведомления после early sync."""
+        normalized = (info_hash or "").strip().lower()
+        if not normalized:
+            return []
+        rows = list(
+            self._db.scalars(
+                select(FileChangeEvent)
+                .where(
+                    FileChangeEvent.torrent_id == torrent_id,
+                    FileChangeEvent.info_hash == normalized,
+                    FileChangeEvent.kind == KIND_ADDED,
+                )
+                .order_by(FileChangeEvent.id.asc())
+            ).all()
+        )
+        seen: set[str] = set()
+        unique: list[FileChangeEvent] = []
+        for row in rows:
+            key = row.relative_path or row.full_path or ""
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique.append(row)
+        return unique
+
     def _load_torrent_bytes(
         self,
         archive: TorrentArchive | None,
@@ -460,16 +791,30 @@ class FileTrackerService:
         torrent_id: int,
         info_hash: str,
     ) -> bytes | None:
-        if archive is None:
+        normalized = (info_hash or "").strip().lower()
+        # Всегда предпочитаем .torrent именно этой версии (info_hash), не активный другой hash.
+        by_hash = self._db.scalar(
+            select(TorrentArchive)
+            .where(TorrentArchive.info_hash == normalized)
+            .order_by(TorrentArchive.superseded.asc(), TorrentArchive.id.desc())
+            .limit(1)
+        )
+        if by_hash is not None:
+            archive = by_hash
+        elif archive is None:
             archive = self._db.scalar(
                 select(TorrentArchive)
                 .where(
-                    (TorrentArchive.info_hash == info_hash) | (TorrentArchive.torrent_id == torrent_id)
+                    TorrentArchive.torrent_id == torrent_id,
+                    TorrentArchive.superseded.is_(False),
                 )
                 .order_by(TorrentArchive.id.desc())
                 .limit(1)
             )
         if archive is None:
+            return None
+        # Если archive от другого hash — не подставляем чужой файл.
+        if (archive.info_hash or "").strip().lower() != normalized:
             return None
         path = TorrentArchiveService(self._db).resolve_file_path(archive)
         if not path.exists():
@@ -598,12 +943,20 @@ def update_api_present_for_release(
     release_id: int,
     present_torrent_ids: set[int],
 ) -> dict[str, int]:
-    """Актуальные torrent_id → api_present=True; остальные по релизу → False."""
+    """Актуальные torrent_id → api_present=True; остальные по релизу → False.
+
+    superseded-версии (заменённый info_hash) всегда остаются api_present=False.
+    """
     present = {int(x) for x in present_torrent_ids if x is not None}
     rows = list(db.scalars(select(TorrentArchive).where(TorrentArchive.release_id == release_id)).all())
     marked_true = 0
     marked_false = 0
     for row in rows:
+        if bool(getattr(row, "superseded", False)):
+            if row.api_present:
+                row.api_present = False
+                marked_false += 1
+            continue
         should_present = row.torrent_id in present
         if bool(row.api_present) == should_present:
             continue
@@ -624,6 +977,7 @@ def mark_missing_api_present_false(db: Session, seen_torrent_ids: set[int]) -> i
         update(TorrentArchive)
         .where(
             TorrentArchive.api_present.is_(True),
+            TorrentArchive.superseded.is_(False),
             TorrentArchive.torrent_id.notin_(seen_torrent_ids),
         )
         .values(api_present=False)
@@ -640,40 +994,38 @@ def file_status_for_ui(
     disk_hash: Any | None = None,
     hash_job_active: bool = False,
     in_torrent: bool = True,
+    ui_status: str | None = None,
 ) -> str:
-    """Бейдж для UI по снимку торрент ↔ диск ↔ хеш.
+    """Бейдж для UI: sticky-статус торрента + временный «проверка».
 
-    - new — в торренте, готового файла нет (в т.ч. новый .!qB без прежнего hash)
-    - checking — в торренте, .!qB и файл уже был в базе (content_hash), или идёт hash_torrent
-    - changed — в торренте, на диске, hash_torrent зафиксировал расхождение хешей
-    - removed — нет в составе торрента, но файл есть на диске
-    - ok — в торренте, на диске, без расхождения / gate без изменений
+    Финальные (не меняются после работы над торрентом):
+    - new — файл добавлен в состав этого торрента
+    - removed — файл убран из состава (событие removed)
+    - changed — хеш разошёлся с предыдущей версией
+    - ok — хеш совпал с предыдущей версией / baseline принят
+
+    Временный:
+    - checking — идёт hash_torrent (оверлей поверх ok/changed/new с известным hash)
     """
-    del relative_path  # сохраняем сигнатуру для вызывающих
-    path = Path(full_path) if full_path else None
-    on_disk_complete = bool(path is not None and path.is_file() and not path.name.endswith(".!qB"))
-    incomplete = bool(path is not None and is_incomplete_path(path) and not on_disk_complete)
-    on_disk_any = on_disk_complete or incomplete
+    del relative_path, full_path  # статус не от живого FS
+    if not in_torrent or latest_kind == KIND_REMOVED:
+        return UI_STATUS_REMOVED
 
-    if not in_torrent:
-        return "removed" if on_disk_any else "ok"
+    stored = (ui_status or "").strip().lower()
+    if stored not in {UI_STATUS_NEW, UI_STATUS_OK, UI_STATUS_CHANGED}:
+        if latest_kind == KIND_ADDED:
+            stored = UI_STATUS_NEW
+        elif latest_kind == KIND_MODIFIED:
+            stored = UI_STATUS_CHANGED
+        else:
+            stored = UI_STATUS_OK
 
-    if incomplete:
-        # Перекачка известного файла → ждём hash; новый .!qB → сразу new.
-        if _has_stored_content_hash(disk_hash):
-            return "checking"
-        return "new"
-
-    if not on_disk_complete:
-        return "new"
-
-    if latest_kind == KIND_MODIFIED:
-        return "changed"
-
-    if hash_job_active and _has_stored_content_hash(disk_hash):
-        return "checking"
-
-    return "ok"
+    if hash_job_active and stored != UI_STATUS_NEW:
+        return UI_STATUS_CHECKING
+    if hash_job_active and stored == UI_STATUS_NEW and _has_stored_content_hash(disk_hash):
+        # Перекачка уже учтённого «нового» — кратко «проверка».
+        return UI_STATUS_CHECKING
+    return stored
 
 
 def _has_stored_content_hash(disk_hash: Any | None) -> bool:

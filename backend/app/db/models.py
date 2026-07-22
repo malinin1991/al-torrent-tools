@@ -131,6 +131,8 @@ class TorrentArchive(Base):
     file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # True = торрент сейчас в ответе AniLibria API; False = архивный (снят с раздачи).
     api_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    # True = заменён новой версией того же torrent_id (другой info_hash) — храним как историю.
+    superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -148,6 +150,8 @@ class TorrentFile(Base):
     file_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     full_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    # Sticky статус для UI: new|ok|changed — не пересчитывается с диска.
+    ui_status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -173,6 +177,7 @@ class FileChangeEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     release_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     torrent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    info_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     full_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)

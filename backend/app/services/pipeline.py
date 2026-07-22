@@ -106,7 +106,47 @@ class TorrentPipelineService:
         self._db.commit()
         self._db.refresh(pipeline)
         self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
+        self._sync_composition_best_effort(pipeline)
         return pipeline
+
+    def _sync_composition_best_effort(self, pipeline: TorrentPipeline) -> None:
+        """Ранний sync состава на master_added — UI видит «новый» до hash_torrent."""
+        from app.services.file_tracker import FileTrackerService
+
+        try:
+            torrent_bytes = self.load_torrent_bytes_from_archive(pipeline)
+            if torrent_bytes is None:
+                self._add_log(
+                    f"Pipeline {pipeline.id}: sync состава пропуск — нет .torrent в архиве",
+                    "warning",
+                )
+                return
+            result = FileTrackerService(self._db).sync_torrent_composition(
+                info_hash=pipeline.info_hash,
+                torrent_id=pipeline.torrent_id,
+                release_id=pipeline.release_id,
+                torrent_bytes=torrent_bytes,
+                # TG baseline — после hash_torrent, не во время закачки.
+                notify=False,
+            )
+            if result.skipped_reason:
+                self._add_log(
+                    f"Pipeline {pipeline.id}: sync состава пропуск — {result.skipped_reason}",
+                    "warning",
+                )
+                return
+            added = sum(1 for c in result.changes if c.kind == "added")
+            removed = sum(1 for c in result.changes if c.kind == "removed")
+            self._add_log(
+                f"Pipeline {pipeline.id}: sync состава files={result.files_upserted}, "
+                f"added={added}, removed={removed}",
+                "debug",
+            )
+        except Exception as exc:
+            self._add_log(
+                f"Pipeline {pipeline.id}: sync состава не удался: {exc}",
+                "warning",
+            )
 
     def mark_master_complete(self, pipeline: TorrentPipeline) -> TorrentPipeline:
         pipeline.status = self.STATUS_MASTER_COMPLETE
