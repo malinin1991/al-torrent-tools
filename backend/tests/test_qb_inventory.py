@@ -496,6 +496,32 @@ def test_hash_paths_parallel_workers_hash_multiple(tmp_path: Path) -> None:
     assert stats["hashed"] == 4
     assert stats["errors"] == 0
     assert stats["gated"] == 0
+    assert stats["progress_index"] == 4
     assert len(added) == 4
     hashes = {row.content_hash for row in added}
     assert len(hashes) == 4
+
+
+def test_hash_paths_parallel_progress_index_includes_errors(tmp_path: Path, monkeypatch) -> None:
+    from app.services import file_hasher as mod
+
+    good = tmp_path / "good.mkv"
+    bad = tmp_path / "bad.mkv"
+    good.write_bytes(b"ok")
+    bad.write_bytes(b"bad")
+    db = MagicMock()
+    db.scalar.return_value = None
+    db.add.side_effect = lambda obj: None
+
+    real_hash = mod.hash_file_blake3
+
+    def flaky(path, **kwargs):
+        if Path(path).name == "bad.mkv":
+            raise OSError("boom")
+        return real_hash(path, **kwargs)
+
+    monkeypatch.setattr(mod, "hash_file_blake3", flaky)
+    stats = mod.hash_paths_parallel(db, [good, bad], workers=1, progress_start=10)
+    assert stats["hashed"] == 1
+    assert stats["errors"] == 1
+    assert stats["progress_index"] == 12  # start + both attempts

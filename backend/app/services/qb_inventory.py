@@ -344,6 +344,8 @@ def hash_inventory_files(
     selected_only: bool = True,
     workers: int | None = None,
     log_fn: Callable[[str], None] | None = None,
+    progress_total: int | None = None,
+    progress_start: int = 0,
 ) -> dict[str, int]:
     """BLAKE3+gate для файлов inventory, которые есть на диске.
 
@@ -366,10 +368,18 @@ def hash_inventory_files(
     if log_fn and paths:
         log_fn(f"хеширование: файлов={len(paths)}, workers={worker_count}")
 
-    stats = hash_paths_parallel(db, paths, workers=worker_count, log_fn=log_fn)
+    stats = hash_paths_parallel(
+        db,
+        paths,
+        workers=worker_count,
+        log_fn=log_fn,
+        progress_total=progress_total,
+        progress_start=progress_start,
+    )
     return {
         "hashed": stats["hashed"],
         "gated": stats["gated"],
         "missing": missing,
         "errors": stats.get("errors", 0),
+        "progress_index": stats.get("progress_index", progress_start),
     }

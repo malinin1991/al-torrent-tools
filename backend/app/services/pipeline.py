@@ -314,6 +314,7 @@ class TorrentPipelineService:
                 "debug",
             )
             return
+        job = None
         try:
             job = job_runner.create_job(
                 self._db,
@@ -324,7 +325,12 @@ class TorrentPipelineService:
                     "release_id": pipeline.release_id,
                 },
             )
-            job_runner.schedule_job(job.id)
+            try:
+                job_runner.schedule_job(job.id)
+            except Exception as schedule_exc:
+                # Иначе pending навсегда блокирует повторный enqueue для info_hash.
+                self._mark_hash_job_schedule_failed(job.id, schedule_exc)
+                raise
             self._add_log(
                 f"Pipeline {pipeline.id}: поставлен hash_torrent job_id={job.id}",
                 "debug",
@@ -344,6 +350,45 @@ class TorrentPipelineService:
                 f"Pipeline {pipeline.id}: не удалось поставить hash_torrent: {exc}",
                 "warning",
             )
+
+    def _mark_hash_job_schedule_failed(self, job_id: int, schedule_exc: Exception) -> None:
+        """Пометить pending hash_torrent как failed; при сбое commit — retry после rollback."""
+        from app.db.models import Job
+        from app.services.job_runner import STATUS_FAILED, STATUS_RUNNING
+
+        error_text = f"не удалось запланировать выполнение: {schedule_exc}"[:500]
+
+        def _apply(row: Job) -> None:
+            if row.status == STATUS_RUNNING:
+                return
+            row.status = STATUS_FAILED
+            row.error = error_text
+            if row.finished_at is None:
+                row.finished_at = datetime.utcnow()
+
+        for attempt in (1, 2):
+            try:
+                if attempt == 2:
+                    try:
+                        self._db.rollback()
+                    except Exception:
+                        pass
+                row = self._db.get(Job, job_id)
+                if row is not None:
+                    _apply(row)
+                    self._db.commit()
+                return
+            except Exception as mark_exc:
+                if attempt == 1:
+                    self._add_log(
+                        f"hash_torrent job_id={job_id}: не удалось пометить failed ({mark_exc}), retry",
+                        "warning",
+                    )
+                    continue
+                self._add_log(
+                    f"hash_torrent job_id={job_id}: повторная пометка failed не удалась: {mark_exc}",
+                    "error",
+                )
 
     def _add_to_slave(self, pipeline: TorrentPipeline, torrent_bytes: bytes) -> TorrentPipeline:
         try:

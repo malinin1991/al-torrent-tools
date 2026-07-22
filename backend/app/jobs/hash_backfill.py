@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -96,7 +97,23 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
     workers = clamp_hash_workers(
         get_setting_value(db, "file_hash_workers", str(settings.file_hash_workers))
     )
-    _add_log(db, job_id, f"hash_backfill: workers={workers}")
+
+    def _count_existing(items: list) -> int:
+        n = 0
+        for item in items:
+            if not item.selected:
+                continue
+            if Path(item.full_path).is_file():
+                n += 1
+        return n
+
+    progress_total = sum(_count_existing(folders[folder]) for folder in folder_keys)
+    progress_start = 0
+    _add_log(
+        db,
+        job_id,
+        f"hash_backfill: workers={workers}, files={progress_total}",
+    )
     for folder in folder_keys:
         _add_log(db, job_id, f"hash_backfill: папка {folder}")
         stats = hash_inventory_files(
@@ -105,11 +122,15 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
             selected_only=True,
             workers=workers,
             log_fn=lambda msg: _add_log(db, job_id, msg, "info"),
+            progress_total=progress_total,
+            progress_start=progress_start,
         )
         total_hashed += stats["hashed"]
         total_gated += stats["gated"]
         total_missing += stats["missing"]
         total_errors += stats.get("errors", 0)
+        # Сквозной индекс из hasher (учитывает hash-ошибки после выдачи номера).
+        progress_start = int(stats.get("progress_index", progress_start + stats["hashed"] + stats["gated"]))
         _set_checkpoint(db, folder)
         _touch_job(db, job_id)
 

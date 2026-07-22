@@ -234,6 +234,71 @@ def test_hash_torrent_already_done_allows_retry_after_failed() -> None:
     assert service._hash_torrent_already_done_or_queued("abc123") is True
 
 
+def test_enqueue_hash_marks_failed_when_schedule_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Если schedule_job упал после create_job — pending не блокирует retry."""
+    from app.services.job_runner import STATUS_FAILED, STATUS_PENDING
+
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = SimpleNamespace(
+        id=1,
+        info_hash="abc123",
+        release_id=10,
+        torrent_id=20,
+        status=TorrentPipelineService.STATUS_DONE,
+    )
+    db.scalar.return_value = SimpleNamespace(api_present=True)
+    service._add_log = MagicMock()  # type: ignore[method-assign]
+
+    job = SimpleNamespace(id=99, status=STATUS_PENDING, error=None, finished_at=None)
+    fake_runner = MagicMock()
+    fake_runner.create_job.return_value = job
+    fake_runner.schedule_job.side_effect = RuntimeError("no event loop")
+    monkeypatch.setattr("app.api.rest.job_runner", fake_runner)
+    db.get.return_value = job
+    # Для _hash_torrent_already_done_or_queued после mark: failed не в выборке.
+    db.scalars.return_value.all.return_value = []
+
+    assert service._hash_torrent_already_done_or_queued("abc123") is False
+    service._enqueue_hash_torrent(pipeline)
+
+    assert job.status == STATUS_FAILED
+    assert job.error
+    assert job.finished_at is not None
+    db.commit.assert_called()
+    service._add_log.assert_called()
+    assert any("не удалось поставить" in str(c) for c in service._add_log.call_args_list)
+    # После пометки failed повторный enqueue не блокируется.
+    assert service._hash_torrent_already_done_or_queued("abc123") is False
+
+
+def test_mark_hash_job_schedule_failed_retries_after_commit_error() -> None:
+    from app.services.job_runner import STATUS_FAILED, STATUS_PENDING
+
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    service._add_log = MagicMock()  # type: ignore[method-assign]
+
+    job = SimpleNamespace(id=7, status=STATUS_PENDING, error=None, finished_at=None)
+    db.get.return_value = job
+    db.commit.side_effect = [RuntimeError("db down"), None]
+
+    service._mark_hash_job_schedule_failed(7, RuntimeError("no loop"))
+
+    assert job.status == STATUS_FAILED
+    assert db.rollback.called
+    assert db.commit.call_count == 2
+
+
+def test_format_file_size_mb_and_gb() -> None:
+    from app.services.file_hasher import format_file_size
+
+    assert format_file_size(0) == "0.00 MB"
+    assert format_file_size(1024 * 1024) == "1.00 MB"
+    assert format_file_size(1554591571) == "1.45 GB"  # >= 1024 MB
+    assert format_file_size(1024 * 1024 * 1024 - 1).endswith(" MB")
+    assert format_file_size(1024 * 1024 * 1024) == "1.00 GB"
+
 def test_hash_torrent_soft_skip_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 
@@ -323,6 +388,23 @@ def test_build_file_changes_notification_text() -> None:
     assert "нет на диске" in text
 
 
+def test_build_file_changes_baseline_notification_text() -> None:
+    text = build_file_changes_notification_text(
+        title="Тест",
+        alias="test-show",
+        torrent_label="HEVC · 1-12",
+        changes=[
+            {"kind": "added", "relative_path": "Show/ep01.mkv"},
+            {"kind": "added", "relative_path": "Show/ep02.mkv"},
+        ],
+        baseline=True,
+    )
+    assert "Файлы торрента добавлены в базу" in text
+    assert "Файлов: `2`" in text
+    assert "Изменения файлов" not in text
+    assert "➕" in text
+
+
 def test_split_active_archived() -> None:
     rows = [
         ReleaseTorrentRow(
@@ -355,3 +437,17 @@ def test_split_active_archived() -> None:
     active, archived = split_active_archived(rows)
     assert len(active) == 1 and active[0].torrent_id == 1
     assert len(archived) == 1 and archived[0].torrent_id == 2
+
+
+def test_file_status_for_ui_maps_kinds() -> None:
+    from app.services.file_tracker import file_status_for_ui
+
+    assert (
+        file_status_for_ui(relative_path="a.mkv", full_path="/a.mkv", recent_kinds={"added"})
+        == "new"
+    )
+    assert (
+        file_status_for_ui(relative_path="a.mkv", full_path="/a.mkv", recent_kinds={"modified"})
+        == "changed"
+    )
+    assert file_status_for_ui(relative_path="a.mkv", full_path=None, recent_kinds=set()) == "ok"

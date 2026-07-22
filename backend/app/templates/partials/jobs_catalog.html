@@ -1,0 +1,86 @@
+<section class="jobs-catalog">
+  <h2 style="margin:0 0 12px;font-size:1.15rem;">Типы джобов</h2>
+  <div class="jobs-catalog-grid">
+    {% for entry in job_catalog %}
+    {% set d = entry.def %}
+    {% set job = entry.last_job %}
+    <article class="card job-catalog-card">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+        <div>
+          <h3 style="margin:0 0 4px;">{{ d.title }}</h3>
+          <code style="font-size:0.8rem;">{{ d.type }}</code>
+        </div>
+        {% if job %}
+        <span class="job-status job-status-{{ job.status }}">{{ job.status }}</span>
+        {% else %}
+        <span class="muted">ещё не запускался</span>
+        {% endif %}
+      </div>
+      <p class="muted" style="margin:10px 0;font-size:0.9rem;">{{ d.description }}</p>
+
+      <p style="margin:0 0 8px;font-size:0.9rem;">
+        {% if job %}
+        <a href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}">#{{ job.id }}</a>
+        · старт:
+        {% if job.started_at %}
+        <time class="local-time" datetime="{{ job.started_at|as_utc_iso }}">{{ job.started_at }}</time>
+        {% else %}-{% endif %}
+        · конец:
+        {% if job.finished_at %}
+        <time class="local-time" datetime="{{ job.finished_at|as_utc_iso }}">{{ job.finished_at }}</time>
+        {% else %}-{% endif %}
+        {% if job.error %}
+        <br /><span class="job-status-failed">ошибка: {{ job.error }}</span>
+        {% endif %}
+        {% else %}
+        <span class="muted">Нет запусков</span>
+        {% endif %}
+      </p>
+
+      <div class="row" style="margin-top:12px;flex-wrap:wrap;">
+        {% if d.manual_run %}
+          {% if "default" in d.run_modes %}
+          <button
+            class="btn"
+            type="button"
+            hx-post="/actions/run/{{ d.type }}"
+            hx-target="#jobs-action-result"
+            hx-swap="innerHTML"
+            {% if entry.is_active %}disabled title="Уже выполняется"{% endif %}
+          >Запустить</button>
+          {% endif %}
+          {% if "dry_run" in d.run_modes %}
+          <form hx-post="/actions/run/{{ d.type }}" hx-target="#jobs-action-result" hx-swap="innerHTML" style="display:inline;">
+            <input type="hidden" name="dry_run" value="true" />
+            <input type="hidden" name="apply" value="false" />
+            <button class="btn" type="submit" {% if entry.is_active %}disabled{% endif %}>Dry-run</button>
+          </form>
+          {% endif %}
+          {% if "apply" in d.run_modes %}
+          <form
+            hx-post="/actions/run/{{ d.type }}"
+            hx-target="#jobs-action-result"
+            hx-swap="innerHTML"
+            style="display:inline;"
+            onsubmit="return confirm('Выполнить {{ d.title }} с удалением? Действие необратимо.');"
+          >
+            {% if d.type == "orphan_cleanup" %}
+            <input type="hidden" name="dry_run" value="false" />
+            <input type="hidden" name="apply" value="true" />
+            {% else %}
+            <input type="hidden" name="dry_run" value="false" />
+            {% endif %}
+            <button class="btn btn-danger" type="submit" {% if entry.is_active %}disabled{% endif %}>Применить</button>
+          </form>
+          {% endif %}
+        {% else %}
+        <span class="muted" style="font-size:0.85rem;">{{ d.manual_hint }}</span>
+        {% endif %}
+        {% if job %}
+        <a class="btn btn-secondary" href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}">Логи</a>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>

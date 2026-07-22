@@ -1,15 +1,17 @@
-"""Поиск orphan-файлов под /anilibria (dry-run по умолчанию)."""
+"""Поиск orphan-файлов, мусора и пустых папок под /anilibria (dry-run по умолчанию)."""
 
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import JobLog
-from app.services.qb_inventory import build_inventory, connect_master
+from app.db.models import JobLog, TorrentFile
+from app.services.qb_inventory import InventoryResult, build_inventory, connect_master
 from app.services.torrent_files_meta import (
     QB_INCOMPLETE_SUFFIX,
     is_under_media_root,
@@ -18,26 +20,93 @@ from app.services.torrent_files_meta import (
 
 MEDIA_EXTENSIONS = {".mkv", ".mp4", ".webm", ".avi", ".m2ts", ".ts"}
 
+# Мусор macOS / Windows / служебные метки — не контент раздач.
+JUNK_FILENAMES = frozenset(
+    {
+        ".DS_Store",
+        "Thumbs.db",
+        "desktop.ini",
+        ".localized",
+        ".AppleDouble",
+        ".Parent",
+    }
+)
+JUNK_DIRNAMES = frozenset(
+    {
+        "__MACOSX",
+        ".AppleDouble",
+        "@eaDir",  # Synology
+    }
+)
+
 
 def _add_log(db: Session, job_id: int, message: str, level: str = "info") -> None:
     db.add(JobLog(job_id=job_id, level=level, message=message))
     db.commit()
 
 
-def media_root_is_writable(media_root: Path) -> bool:
-    """Проверка, что apply сможет удалять файлы (не read-only mount)."""
-    probe = media_root / ".altt_write_probe"
+def media_root_writable_status(media_root: Path) -> tuple[bool, str]:
+    """Проверка записи в media_root. Возвращает (ok, detail)."""
+    import os
+
+    try:
+        resolved = media_root.resolve()
+    except OSError as exc:
+        return False, f"resolve failed: {exc}"
+
+    if not resolved.is_dir():
+        return False, f"не каталог: {resolved}"
+
+    mode = "—"
+    try:
+        st = resolved.stat()
+        mode = oct(st.st_mode & 0o777)
+    except OSError as exc:
+        return False, f"stat failed: {exc}"
+
+    access_w = os.access(resolved, os.W_OK)
+    probe = resolved / ".altt_write_probe"
     try:
         probe.write_text("ok", encoding="utf-8")
+    except OSError as exc:
+        errno_name = errno.errorcode.get(exc.errno, str(exc.errno)) if exc.errno else "?"
+        hint = ""
+        if exc.errno == errno.EROFS:
+            hint = " — том смонтирован read-only (:ro); в compose нужен :rw и recreate контейнера"
+        elif exc.errno == errno.EACCES:
+            hint = " — нет прав (PUID/PGID / владелец share на Unraid)"
+        return (
+            False,
+            f"write probe failed: {exc.__class__.__name__} errno={errno_name} "
+            f"mode={mode} access_W_OK={access_w} path={resolved}{hint}",
+        )
+
+    try:
         probe.unlink(missing_ok=True)
-        return True
     except OSError:
-        try:
-            if probe.exists():
-                probe.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
+        # Файл создали — запись есть; unlink не критичен.
+        pass
+    return True, f"writable mode={mode} access_W_OK={access_w} path={resolved}"
+
+
+def media_root_is_writable(media_root: Path) -> bool:
+    """Проверка, что apply сможет удалять файлы (не read-only mount)."""
+    ok, _ = media_root_writable_status(media_root)
+    return ok
+
+
+def is_junk_file(path: Path) -> bool:
+    name = path.name
+    if name in JUNK_FILENAMES:
+        return True
+    # AppleDouble / resource fork: ._filename
+    if name.startswith("._") and len(name) > 2:
+        return True
+    return False
+
+
+def is_junk_dir(path: Path) -> bool:
+    return path.name in JUNK_DIRNAMES
 
 
 def find_orphan_files(
@@ -62,6 +131,176 @@ def find_orphan_files(
             continue
         orphans.append(resolved)
     return sorted(orphans)
+
+
+def find_junk_files(*, media_root: Path) -> list[Path]:
+    """Мусорные файлы (.DS_Store, Thumbs.db, ._*, …) под media_root."""
+    if not media_root.is_dir():
+        return []
+    junk: list[Path] = []
+    for path in media_root.rglob("*"):
+        if not path.is_file():
+            continue
+        if not is_junk_file(path):
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if not is_under_media_root(resolved, media_root=media_root):
+            continue
+        junk.append(resolved)
+    return sorted(junk)
+
+
+def find_junk_dirs(*, media_root: Path) -> list[Path]:
+    """Служебные каталоги (__MACOSX, @eaDir, …), deepest-first."""
+    if not media_root.is_dir():
+        return []
+    dirs: list[Path] = []
+    root = media_root.resolve()
+    for path in media_root.rglob("*"):
+        if not path.is_dir():
+            continue
+        if not is_junk_dir(path):
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved == root:
+            continue
+        if not is_under_media_root(resolved, media_root=media_root):
+            continue
+        dirs.append(resolved)
+    dirs.sort(key=lambda p: len(p.parts), reverse=True)
+    return dirs
+
+
+def find_empty_dirs(*, media_root: Path) -> list[Path]:
+    """Пустые каталоги под media_root (без самого корня), deepest-first."""
+    if not media_root.is_dir():
+        return []
+    root = media_root.resolve()
+    candidates: list[Path] = []
+    for path in media_root.rglob("*"):
+        if not path.is_dir():
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved == root:
+            continue
+        if not is_under_media_root(resolved, media_root=media_root):
+            continue
+        candidates.append(resolved)
+
+    candidates.sort(key=lambda p: len(p.parts), reverse=True)
+    empty: list[Path] = []
+    for path in candidates:
+        try:
+            next(path.iterdir())
+        except StopIteration:
+            empty.append(path)
+        except OSError:
+            continue
+    return empty
+
+
+def _delete_files(paths: list[Path], *, log_fn) -> tuple[int, int]:
+    deleted = 0
+    errors = 0
+    for path in paths:
+        try:
+            path.unlink()
+            deleted += 1
+        except OSError as exc:
+            errors += 1
+            log_fn(f"не удалось удалить файл {path}: {exc}", "error")
+    return deleted, errors
+
+
+def _delete_dirs_recursive(paths: list[Path], *, log_fn) -> tuple[int, int]:
+    """Удалить деревья junk-каталогов (shutil-подобно через rmtree вручную)."""
+    import shutil
+
+    deleted = 0
+    errors = 0
+    for path in paths:
+        if not path.exists():
+            continue
+        try:
+            shutil.rmtree(path)
+            deleted += 1
+        except OSError as exc:
+            errors += 1
+            log_fn(f"не удалось удалить каталог {path}: {exc}", "error")
+    return deleted, errors
+
+
+def _remove_empty_dirs(media_root: Path, *, log_fn) -> tuple[int, int]:
+    """Несколько проходов deepest-first, пока появляются новые пустые."""
+    deleted = 0
+    errors = 0
+    while True:
+        empties = find_empty_dirs(media_root=media_root)
+        if not empties:
+            break
+        progress = 0
+        for path in empties:
+            if not path.exists():
+                continue
+            try:
+                path.rmdir()
+                deleted += 1
+                progress += 1
+            except OSError as exc:
+                errors += 1
+                log_fn(f"не удалось удалить пустую папку {path}: {exc}", "error")
+        if progress == 0:
+            break
+    return deleted, errors
+
+
+def _log_preview(db: Session, job_id: int, label: str, paths: list[Path], *, limit: int = 100) -> None:
+    preview = paths[:limit]
+    for path in preview:
+        _add_log(db, job_id, f"{label}: {path}")
+    if len(paths) > len(preview):
+        _add_log(db, job_id, f"orphan_cleanup: … ещё {len(paths) - len(preview)} ({label})")
+
+
+def known_paths_for_orphan_scan(db: Session, inventory: InventoryResult) -> tuple[set[Path], int]:
+    """Пути валидного inventory + пути failed_hashes из torrent_files (как prune).
+
+    При частичном сбое torrents_files раздача в failed_hashes; без защиты её файлы
+    ошибочно считались бы orphan и удалились бы в apply.
+    """
+    known: set[Path] = set()
+    for item in inventory.files:
+        if not item.full_path:
+            continue
+        try:
+            known.add(Path(item.full_path).resolve())
+        except OSError:
+            continue
+
+    protect_hashes = {(h or "").strip().lower() for h in inventory.failed_hashes if h}
+    protected = 0
+    if protect_hashes:
+        rows = db.scalars(
+            select(TorrentFile).where(func.lower(TorrentFile.info_hash).in_(protect_hashes))
+        ).all()
+        for row in rows:
+            if not row.full_path:
+                continue
+            try:
+                known.add(Path(row.full_path).resolve())
+                protected += 1
+            except OSError:
+                continue
+    return known, protected
 
 
 async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -> None:
@@ -98,17 +337,23 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
     def log_fn(message: str) -> None:
         _add_log(db, job_id, f"orphan_cleanup: {message}", "debug")
 
+    def apply_log(message: str, level: str = "info") -> None:
+        _add_log(db, job_id, f"orphan_cleanup: {message}", level)
+
     # Те же валидные раздачи, что и hash_backfill (без «не зарегистрирован»).
     inventory = build_inventory(db, qb, log_fn=log_fn)
-    known = {Path(item.full_path).resolve() for item in inventory.files}
+    known, protected = known_paths_for_orphan_scan(db, inventory)
+    failed_n = len(inventory.failed_hashes)
     _add_log(
         db,
         job_id,
         f"orphan_cleanup: валидных раздач={len(inventory.valid_hashes)}, "
-        f"известных путей={len(known)}, invalid_skipped={inventory.skipped_invalid}",
+        f"известных путей={len(known)}, failed_hashes={failed_n}, "
+        f"protected_paths={protected}, invalid_skipped={inventory.skipped_invalid}",
     )
 
-    # Hard-stop: пустой inventory → apply запрещён (иначе снесём всю медиатеку).
+    scan_orphans = True
+    # Hard-stop: пустой inventory → orphan-медиа запрещён.
     if not known:
         _add_log(
             db,
@@ -117,52 +362,78 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
             "проверьте master и mount /anilibria",
             "warning",
         )
+        scan_orphans = False
         if apply:
-            apply = False
             _add_log(
                 db,
                 job_id,
-                "orphan_cleanup: APPLY ОТМЕНЁН — отказ удалять при пустом inventory",
+                "orphan_cleanup: APPLY orphan-медиа ОТМЕНЁН — пустой inventory "
+                "(мусор и пустые папки всё ещё можно чистить)",
                 "error",
             )
-            # Не считаем orphan’ов как «всё на диске» — слишком опасно даже для лога.
-            _add_log(db, job_id, "orphan_cleanup: сканирование ФС пропущено (защита)")
-            return
+    # Hard-stop: любой сбой torrents_files — список known неполный (в т.ч. без строк в БД).
+    elif failed_n:
+        _add_log(
+            db,
+            job_id,
+            f"orphan_cleanup: orphan-медиа ПРОПУЩЕН — failed_hashes={failed_n} "
+            f"(частичный сбой torrents_files; protected_paths={protected}). "
+            "Мусор и пустые папки можно чистить.",
+            "warning" if not apply else "error",
+        )
+        scan_orphans = False
 
-    orphans = find_orphan_files(media_root=media_root, known=known)
-    _add_log(db, job_id, f"orphan_cleanup: найдено orphan={len(orphans)}")
+    orphans: list[Path] = []
+    if scan_orphans:
+        orphans = find_orphan_files(media_root=media_root, known=known)
+    junk_files = find_junk_files(media_root=media_root)
+    junk_dirs = find_junk_dirs(media_root=media_root)
+    # В dry-run: текущие пустые; после apply пустых станет больше (после удаления junk/orphan).
+    empty_dirs = find_empty_dirs(media_root=media_root)
 
-    preview = orphans[:100]
-    for path in preview:
-        _add_log(db, job_id, f"orphan: {path}")
-    if len(orphans) > len(preview):
-        _add_log(db, job_id, f"orphan_cleanup: … ещё {len(orphans) - len(preview)} файлов")
+    _add_log(
+        db,
+        job_id,
+        f"orphan_cleanup: orphan={len(orphans)}, junk_files={len(junk_files)}, "
+        f"junk_dirs={len(junk_dirs)}, empty_dirs={len(empty_dirs)}",
+    )
+    _log_preview(db, job_id, "orphan", orphans)
+    _log_preview(db, job_id, "junk", junk_files)
+    _log_preview(db, job_id, "junk_dir", junk_dirs)
+    _log_preview(db, job_id, "empty_dir", empty_dirs)
 
-    deleted = 0
-    if apply:
-        if not media_root_is_writable(media_root):
-            raise RuntimeError(
-                "orphan_cleanup apply: /anilibria недоступен для записи "
-                "(проверьте mount rw у api/worker). Удаление отменено."
-            )
-        errors = 0
-        for path in orphans:
-            try:
-                path.unlink()
-                deleted += 1
-            except OSError as exc:
-                errors += 1
-                _add_log(db, job_id, f"orphan_cleanup: не удалось удалить {path}: {exc}", "error")
-        _add_log(db, job_id, f"orphan_cleanup: удалено={deleted}, ошибок={errors}")
-        if errors and deleted == 0:
-            raise RuntimeError(
-                f"orphan_cleanup apply: ни один файл не удалён (ошибок={errors}). "
-                "Вероятно read-only mount."
-            )
-    else:
+    if not apply:
         _add_log(
             db,
             job_id,
             "orphan_cleanup: dry-run — удаление не выполнялось "
             "(передайте apply=true и dry_run=false для удаления)",
+        )
+        return
+
+    ok, detail = media_root_writable_status(media_root)
+    if not ok:
+        _add_log(db, job_id, f"orphan_cleanup: проверка записи: {detail}", "error")
+        raise RuntimeError(
+            "orphan_cleanup apply: /anilibria недоступен для записи "
+            f"({detail}). Проверьте mount :rw у api/worker и recreate контейнеров."
+        )
+
+    deleted_orphans, err_orphans = _delete_files(orphans, log_fn=apply_log)
+    deleted_junk, err_junk = _delete_files(junk_files, log_fn=apply_log)
+    deleted_junk_dirs, err_junk_dirs = _delete_dirs_recursive(junk_dirs, log_fn=apply_log)
+    deleted_empty, err_empty = _remove_empty_dirs(media_root, log_fn=apply_log)
+
+    total_deleted = deleted_orphans + deleted_junk + deleted_junk_dirs + deleted_empty
+    total_errors = err_orphans + err_junk + err_junk_dirs + err_empty
+    _add_log(
+        db,
+        job_id,
+        f"orphan_cleanup: удалено orphan={deleted_orphans}, junk_files={deleted_junk}, "
+        f"junk_dirs={deleted_junk_dirs}, empty_dirs={deleted_empty}, ошибок={total_errors}",
+    )
+    if total_errors and total_deleted == 0:
+        raise RuntimeError(
+            f"orphan_cleanup apply: ничего не удалено (ошибок={total_errors}). "
+            "Вероятно read-only mount."
         )

@@ -126,6 +126,7 @@ class FileTrackerService:
             ).all()
         }
         previous_paths = set(previous.keys())
+        is_baseline = not previous_paths
         current_paths: set[str] = set()
         now = datetime.utcnow()
         media_root = resolve_media_root()
@@ -161,10 +162,10 @@ class FileTrackerService:
                     updated_at=now,
                 )
                 self._db.add(row)
-                if previous_paths:
-                    result.changes.append(
-                        FileChange(kind=KIND_ADDED, relative_path=meta.relative_path, full_path=full_path)
-                    )
+                # В т.ч. первый снимок (раньше пропускали baseline → в UI всё было «ok»).
+                result.changes.append(
+                    FileChange(kind=KIND_ADDED, relative_path=meta.relative_path, full_path=full_path)
+                )
             else:
                 row.torrent_id = torrent_id
                 row.release_id = release_id
@@ -286,6 +287,7 @@ class FileTrackerService:
                 torrent_id=torrent_id,
                 events=events,
                 archive=archive,
+                baseline=is_baseline,
             )
         return result
 
@@ -404,15 +406,19 @@ class FileTrackerService:
         torrent_id: int,
         events: list[FileChangeEvent],
         archive: TorrentArchive | None,
+        baseline: bool = False,
     ) -> None:
         from app.services.telegram_notify import enqueue_file_changes_notification
 
         tracked = self._db.get(TrackedRelease, release_id)
         if tracked is None or not tracked.enabled:
             return
-        # Только значимые для пользователя (не orphan при первом проходе шумновато — всё равно шлём по плану)
-        notify_kinds = {KIND_ADDED, KIND_REMOVED, KIND_MODIFIED, KIND_MISSING}
-        relevant = [e for e in events if e.kind in notify_kinds]
+        if baseline:
+            # Первый проход отслеживаемого торрента: сводка «файлы в базе», без missing/orphan шума.
+            relevant = [e for e in events if e.kind == KIND_ADDED]
+        else:
+            notify_kinds = {KIND_ADDED, KIND_REMOVED, KIND_MODIFIED, KIND_MISSING}
+            relevant = [e for e in events if e.kind in notify_kinds]
         if not relevant:
             return
         enqueue_file_changes_notification(
@@ -421,6 +427,7 @@ class FileTrackerService:
             torrent_id=torrent_id,
             events=relevant,
             archive=archive,
+            baseline=baseline,
         )
 
     def _load_torrent_bytes(

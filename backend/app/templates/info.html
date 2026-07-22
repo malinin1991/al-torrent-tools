@@ -21,6 +21,22 @@
           {% endif %}
         </td>
       </tr>
+      <tr><th>Медиа /anilibria</th>
+        <td>
+          <code>{{ status.media.path }}</code>
+          {% if status.media.exists %}
+          <span class="badge badge-ok">есть</span>
+          {% else %}
+          <span class="badge badge-warn">нет</span>
+          {% endif %}
+          {% if status.media.writable %}
+          <span class="badge badge-ok">rw</span>
+          {% else %}
+          <span class="badge badge-warn">не пишется</span>
+          {% endif %}
+          <div class="muted" style="margin-top:4px;">{{ status.media.detail }}</div>
+        </td>
+      </tr>
     </table>
   </section>
 

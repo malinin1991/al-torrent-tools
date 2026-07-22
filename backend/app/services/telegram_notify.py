@@ -191,14 +191,24 @@ def build_file_changes_notification_text(
     alias: str,
     torrent_label: str,
     changes: list[dict[str, Any]],
+    baseline: bool = False,
 ) -> str:
-    """MarkdownV2: изменения файлов для tracked-релиза."""
-    message = (
-        f"📁 *Изменения файлов для [{escape_markdown_v2(title)}]"
-        f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(alias)})*\n\n"
+    """MarkdownV2: изменения файлов для tracked-релиза.
+
+    baseline=True — первый проход hash_torrent: сводка «файлы учтены в базе».
+    """
+    release_link = (
+        f"[{escape_markdown_v2(title)}]"
+        f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(alias)})"
     )
+    if baseline:
+        message = f"📦 *Файлы торрента добавлены в базу для {release_link}*\n\n"
+    else:
+        message = f"📁 *Изменения файлов для {release_link}*\n\n"
     label = torrent_label.strip() or "торрент"
     message += f"Torrent: *{escape_markdown_v2(label)}*\n"
+    if baseline and changes:
+        message += f"Файлов: `{len(changes)}`\n"
     for item in changes:
         kind = str(item.get("kind") or "")
         icon = _FILE_KIND_ICONS.get(kind, "•")
@@ -210,6 +220,8 @@ def build_file_changes_notification_text(
             suffix = " \\(нет на диске\\)"
         elif kind == "orphan":
             suffix = " \\(orphan\\)"
+        elif baseline and kind == "added":
+            suffix = ""
         message += f"  {icon} `{escape_markdown_v2(path)}`{suffix}\n"
     return message
 
@@ -221,6 +233,7 @@ def enqueue_file_changes_notification(
     torrent_id: int | None,
     events: list[Any],
     archive: Any | None = None,
+    baseline: bool = False,
 ) -> TelegramOutbox | None:
     """Пишет в outbox уведомление об изменениях файлов (pipeline_id=null)."""
     if not events:
@@ -272,16 +285,18 @@ def enqueue_file_changes_notification(
         alias=alias,
         torrent_label=torrent_label or f"torrent_id={torrent_id}",
         changes=changes,
+        baseline=baseline,
     )
     payload = {
         "parse_mode": "MarkdownV2",
         "disable_web_page_preview": True,
         "text": text,
-        "kind": "file_changes",
+        "kind": "file_changes_baseline" if baseline else "file_changes",
         "release_id": release_id,
         "torrent_id": torrent_id,
         "title": title,
         "alias": alias,
+        "baseline": baseline,
     }
     outbox = TelegramOutbox(
         pipeline_id=None,

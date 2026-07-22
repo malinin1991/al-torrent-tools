@@ -13,6 +13,13 @@
     .card { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
     .grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 12px; }
     .grid > .card { min-width: 0; overflow: hidden; }
+    .jobs-catalog-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 12px;
+    }
+    .job-catalog-card h3 { color: #9ad1ff; font-size: 1.05rem; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn { background: #2c4f76; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
     .btn-secondary { background: #3a3a3a; }
     .btn-danger { background: #823b3b; }

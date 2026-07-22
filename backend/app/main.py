@@ -15,6 +15,7 @@ from app.api.rest import job_runner, router as api_router
 from app.core.config import settings
 from app.db.models import ExtraUrl, Job, JobLog, QbClient, Setting, TorrentArchive, TorrentPipeline, TrackedRelease
 from app.db.session import SessionLocal, get_db
+from app.services.job_catalog import load_job_catalog
 from app.services.job_runner import (
     JobAlreadyRunningError,
     UnknownJobTypeError,
@@ -480,6 +481,15 @@ def jobs_page(
     return templates.TemplateResponse(request, "jobs.html", context)
 
 
+@app.get("/jobs/catalog/live", response_class=HTMLResponse)
+def jobs_catalog_live(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "partials/jobs_catalog.html",
+        {"job_catalog": load_job_catalog(db)},
+    )
+
+
 @app.get("/jobs/live", response_class=HTMLResponse)
 def jobs_live(
     request: Request,
@@ -523,6 +533,7 @@ def _jobs_page_context(
         "selected_job": selected_job,
         "job_type": job_type or "",
         "status": status or "",
+        "job_catalog": load_job_catalog(db),
     }
 
 
@@ -766,5 +777,12 @@ async def run_job_action(
         message = f"Джоб типа {exc.job_type} уже выполняется (id={exc.running_job_id})"
         return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
     job_runner.schedule_job(job.id)
-    message = f"Джоб {job.type} запущен в фоне (job_id={job.id}) — прогресс в списке ниже"
-    return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
+    message = f"Джоб {job.type} запущен в фоне (job_id={job.id})"
+    return templates.TemplateResponse(
+        request,
+        "partials/action_result.html",
+        {
+            "message": message,
+            "job_link": f"/jobs?job_type={job.type}&job_id={job.id}",
+        },
+    )

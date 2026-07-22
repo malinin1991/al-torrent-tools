@@ -70,6 +70,13 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
     telegram = await _probe_telegram(db)
 
     storage = resolve_torrent_storage_root()
+    from pathlib import Path
+
+    from app.jobs.orphan_cleanup import media_root_writable_status
+    from app.services.torrent_files_meta import resolve_media_root
+
+    media_root = resolve_media_root()
+    media_ok, media_detail = media_root_writable_status(media_root)
     return {
         "app": {
             "name": settings.app_name,
@@ -92,6 +99,12 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
         "storage": {
             "path": str(storage),
             "exists": storage.exists(),
+        },
+        "media": {
+            "path": str(media_root),
+            "exists": Path(media_root).is_dir(),
+            "writable": media_ok,
+            "detail": media_detail,
         },
         "libraries": [{"name": name, "version": _pkg_version(name)} for name in _APP_PACKAGES],
     }

@@ -13,7 +13,7 @@
       <button class="btn" type="submit">Orphan cleanup (dry-run)</button>
     </form>
     <form hx-post="/actions/run/orphan_cleanup" hx-target="#action-result" hx-swap="innerHTML"
-          onsubmit="return confirm('Удалить orphan-файлы с диска? Действие необратимо.');">
+          onsubmit="return confirm('Удалить orphan-медиа, мусор (.DS_Store и т.п.) и пустые папки? Действие необратимо.');">
       <input type="hidden" name="dry_run" value="false" />
       <input type="hidden" name="apply" value="true" />
       <button class="btn btn-danger" type="submit">Orphan cleanup (удалить)</button>
