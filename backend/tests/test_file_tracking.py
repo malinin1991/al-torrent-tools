@@ -439,112 +439,103 @@ def test_split_active_archived() -> None:
     assert len(archived) == 1 and archived[0].torrent_id == 2
 
 
-def test_file_status_for_ui_maps_kinds() -> None:
+def test_file_status_for_ui_disk_semantics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.services.file_tracker import file_status_for_ui
 
+    present = tmp_path / "present.mkv"
+    present.write_bytes(b"x")
+    missing = tmp_path / "missing.mkv"
+    incomplete = tmp_path / "dl.mkv"
+    (tmp_path / "dl.mkv.!qB").write_bytes(b"partial")
+
     assert (
-        file_status_for_ui(relative_path="a.mkv", full_path="/a.mkv", latest_kind="added")
+        file_status_for_ui(relative_path="m.mkv", full_path=str(missing), in_torrent=True)
         == "new"
     )
     assert (
-        file_status_for_ui(relative_path="a.mkv", full_path="/a.mkv", latest_kind="modified")
+        file_status_for_ui(relative_path="p.mkv", full_path=str(present), in_torrent=True)
+        == "ok"
+    )
+    assert (
+        file_status_for_ui(
+            relative_path="p.mkv",
+            full_path=str(present),
+            latest_kind="modified",
+            in_torrent=True,
+        )
         == "changed"
     )
     assert (
-        file_status_for_ui(relative_path="a.mkv", full_path="/a.mkv", latest_kind="removed")
+        file_status_for_ui(
+            relative_path="old.mkv",
+            full_path=str(present),
+            in_torrent=False,
+        )
         == "removed"
     )
+    # Новый .!qB без прежнего hash → new
     assert (
-        file_status_for_ui(relative_path="a.mkv", full_path="/a.mkv", latest_kind="missing")
-        == "missing"
-    )
-    assert file_status_for_ui(relative_path="a.mkv", full_path=None, latest_kind=None) == "ok"
-
-
-def test_file_status_for_ui_uses_latest_kind_not_stale_set() -> None:
-    """Stale removed/missing не перекрывают актуальный latest kind."""
-    from app.services.file_tracker import file_status_for_ui
-
-    # Раньше set(removed, added) давал removed; теперь берём только latest=added → new
-    assert (
-        file_status_for_ui(relative_path="a.mkv", full_path=None, latest_kind="added")
+        file_status_for_ui(
+            relative_path="dl.mkv",
+            full_path=str(incomplete),
+            disk_hash=None,
+            in_torrent=True,
+        )
         == "new"
     )
+    # Известный файл ушёл в .!qB → checking
     assert (
-        file_status_for_ui(relative_path="a.mkv", full_path=None, latest_kind="modified")
-        == "changed"
+        file_status_for_ui(
+            relative_path="dl.mkv",
+            full_path=str(incomplete),
+            disk_hash=SimpleNamespace(content_hash="abc", size=1, mtime=1.0),
+            in_torrent=True,
+        )
+        == "checking"
+    )
+    # Событие added не делает «новый», если файл уже на диске
+    assert (
+        file_status_for_ui(
+            relative_path="p.mkv",
+            full_path=str(present),
+            latest_kind="added",
+            in_torrent=True,
+        )
+        == "ok"
+    )
+    # Active hash job на известном файле → checking
+    assert (
+        file_status_for_ui(
+            relative_path="p.mkv",
+            full_path=str(present),
+            disk_hash=SimpleNamespace(content_hash="abc", size=1, mtime=1.0),
+            hash_job_active=True,
+            in_torrent=True,
+        )
+        == "checking"
     )
 
 
-def test_file_status_for_ui_checking_requires_active_hash_job(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_file_status_for_ui_checking_requires_prior_hash(tmp_path: Path) -> None:
     from app.services.file_tracker import file_status_for_ui
 
-    monkeypatch.setattr(
-        "app.services.file_tracker.path_exists_including_incomplete",
-        lambda _path: True,
-    )
+    present = tmp_path / "ep.mkv"
+    present.write_bytes(b"data")
     disk_hash = SimpleNamespace(content_hash="abc123", size=1, mtime=1.0)
-    # Без active job — не checking (даже при старом hash)
     assert (
         file_status_for_ui(
             relative_path="ep.mkv",
-            full_path="/media/ep.mkv",
-            latest_kind=None,
+            full_path=str(present),
             disk_hash=disk_hash,
             hash_job_active=False,
         )
         == "ok"
     )
-    # С active job + content_hash → checking
     assert (
         file_status_for_ui(
             relative_path="ep.mkv",
-            full_path="/media/ep.mkv",
-            latest_kind=None,
-            disk_hash=disk_hash,
-            hash_job_active=True,
-        )
-        == "checking"
-    )
-    # added → сразу new, не checking
-    assert (
-        file_status_for_ui(
-            relative_path="ep.mkv",
-            full_path="/media/ep.mkv",
-            latest_kind="added",
-            disk_hash=disk_hash,
-            hash_job_active=True,
-        )
-        == "new"
-    )
-    # modified → changed
-    assert (
-        file_status_for_ui(
-            relative_path="ep.mkv",
-            full_path="/media/ep.mkv",
-            latest_kind="modified",
-            disk_hash=disk_hash,
-            hash_job_active=True,
-        )
-        == "changed"
-    )
-    # Нет старого hash → не checking (новый файл)
-    assert (
-        file_status_for_ui(
-            relative_path="ep.mkv",
-            full_path="/media/ep.mkv",
-            latest_kind=None,
+            full_path=str(present),
             disk_hash=None,
-            hash_job_active=True,
-        )
-        == "ok"
-    )
-    assert (
-        file_status_for_ui(
-            relative_path="ep.mkv",
-            full_path="/media/ep.mkv",
-            latest_kind=None,
-            disk_hash=SimpleNamespace(content_hash="", size=0, mtime=0.0),
             hash_job_active=True,
         )
         == "ok"

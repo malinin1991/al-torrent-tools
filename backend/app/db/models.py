@@ -189,7 +189,7 @@ class CleanupRule(Base):
     message_contains: Mapped[str] = mapped_column(String(255), nullable=False)
     include_errored: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     delete_files: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    target_client: Mapped[str] = mapped_column(String(20), nullable=False, default="master")
+    target_client: Mapped[str] = mapped_column(String(20), nullable=False, default="both")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 

@@ -66,7 +66,7 @@ class CleanupRuleIn(BaseModel):
     message_contains: str
     include_errored: bool = True
     delete_files: bool = False
-    target_client: str = "master"
+    target_client: str = "both"
     enabled: bool = True
 
 

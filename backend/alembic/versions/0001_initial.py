@@ -148,7 +148,7 @@ def upgrade() -> None:
                 "message_contains": "Торрент не зарегистрирован",
                 "include_errored": True,
                 "delete_files": False,
-                "target_client": "master",
+                "target_client": "both",
                 "enabled": True,
             }
         ],

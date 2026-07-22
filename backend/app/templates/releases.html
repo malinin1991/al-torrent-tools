@@ -94,12 +94,11 @@
               <ul class="file-list" style="margin:6px 0 0; padding-left:16px; font-size:0.9em;">
                 {% for f in t.files %}
                 <li>
-                  {% if f.status == 'new' %}<span class="badge badge-ok">новый</span>
-                  {% elif f.status == 'changed' %}<span class="badge">изменён</span>
-                  {% elif f.status == 'checking' %}<span class="badge">проверка</span>
-                  {% elif f.status == 'removed' %}<span class="badge badge-warn">удалён</span>
-                  {% elif f.status == 'missing' %}<span class="badge badge-warn">missing</span>
-                  {% else %}<span class="badge muted">ok</span>{% endif %}
+                  {% if f.status == 'new' %}<span class="badge badge-ok" title="В торренте, нет на диске">новый</span>
+                  {% elif f.status == 'changed' %}<span class="badge badge-warn" title="Хеш изменился">изменён</span>
+                  {% elif f.status == 'checking' %}<span class="badge badge-warn" title="Ожидание проверки хеша">проверка</span>
+                  {% elif f.status == 'removed' %}<span class="badge badge-danger" title="На диске, нет в торренте">удалён</span>
+                  {% else %}<span class="badge badge-muted" title="В торренте и на диске">ok</span>{% endif %}
                   <code>{{ f.relative_path }}</code>
                 </li>
                 {% endfor %}

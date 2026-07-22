@@ -49,6 +49,22 @@ def test_cleanup_service_filters_rules_by_target_role() -> None:
     assert seen_targets == ["master", "master"]
 
 
+def test_cleanup_slave_warns_when_only_master_rules() -> None:
+    master_rule = _rule(target_client="master", rule_id=1)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [master_rule]
+
+    service = TorrentCleanupService(db=db, job_id=1)
+    logs: list[str] = []
+    service._get_clients_by_target = lambda _t: []  # type: ignore[method-assign]
+    service._check_stop = lambda: None  # type: ignore[method-assign]
+    service._add_log = lambda msg, level="info": logs.append(msg)  # type: ignore[method-assign]
+
+    stats = service.run(dry_run=True, target_role="slave")
+    assert stats == {"checked": 0, "matched": 0, "deleted": 0}
+    assert any("нет применимых правил" in msg and "slave" in msg for msg in logs)
+
+
 def test_prune_old_jobs_keeps_last_n_per_type() -> None:
     assert KEEP_RUNS_PER_TYPE == 100
 

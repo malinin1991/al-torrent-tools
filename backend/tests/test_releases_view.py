@@ -81,32 +81,95 @@ def test_recent_events_keeps_only_latest_kind_per_path() -> None:
             id=2,
             torrent_id=10,
             relative_path="ep.mkv",
-            full_path=None,
+            full_path="/media/ep.mkv",
             kind="added",
         ),
         SimpleNamespace(
             id=1,
             torrent_id=10,
             relative_path="ep.mkv",
-            full_path=None,
+            full_path="/media/ep.mkv",
             kind="removed",
         ),
     ]
     db.scalars.return_value.all.return_value = rows
 
     result = _recent_events_by_torrent(db, [1])
-    assert result[10]["ep.mkv"] == "added"
+    assert result[10].latest_by_path["ep.mkv"] == "added"
+
+
+def test_recent_events_collects_removed_candidates() -> None:
+    db = MagicMock()
+    rows = [
+        SimpleNamespace(
+            id=3,
+            torrent_id=10,
+            relative_path="fille4.mkv",
+            full_path="/media/fille4.mkv",
+            kind="removed",
+        ),
+        SimpleNamespace(
+            id=2,
+            torrent_id=10,
+            relative_path=None,
+            full_path="/media/orphan.mkv",
+            kind="orphan",
+        ),
+        SimpleNamespace(
+            id=1,
+            torrent_id=10,
+            relative_path="ok.mkv",
+            full_path="/media/ok.mkv",
+            kind="added",
+        ),
+    ]
+    db.scalars.return_value.all.return_value = rows
+    result = _recent_events_by_torrent(db, [1])
+    assert ("fille4.mkv", "/media/fille4.mkv") in result[10].removed_candidates
+    assert ("/media/orphan.mkv", "/media/orphan.mkv") in result[10].removed_candidates
+    assert all(c[0] != "ok.mkv" for c in result[10].removed_candidates)
+
+
+def test_recent_events_skips_removed_superseded_by_added() -> None:
+    """После повторного added тот же путь не должен оставаться кандидатом «удалён»."""
+    db = MagicMock()
+    rows = [
+        SimpleNamespace(
+            id=2,
+            torrent_id=10,
+            relative_path="ep.mkv",
+            full_path="/media/ep.mkv",
+            kind="added",
+        ),
+        SimpleNamespace(
+            id=1,
+            torrent_id=10,
+            relative_path="ep.mkv",
+            full_path="/media/ep.mkv",
+            kind="removed",
+        ),
+    ]
+    db.scalars.return_value.all.return_value = rows
+    result = _recent_events_by_torrent(db, [1])
+    assert result[10].latest_by_path["ep.mkv"] == "added"
+    assert result[10].removed_candidates == []
 
 
 def test_build_file_rows_checking_only_with_active_hash_job(monkeypatch) -> None:
     def _status(**kwargs):  # noqa: ANN003
-        if kwargs.get("latest_kind") == "added":
-            return "new"
+        if not kwargs.get("in_torrent", True):
+            return "removed"
         if kwargs.get("hash_job_active") and kwargs.get("disk_hash"):
             return "checking"
+        if kwargs.get("latest_kind") == "modified":
+            return "changed"
         return "ok"
 
     monkeypatch.setattr("app.services.releases_view.file_status_for_ui", _status)
+    monkeypatch.setattr(
+        "app.services.releases_view.path_exists_including_incomplete",
+        lambda path: str(path) == "/media/gone.mkv",
+    )
     files = [
         SimpleNamespace(
             relative_path="ep.mkv",
@@ -123,8 +186,16 @@ def test_build_file_rows_checking_only_with_active_hash_job(monkeypatch) -> None
     without_job = _build_file_rows(files, {}, disk, hash_job_active=False)
     assert without_job[0].status == "ok"
 
-    added = _build_file_rows(files, {"ep.mkv": "added"}, disk, hash_job_active=True)
-    assert added[0].status == "new"
+    rows = _build_file_rows(
+        files,
+        {},
+        disk,
+        removed_candidates=[("gone.mkv", "/media/gone.mkv"), ("absent.mkv", "/media/absent.mkv")],
+    )
+    assert len(rows) == 2
+    assert rows[1].status == "removed"
+    assert rows[1].relative_path == "gone.mkv"
+    assert rows[1].in_torrent is False
 
 
 def test_info_hashes_with_active_hash_job_filters_wanted() -> None:

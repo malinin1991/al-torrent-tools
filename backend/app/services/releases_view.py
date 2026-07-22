@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -18,8 +19,9 @@ from app.db.models import (
     TorrentPipeline,
     TrackedRelease,
 )
-from app.services.file_tracker import file_status_for_ui
+from app.services.file_tracker import KIND_ORPHAN, KIND_REMOVED, file_status_for_ui
 from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
+from app.services.torrent_files_meta import path_exists_including_incomplete
 from app.services.torrent_qb_meta import (
     build_release_torrents_url,
     genres_from_quality_json,
@@ -28,6 +30,7 @@ from app.services.torrent_qb_meta import (
 
 # События новее этого окна влияют на бейдж в UI.
 _EVENT_WINDOW = timedelta(days=30)
+_REMOVED_KINDS = frozenset({KIND_REMOVED, KIND_ORPHAN})
 
 
 @dataclass
@@ -36,7 +39,16 @@ class ReleaseFileRow:
     size: int
     selected: bool
     full_path: str | None
-    status: str  # new|changed|removed|missing|checking|ok
+    status: str  # new|changed|removed|checking|ok
+    in_torrent: bool = True
+
+
+@dataclass
+class _TorrentEvents:
+    """latest kind по пути + кандидаты «удалён» (нет в торренте, есть на диске)."""
+
+    latest_by_path: dict[str, str] = field(default_factory=dict)
+    removed_candidates: list[tuple[str, str | None]] = field(default_factory=list)
 
 
 @dataclass
@@ -163,6 +175,10 @@ def list_release_groups(
         for f in files
         if f.full_path
     ]
+    for events in events_by_torrent.values():
+        for _rel, full in events.removed_candidates:
+            if full:
+                all_full_paths.append(full)
     hashes_by_path = _disk_hashes_by_path(db, all_full_paths)
     active_hash_jobs = (
         _info_hashes_with_active_hash_job(db, list(files_by_hash.keys()))
@@ -193,11 +209,13 @@ def list_release_groups(
         for item in items:
             status, error = pipeline_by_hash.get(item.info_hash.lower(), (None, None))
             info_hash_key = item.info_hash.lower()
+            torrent_events = events_by_torrent.get(item.torrent_id) or _TorrentEvents()
             file_rows = _build_file_rows(
                 files_by_hash.get(info_hash_key, []),
-                events_by_torrent.get(item.torrent_id, {}),
+                torrent_events.latest_by_path,
                 hashes_by_path,
                 hash_job_active=info_hash_key in active_hash_jobs,
+                removed_candidates=torrent_events.removed_candidates,
             )
             row = ReleaseTorrentRow(
                 archive_id=item.id,
@@ -264,9 +282,11 @@ def _build_file_rows(
     hashes_by_path: dict[str, DiskFileHash] | None = None,
     *,
     hash_job_active: bool = False,
+    removed_candidates: list[tuple[str, str | None]] | None = None,
 ) -> list[ReleaseFileRow]:
     hash_map = hashes_by_path or {}
     rows: list[ReleaseFileRow] = []
+    seen_keys: set[str] = set()
     for item in files:
         latest_kind = events_by_path.get(item.relative_path)
         disk_hash = hash_map.get(item.full_path) if item.full_path else None
@@ -276,15 +296,49 @@ def _build_file_rows(
                 size=int(item.size or 0),
                 selected=bool(item.selected),
                 full_path=item.full_path,
+                in_torrent=True,
                 status=file_status_for_ui(
                     relative_path=item.relative_path,
                     full_path=item.full_path,
                     latest_kind=latest_kind,
                     disk_hash=disk_hash,
                     hash_job_active=hash_job_active,
+                    in_torrent=True,
                 ),
             )
         )
+        seen_keys.add(item.relative_path)
+        if item.full_path:
+            seen_keys.add(item.full_path)
+
+    for display_path, full_path in removed_candidates or []:
+        key = display_path or full_path or ""
+        if not key or key in seen_keys:
+            continue
+        if full_path and full_path in seen_keys:
+            continue
+        if not full_path or not path_exists_including_incomplete(Path(full_path)):
+            continue
+        disk_hash = hash_map.get(full_path)
+        rows.append(
+            ReleaseFileRow(
+                relative_path=display_path or Path(full_path).name,
+                size=0,
+                selected=False,
+                full_path=full_path,
+                in_torrent=False,
+                status=file_status_for_ui(
+                    relative_path=display_path or Path(full_path).name,
+                    full_path=full_path,
+                    latest_kind=KIND_REMOVED,
+                    disk_hash=disk_hash,
+                    hash_job_active=False,
+                    in_torrent=False,
+                ),
+            )
+        )
+        seen_keys.add(key)
+        seen_keys.add(full_path)
     return rows
 
 
@@ -318,8 +372,8 @@ def _files_by_hash(db: Session, hashes: list[str]) -> dict[str, list[TorrentFile
 def _recent_events_by_torrent(
     db: Session,
     release_ids: list[int],
-) -> dict[int, dict[str, str]]:
-    """torrent_id → relative_path → latest kind в окне (не set всех kinds)."""
+) -> dict[int, _TorrentEvents]:
+    """torrent_id → latest kind по пути + кандидаты removed/orphan для UI."""
     if not release_ids:
         return {}
     since = datetime.utcnow() - _EVENT_WINDOW
@@ -331,17 +385,29 @@ def _recent_events_by_torrent(
         )
         .order_by(FileChangeEvent.id.desc())
     ).all()
-    result: dict[int, dict[str, str]] = {}
+    result: dict[int, _TorrentEvents] = {}
+    removed_seen: dict[int, set[str]] = {}
     for row in rows:
         if row.torrent_id is None:
             continue
+        bucket = result.setdefault(row.torrent_id, _TorrentEvents())
         path_key = row.relative_path or row.full_path or ""
-        if not path_key:
+        if path_key and path_key not in bucket.latest_by_path:
+            bucket.latest_by_path[path_key] = row.kind
+        if row.kind not in _REMOVED_KINDS:
             continue
-        by_path = result.setdefault(row.torrent_id, {})
-        # Первый встретившийся после id DESC — актуальный kind.
-        if path_key not in by_path:
-            by_path[path_key] = row.kind
+        # id DESC: если уже видели более новое non-removed событие — путь снова в торренте.
+        if path_key and bucket.latest_by_path.get(path_key) not in _REMOVED_KINDS:
+            continue
+        display = row.relative_path or row.full_path or ""
+        if not display:
+            continue
+        seen = removed_seen.setdefault(row.torrent_id, set())
+        dedupe_key = row.full_path or display
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        bucket.removed_candidates.append((display, row.full_path))
     return result
 
 

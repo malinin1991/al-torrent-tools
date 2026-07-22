@@ -206,6 +206,8 @@ class TorrentCleanupService:
         checked = 0
         matched = 0
         deleted = 0
+        applied_rules = 0
+        skipped_role = 0
         for rule in rules:
             self._check_stop()
             if rule.target_client not in {"master", "slave", "both"}:
@@ -215,13 +217,18 @@ class TorrentCleanupService:
                 )
                 continue
             if target_role is not None and rule.target_client not in {target_role, "both"}:
+                skipped_role += 1
                 continue
             clients_target = target_role if target_role is not None else rule.target_client
             clients = self._get_clients_by_target(clients_target)
             if not clients:
-                self._add_log(f"Cleanup: нет активных клиентов для правила {rule.id}")
+                self._add_log(
+                    f"Cleanup: нет активных клиентов role={clients_target!r} "
+                    f"для правила {rule.id} ({rule.name})"
+                )
                 continue
 
+            applied_rules += 1
             for db_client in clients:
                 self._check_stop()
                 client = qbittorrentapi.Client(
@@ -268,4 +275,16 @@ class TorrentCleanupService:
                     self._check_stop()
                     client.torrents_delete(delete_files=False, torrent_hashes=hashes_delete_files_false)
                     deleted += len(hashes_delete_files_false)
+
+        if target_role is not None and applied_rules == 0:
+            self._add_log(
+                f"Cleanup: для роли {target_role} нет применимых правил "
+                f"(всего активных={len(rules)}, пропущено по target_client={skipped_role}). "
+                f"Нужен target_client={target_role!r} или 'both'.",
+                "warning",
+            )
+        elif skipped_role:
+            self._add_log(
+                f"Cleanup: пропущено правил из‑за target_client≠{target_role}/both: {skipped_role}"
+            )
         return {"checked": checked, "matched": matched, "deleted": deleted}

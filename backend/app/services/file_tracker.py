@@ -28,6 +28,7 @@ from app.services.torrent_files_meta import (
     extract_qb_content_path,
     extract_qb_file_priorities,
     extract_qb_save_path,
+    is_incomplete_path,
     is_under_media_root,
     parse_torrent_file_list,
     path_exists_including_incomplete,
@@ -531,24 +532,40 @@ def file_status_for_ui(
     latest_kind: str | None = None,
     disk_hash: Any | None = None,
     hash_job_active: bool = False,
+    in_torrent: bool = True,
 ) -> str:
-    """Бейдж для UI: latest event kind, иначе checking (при active hash job) / ok.
+    """Бейдж для UI по снимку торрент ↔ диск ↔ хеш.
 
-    checking — только если есть pending/running hash_torrent и DiskFileHash с content_hash
-    (без FS-stat на list page).
+    - new — в торренте, готового файла нет (в т.ч. новый .!qB без прежнего hash)
+    - checking — в торренте, .!qB и файл уже был в базе (content_hash), или идёт hash_torrent
+    - changed — в торренте, на диске, hash_torrent зафиксировал расхождение хешей
+    - removed — нет в составе торрента, но файл есть на диске
+    - ok — в торренте, на диске, без расхождения / gate без изменений
     """
-    if latest_kind == KIND_REMOVED:
-        return "removed"
-    if latest_kind == KIND_MISSING:
-        return "missing"
-    if latest_kind == KIND_ADDED:
+    del relative_path  # сохраняем сигнатуру для вызывающих
+    path = Path(full_path) if full_path else None
+    on_disk_complete = bool(path is not None and path.is_file() and not path.name.endswith(".!qB"))
+    incomplete = bool(path is not None and is_incomplete_path(path) and not on_disk_complete)
+    on_disk_any = on_disk_complete or incomplete
+
+    if not in_torrent:
+        return "removed" if on_disk_any else "ok"
+
+    if incomplete:
+        # Перекачка известного файла → ждём hash; новый .!qB → сразу new.
+        if _has_stored_content_hash(disk_hash):
+            return "checking"
         return "new"
+
+    if not on_disk_complete:
+        return "new"
+
     if latest_kind == KIND_MODIFIED:
         return "changed"
-    if full_path and not path_exists_including_incomplete(Path(full_path)):
-        return "missing"
+
     if hash_job_active and _has_stored_content_hash(disk_hash):
         return "checking"
+
     return "ok"
 
 
