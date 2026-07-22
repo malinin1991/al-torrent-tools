@@ -18,14 +18,23 @@
       <input type="hidden" name="apply" value="true" />
       <button class="btn btn-danger" type="submit">Orphan cleanup (удалить)</button>
     </form>
-    <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML">
+    <form hx-post="/actions/run/cleanup_master" hx-target="#action-result" hx-swap="innerHTML">
       <input type="hidden" name="dry_run" value="true" />
-      <button class="btn" type="submit">Cleanup (dry-run)</button>
+      <button class="btn" type="submit">Cleanup Master (dry-run)</button>
     </form>
-    <form hx-post="/actions/run/cleanup" hx-target="#action-result" hx-swap="innerHTML"
-          onsubmit="return confirm('Удалить торренты по cleanup-правилам?');">
+    <form hx-post="/actions/run/cleanup_master" hx-target="#action-result" hx-swap="innerHTML"
+          onsubmit="return confirm('Удалить торренты на master по cleanup-правилам?');">
       <input type="hidden" name="dry_run" value="false" />
-      <button class="btn btn-danger" type="submit">Cleanup (удалить)</button>
+      <button class="btn btn-danger" type="submit">Cleanup Master (удалить)</button>
+    </form>
+    <form hx-post="/actions/run/cleanup_slave" hx-target="#action-result" hx-swap="innerHTML">
+      <input type="hidden" name="dry_run" value="true" />
+      <button class="btn" type="submit">Cleanup Slave (dry-run)</button>
+    </form>
+    <form hx-post="/actions/run/cleanup_slave" hx-target="#action-result" hx-swap="innerHTML"
+          onsubmit="return confirm('Удалить торренты на slave по cleanup-правилам?');">
+      <input type="hidden" name="dry_run" value="false" />
+      <button class="btn btn-danger" type="submit">Cleanup Slave (удалить)</button>
     </form>
   </div>
   <div id="action-result" class="muted" style="margin-top: 10px;"></div>

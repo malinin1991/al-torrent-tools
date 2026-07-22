@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.models import CleanupRule, ExtraUrl, Job, JobLog, QbClient, Setting
 from app.db.session import get_db
 from app.jobs.cleanup import run_cleanup
+from app.jobs.cleanup_logs import run_cleanup_logs
 from app.jobs.full_sync import run_full_sync
 from app.jobs.hash_backfill import run_hash_backfill
 from app.jobs.hash_torrent import run_hash_torrent
@@ -31,7 +32,9 @@ router = APIRouter(prefix="/api")
 job_runner = JobRunner()
 job_runner.register("ongoing", run_ongoing)
 job_runner.register("full_sync", run_full_sync)
-job_runner.register("cleanup", run_cleanup)
+job_runner.register("cleanup_master", run_cleanup)
+job_runner.register("cleanup_slave", run_cleanup)
+job_runner.register("cleanup_logs", run_cleanup_logs)
 job_runner.register("pipeline_reconcile", run_pipeline_reconcile)
 job_runner.register("waiting_master_retry", run_waiting_master_retry)
 job_runner.register("waiting_slave_retry", run_waiting_slave_retry)
@@ -103,8 +106,18 @@ def list_jobs(
 
 @router.post("/jobs")
 def create_job(payload: JobCreateIn, db: Session = Depends(get_db)) -> dict:
+    job_type = payload.type
+    params = dict(payload.params or {})
+    # Legacy: type=cleanup → cleanup_master.
+    if job_type == "cleanup":
+        job_type = "cleanup_master"
+        params.setdefault("target_role", "master")
+    elif job_type == "cleanup_master":
+        params.setdefault("target_role", "master")
+    elif job_type == "cleanup_slave":
+        params.setdefault("target_role", "slave")
     try:
-        job = job_runner.create_job(db, payload.type, payload.params)
+        job = job_runner.create_job(db, job_type, params)
     except UnknownJobTypeError as exc:
         raise HTTPException(
             status_code=400,
@@ -339,9 +352,24 @@ async def run_full_sync_job(db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/jobs/cleanup/run")
-async def run_cleanup_job(dry_run: bool = True, db: Session = Depends(get_db)) -> dict:
+async def run_cleanup_job(
+    dry_run: bool = True,
+    target: str = Query(default="master"),
+    db: Session = Depends(get_db),
+) -> dict:
     # Удаление только при CLEANUP_ALLOW_DELETE=true и ?dry_run=false; иначе только отчёт.
-    job = _create_and_run_job(db, "cleanup", {"dry_run": dry_run})
+    role = (target or "master").strip().lower()
+    if role not in {"master", "slave"}:
+        raise HTTPException(status_code=400, detail="target должен быть master или slave")
+    job_type = f"cleanup_{role}"
+    job = _create_and_run_job(db, job_type, {"dry_run": dry_run, "target_role": role})
+    job_runner.schedule_job(job.id)
+    return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
+
+
+@router.post("/jobs/cleanup-logs/run")
+async def run_cleanup_logs_job(db: Session = Depends(get_db)) -> dict:
+    job = _create_and_run_job(db, "cleanup_logs", {})
     job_runner.schedule_job(job.id)
     return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
 

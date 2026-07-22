@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.models import JobLog, TorrentPipeline
 from app.providers.anilibria.client import AniLibriaClient
 from app.services.anilibria_auth import ensure_passkey_stored
+from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import (
     ensure_announce_passkey,
@@ -19,6 +20,21 @@ from app.services.qbittorrent import (
     test_qb_connection,
 )
 from app.services.runtime_settings import build_anilibria_client
+
+
+def _check_stop(db: Session, job_id: int | None) -> None:
+    if job_id is None:
+        return
+    if is_stop_requested(db, job_id):
+        db.add(
+            JobLog(
+                job_id=job_id,
+                level="warning",
+                message="waiting_master_retry: остановка по запросу",
+            )
+        )
+        db.commit()
+        raise JobStopRequested()
 
 
 async def run_waiting_master_retry(db: Session, job_id: int, params: dict[str, Any]) -> None:
@@ -96,6 +112,7 @@ async def retry_waiting_master_pipelines(db: Session, *, job_id: int | None = No
     # Recovery: failed из‑за connection → если уже на master, вернуть в master_added;
     # если нет — повторить add (как waiting_master).
     for pipeline in failed_recoverable:
+        _check_stop(db, job_id)
         stats["checked"] += 1
         try:
             recovered = await _recover_failed_pipeline(
@@ -107,6 +124,8 @@ async def retry_waiting_master_pipelines(db: Session, *, job_id: int | None = No
             )
             if not recovered:
                 stats["still_waiting"] += 1
+        except JobStopRequested:
+            raise
         except Exception as exc:
             if should_wait_for_qb(exc):
                 stats["still_waiting"] += 1
@@ -119,6 +138,7 @@ async def retry_waiting_master_pipelines(db: Session, *, job_id: int | None = No
                 db.rollback()
 
     for pipeline in waiting:
+        _check_stop(db, job_id)
         stats["checked"] += 1
         try:
             exists = await torrent_still_in_api(al_client, pipeline)
@@ -132,6 +152,8 @@ async def retry_waiting_master_pipelines(db: Session, *, job_id: int | None = No
 
             await _add_pipeline_to_master(pipeline_service, al_client, qb, pipeline)
             stats["submitted"] += 1
+        except JobStopRequested:
+            raise
         except Exception as exc:
             if should_wait_for_qb(exc):
                 pipeline_service.mark_waiting_master(

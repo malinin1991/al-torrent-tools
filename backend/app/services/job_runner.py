@@ -19,12 +19,15 @@ logger = logging.getLogger(__name__)
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
+STATUS_STOPPING = "stopping"
 STATUS_SUCCESS = "success"
 STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 
 # После Ctrl+C / рестарта остаются в БД и блокируют новые джобы того же типа.
-_STALE_STATUSES = (STATUS_RUNNING, STATUS_PENDING)
+_STALE_STATUSES = (STATUS_RUNNING, STATUS_PENDING, STATUS_STOPPING)
+# Слоты, при которых нельзя создать второй джоб того же типа.
+_ACTIVE_STATUSES = (STATUS_PENDING, STATUS_RUNNING, STATUS_STOPPING)
 
 # Session-level advisory lock namespace: живой процесс держит lock на job_id.
 # После kill соединение рвётся → lock свободен → orphan reclaim сразу отменяет джоб.
@@ -50,12 +53,24 @@ class JobAlreadyRunningError(Exception):
         super().__init__(f"Джоб типа {job_type} уже выполняется (id={running_job_id})")
 
 
+class JobStopRequested(Exception):
+    """Кооперативная остановка по запросу UI (статус stopping)."""
+
+
 class UnknownJobTypeError(Exception):
     """Тип джоба не зарегистрирован в JobRunner."""
 
     def __init__(self, job_type: str) -> None:
         self.job_type = job_type
         super().__init__(f"Неизвестный тип джоба: {job_type}")
+
+
+class JobStopError(Exception):
+    """Нельзя запросить остановку (неверный статус / нет джоба)."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
 
 
 def _advisory_lock_key(job_type: str) -> int:
@@ -129,13 +144,55 @@ def cancel_jobs_by_ids(
 
 
 def _job_last_activity_at(db: Session, job: Job) -> datetime | None:
-    """Якорь «живости»: для running — последний лог, иначе started_at/created_at."""
-    if job.status == STATUS_RUNNING:
+    """Якорь «живости»: для running/stopping — последний лог, иначе started_at/created_at."""
+    if job.status in (STATUS_RUNNING, STATUS_STOPPING):
         last_log_at = db.scalar(select(func.max(JobLog.created_at)).where(JobLog.job_id == job.id))
         if last_log_at is not None:
             return last_log_at
         return job.started_at or job.created_at
     return job.created_at or job.started_at
+
+
+def is_stop_requested(db: Session, job_id: int) -> bool:
+    """True, если UI запросил Stop (статус stopping)."""
+    job = db.get(Job, job_id)
+    if job is None:
+        return False
+    db.refresh(job)
+    return job.status == STATUS_STOPPING
+
+
+def request_stop(db: Session, job_id: int) -> Job:
+    """Перевести running → stopping. Иначе JobStopError."""
+    job = db.get(Job, job_id)
+    if job is None:
+        raise JobStopError(f"Джоб {job_id} не найден")
+    if job.status != STATUS_RUNNING:
+        raise JobStopError(f"Остановка возможна только для running (сейчас {job.status})")
+    job.status = STATUS_STOPPING
+    db.add(
+        JobLog(
+            job_id=job.id,
+            level="warning",
+            message="Запрошена остановка джоба (stopping)",
+        )
+    )
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def request_stop_latest_running(db: Session, job_type: str) -> Job:
+    """Остановить последний running-джоб данного типа."""
+    job = db.scalar(
+        select(Job)
+        .where(Job.type == job_type, Job.status == STATUS_RUNNING)
+        .order_by(Job.id.desc())
+        .limit(1)
+    )
+    if job is None:
+        raise JobStopError(f"Нет running-джоба типа {job_type}")
+    return request_stop(db, job.id)
 
 
 def _try_run_lock(db: Session, job_id: int) -> bool:
@@ -191,7 +248,7 @@ def reclaim_orphan_jobs(
             cancelled_ids.append(job.id)
             continue
 
-        # RUNNING: lock свободен только если runner мёртв.
+        # RUNNING/STOPPING: lock свободен только если runner мёртв.
         if not _try_run_lock(db, job.id):
             continue
         try:
@@ -230,7 +287,7 @@ def reclaim_stale_jobs(
             continue
         # Не отменяем живой джоб другого процесса (lock занят).
         held_lock = False
-        if job.status == STATUS_RUNNING:
+        if job.status in (STATUS_RUNNING, STATUS_STOPPING):
             if not _try_run_lock(db, job.id):
                 continue
             held_lock = True
@@ -283,7 +340,7 @@ class JobRunner:
             unique_value = str(params.get(unique_param) or "").strip().lower()
             active = list(
                 db.scalars(
-                    select(Job).where(Job.type == job_type, Job.status.in_((STATUS_RUNNING, STATUS_PENDING)))
+                    select(Job).where(Job.type == job_type, Job.status.in_(_ACTIVE_STATUSES))
                 ).all()
             )
             for existing in active:
@@ -294,7 +351,7 @@ class JobRunner:
         else:
             running = db.scalar(
                 select(Job)
-                .where(Job.type == job_type, Job.status.in_((STATUS_RUNNING, STATUS_PENDING)))
+                .where(Job.type == job_type, Job.status.in_(_ACTIVE_STATUSES))
                 .limit(1)
             )
             if running is not None:
@@ -333,7 +390,15 @@ class JobRunner:
         final_error: str | None = None
         try:
             await self._handlers[job.type](db, job.id, job.params_json or {})
+            db.refresh(job)
+            # Короткий джоб мог завершиться после Stop, но до чекпоинта в handler.
+            if job.status == STATUS_STOPPING:
+                raise JobStopRequested()
             self.add_log(db, job.id, "Джоб завершен успешно")
+        except JobStopRequested:
+            final_status = STATUS_CANCELLED
+            final_error = "Остановлено пользователем"
+            self.add_log(db, job.id, "Джоб остановлен по запросу", level="warning")
         except asyncio.CancelledError:
             final_status = STATUS_CANCELLED
             final_error = "Прервано (Ctrl+C / shutdown)"
@@ -346,6 +411,11 @@ class JobRunner:
         finally:
             try:
                 db.refresh(job)
+                # UI Stop → stopping: после handler (или JobStopRequested) финализируем cancelled.
+                if job.status == STATUS_STOPPING:
+                    final_status = STATUS_CANCELLED
+                    if final_error is None:
+                        final_error = "Остановлено пользователем"
                 # Reclaim/shutdown мог уже пометить cancelled — не воскрешаем слот.
                 if job.status != STATUS_CANCELLED or final_status == STATUS_CANCELLED:
                     job.status = final_status

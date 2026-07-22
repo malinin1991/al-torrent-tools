@@ -37,7 +37,11 @@ def _touch_health() -> None:
 
 
 async def _run_by_type(job_type: str) -> None:
-    params = {"dry_run": True} if job_type == "cleanup" else {}
+    params: dict = {}
+    if job_type == "cleanup_master":
+        params = {"dry_run": True, "target_role": "master"}
+    elif job_type == "cleanup_slave":
+        params = {"dry_run": True, "target_role": "slave"}
     with SessionLocal() as db:
         try:
             job = job_runner.create_job(db, job_type, params)
@@ -189,8 +193,26 @@ async def main() -> None:
         _run_by_type,
         "interval",
         seconds=cleanup_interval,
-        args=["cleanup"],
-        id="cleanup",
+        args=["cleanup_master"],
+        id="cleanup_master",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _run_by_type,
+        "interval",
+        seconds=cleanup_interval,
+        args=["cleanup_slave"],
+        id="cleanup_slave",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _run_by_type,
+        "interval",
+        seconds=86_400,
+        args=["cleanup_logs"],
+        id="cleanup_logs",
         max_instances=1,
         coalesce=True,
     )
@@ -262,9 +284,9 @@ async def main() -> None:
             _reschedule_if_needed(
                 scheduler, "ongoing", _setting_int("ongoing_interval_sec", settings.ongoing_interval_sec)
             )
-            _reschedule_if_needed(
-                scheduler, "cleanup", _setting_int("cleanup_interval_sec", settings.cleanup_interval_sec)
-            )
+            cleanup_sec = _setting_int("cleanup_interval_sec", settings.cleanup_interval_sec)
+            _reschedule_if_needed(scheduler, "cleanup_master", cleanup_sec)
+            _reschedule_if_needed(scheduler, "cleanup_slave", cleanup_sec)
             _reschedule_if_needed(
                 scheduler,
                 "pipeline_reconcile",

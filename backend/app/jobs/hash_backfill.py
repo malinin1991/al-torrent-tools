@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.models import Job, JobLog, Setting
 from app.services.file_hasher import clamp_hash_workers
+from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.qb_inventory import (
     build_inventory,
     connect_master,
@@ -115,6 +116,9 @@ async def run_hash_backfill(db: Session, job_id: int, params: dict[str, Any]) ->
         f"hash_backfill: workers={workers}, files={progress_total}",
     )
     for folder in folder_keys:
+        if is_stop_requested(db, job_id):
+            _add_log(db, job_id, "hash_backfill: остановка по запросу", "warning")
+            raise JobStopRequested()
         _add_log(db, job_id, f"hash_backfill: папка {folder}")
         stats = hash_inventory_files(
             db,

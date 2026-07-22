@@ -113,6 +113,51 @@ def test_find_empty_dirs_deepest_first(tmp_path: Path) -> None:
     assert media.resolve() not in found
 
 
+def test_paths_total_size_and_orphan_summary_includes_size(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from app.jobs.orphan_cleanup import paths_total_size
+    from app.services.file_hasher import format_file_size
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    orphan = media / "big.mkv"
+    orphan.write_bytes(b"x" * (2 * 1024 * 1024))  # 2 MiB
+    junk = media / ".DS_Store"
+    junk.write_bytes(b"j" * 100)
+
+    assert paths_total_size([orphan]) == 2 * 1024 * 1024
+
+    logs: list[str] = []
+    db = MagicMock()
+    monkeypatch.setattr("app.jobs.orphan_cleanup.resolve_media_root", lambda: media)
+    monkeypatch.setattr("app.jobs.orphan_cleanup.connect_master", lambda _db: MagicMock())
+    monkeypatch.setattr(
+        "app.jobs.orphan_cleanup.build_inventory",
+        lambda *_a, **_k: InventoryResult(valid_hashes={"a" * 40}, files=[]),
+    )
+    # Пустой known → orphan-медиа не сканируем; подменим find_* напрямую.
+    monkeypatch.setattr("app.jobs.orphan_cleanup.find_orphan_files", lambda **_: [orphan])
+    monkeypatch.setattr("app.jobs.orphan_cleanup.find_junk_files", lambda **_: [junk])
+    monkeypatch.setattr("app.jobs.orphan_cleanup.find_junk_dirs", lambda **_: [])
+    monkeypatch.setattr("app.jobs.orphan_cleanup.find_empty_dirs", lambda **_: [])
+    monkeypatch.setattr(
+        "app.jobs.orphan_cleanup.known_paths_for_orphan_scan",
+        lambda *_a, **_k: ({media / "known.mkv"}, 0),
+    )
+    monkeypatch.setattr(
+        "app.jobs.orphan_cleanup._add_log",
+        lambda _db, _job_id, msg, level="info": logs.append(msg),
+    )
+    monkeypatch.setattr("app.jobs.orphan_cleanup.settings.cleanup_allow_delete", True)
+
+    asyncio.run(run_orphan_cleanup(db, 1, {"dry_run": True, "apply": False}))
+
+    expected = format_file_size(2 * 1024 * 1024 + 100)
+    assert any(f"размер кандидатов={expected}" in msg for msg in logs)
+    assert any("dry-run" in msg and "кандидаты" in msg for msg in logs)
+
+
 def test_orphan_cleanup_apply_removes_junk_and_empty_dirs(
     monkeypatch, tmp_path: Path
 ) -> None:

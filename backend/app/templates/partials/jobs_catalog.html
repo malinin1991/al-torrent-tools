@@ -18,66 +18,121 @@
       </div>
       <p class="muted" style="margin:10px 0;font-size:0.9rem;">{{ d.description }}</p>
 
-      <p style="margin:0 0 8px;font-size:0.9rem;">
+      <div class="job-card-meta">
         {% if job %}
-        <a href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}">#{{ job.id }}</a>
-        · старт:
-        {% if job.started_at %}
-        <time class="local-time" datetime="{{ job.started_at|as_utc_iso }}">{{ job.started_at }}</time>
-        {% else %}-{% endif %}
-        · конец:
-        {% if job.finished_at %}
-        <time class="local-time" datetime="{{ job.finished_at|as_utc_iso }}">{{ job.finished_at }}</time>
-        {% else %}-{% endif %}
+        <div class="job-meta-line">
+          <a href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}">#{{ job.id }}</a>
+        </div>
+        <div class="job-meta-line">
+          <span class="job-meta-icon" title="Начало" aria-label="Начало">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 5.5c.8 0 1.5.7 1.5 1.5s-.7 1.5-1.5 1.5S12 7.8 12 7s.7-1.5 1.5-1.5zM9.8 21l1-5.2L9 14v-3.5c0-.3.1-.5.3-.7l3.2-2.9c.3-.3.7-.4 1.1-.3.5.1.9.5 1 .9l.6 2.4 2.1 1.5v5.1h-1.5v-4.1l-1.7-1.2-.8 4.2 2.1 2.1V21h-1.8l-1.6-1.6-.9 4.6H9.8zM7.5 14.2l1.3-1.1.8 2.1-2.6 3.2H5.2l2.3-4.2z"/></svg>
+          </span>
+          {% if job.started_at %}
+          <time class="local-time" datetime="{{ job.started_at|as_utc_iso }}">{{ job.started_at }}</time>
+          {% else %}—{% endif %}
+        </div>
+        <div class="job-meta-line">
+          <span class="job-meta-icon" title="Конец" aria-label="Конец">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h2v18H4V3zm3 1h2v2H7V4zm2 2h2v2H9V6zm2-2h2v2h-2V4zm2 2h2v2h-2V6zm2-2h2v2h-2V4zm-8 4h2v2H7V8zm2 2h2v2H9v-2zm2-2h2v2h-2V8zm2 2h2v2h-2v-2zm2-2h2v2h-2V8zm-8 4h2v2H7v-2zm2 2h2v2H9v-2zm2-2h2v2h-2v-2zm2 2h2v2h-2v-2zm2-2h2v2h-2v-2z"/></svg>
+          </span>
+          {% if job.finished_at %}
+          <time class="local-time" datetime="{{ job.finished_at|as_utc_iso }}">{{ job.finished_at }}</time>
+          {% else %}—{% endif %}
+        </div>
+        <div class="job-meta-line">
+          <span class="job-meta-icon" title="Следующий запуск" aria-label="Следующий запуск">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l-1.4 1.4L16.2 11H4v2h12.2l-5.6 5.6L12 20l8-8z"/></svg>
+          </span>
+          {% if entry.next_run_at %}
+          <time class="local-time" datetime="{{ entry.next_run_at|as_utc_iso }}">{{ entry.next_run_at }}</time>
+          {% else %}—{% endif %}
+        </div>
         {% if job.error %}
-        <br /><span class="job-status-failed">ошибка: {{ job.error }}</span>
+        <div class="job-meta-line job-status-failed">ошибка: {{ job.error }}</div>
         {% endif %}
         {% else %}
-        <span class="muted">Нет запусков</span>
+        <div class="job-meta-line muted">Нет запусков</div>
+        <div class="job-meta-line">
+          <span class="job-meta-icon" title="Следующий запуск" aria-label="Следующий запуск">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l-1.4 1.4L16.2 11H4v2h12.2l-5.6 5.6L12 20l8-8z"/></svg>
+          </span>
+          —
+        </div>
         {% endif %}
-      </p>
+      </div>
 
-      <div class="row" style="margin-top:12px;flex-wrap:wrap;">
+      <div class="row job-card-actions" style="margin-top:12px;flex-wrap:wrap;">
         {% if d.manual_run %}
           {% if "default" in d.run_modes %}
           <button
-            class="btn"
+            class="btn btn-icon"
             type="button"
+            title="Запустить"
+            aria-label="Запустить"
             hx-post="/actions/run/{{ d.type }}"
             hx-target="#jobs-action-result"
             hx-swap="innerHTML"
             {% if entry.is_active %}disabled title="Уже выполняется"{% endif %}
-          >Запустить</button>
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          </button>
           {% endif %}
           {% if "dry_run" in d.run_modes %}
           <form hx-post="/actions/run/{{ d.type }}" hx-target="#jobs-action-result" hx-swap="innerHTML" style="display:inline;">
             <input type="hidden" name="dry_run" value="true" />
             <input type="hidden" name="apply" value="false" />
-            <button class="btn" type="submit" {% if entry.is_active %}disabled{% endif %}>Dry-run</button>
+            <button class="btn btn-icon" type="submit" title="Dry-run" aria-label="Dry-run" {% if entry.is_active %}disabled{% endif %}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            </button>
           </form>
           {% endif %}
-          {% if "apply" in d.run_modes %}
-          <form
-            hx-post="/actions/run/{{ d.type }}"
-            hx-target="#jobs-action-result"
-            hx-swap="innerHTML"
-            style="display:inline;"
-            onsubmit="return confirm('Выполнить {{ d.title }} с удалением? Действие необратимо.');"
-          >
-            {% if d.type == "orphan_cleanup" %}
-            <input type="hidden" name="dry_run" value="false" />
-            <input type="hidden" name="apply" value="true" />
-            {% else %}
-            <input type="hidden" name="dry_run" value="false" />
-            {% endif %}
-            <button class="btn btn-danger" type="submit" {% if entry.is_active %}disabled{% endif %}>Применить</button>
-          </form>
-          {% endif %}
-        {% else %}
-        <span class="muted" style="font-size:0.85rem;">{{ d.manual_hint }}</span>
         {% endif %}
+
+        <button
+          class="btn btn-secondary btn-icon"
+          type="button"
+          title="Остановить"
+          aria-label="Остановить"
+          hx-post="/actions/stop/{{ d.type }}"
+          hx-target="#jobs-action-result"
+          hx-swap="innerHTML"
+          {% if not entry.can_stop %}disabled{% endif %}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>
+        </button>
+
         {% if job %}
-        <a class="btn btn-secondary" href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}">Логи</a>
+        <a class="btn btn-secondary btn-icon" href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}" title="Логи" aria-label="Логи">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v2H4zm0 5h16v2H4zm0 5h10v2H4zm0 5h16v2H4z"/></svg>
+        </a>
+        {% else %}
+        <button class="btn btn-secondary btn-icon" type="button" title="Логи" aria-label="Логи" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v2H4zm0 5h16v2H4zm0 5h10v2H4zm0 5h16v2H4z"/></svg>
+        </button>
+        {% endif %}
+
+        {% if d.manual_run and "apply" in d.run_modes %}
+        <form
+          hx-post="/actions/run/{{ d.type }}"
+          hx-target="#jobs-action-result"
+          hx-swap="innerHTML"
+          style="display:inline;"
+          onsubmit="return confirm('Выполнить {{ d.title }} с удалением? Действие необратимо.');"
+        >
+          {% if d.type == "orphan_cleanup" %}
+          <input type="hidden" name="dry_run" value="false" />
+          <input type="hidden" name="apply" value="true" />
+          {% else %}
+          <input type="hidden" name="dry_run" value="false" />
+          {% endif %}
+          <button class="btn btn-danger btn-icon" type="submit" title="Применить (удаление)" aria-label="Применить (удаление)" {% if entry.is_active %}disabled{% endif %}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v10h-2zm4 0h2v10h-2zM7 9h2v10H7z"/></svg>
+          </button>
+        </form>
+        {% endif %}
+
+        {% if not d.manual_run %}
+        <span class="muted" style="font-size:0.85rem;">{{ d.manual_hint }}</span>
         {% endif %}
       </div>
     </article>

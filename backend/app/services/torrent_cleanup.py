@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import CleanupRule, JobLog, QbClient
+from app.services.job_runner import JobStopRequested, is_stop_requested
 
 # qB 5+: TrackerError — ответ трекера с ошибкой (в т.ч. «не зарегистрирован»).
 _TRACKER_ERROR_STATUS = 5
@@ -156,6 +157,11 @@ class TorrentCleanupService:
     def add_log(self, message: str, level: str = "info") -> None:
         self._add_log(message=message, level=level)
 
+    def _check_stop(self) -> None:
+        if is_stop_requested(self._db, self._job_id):
+            self._add_log("Cleanup: остановка по запросу", "warning")
+            raise JobStopRequested()
+
     def _get_clients_by_target(self, target: str) -> list[QbClient]:
         query = select(QbClient).where(QbClient.enabled.is_(True))
         if target == "both":
@@ -187,28 +193,37 @@ class TorrentCleanupService:
             )
         return enriched
 
-    def run(self, dry_run: bool = True) -> dict[str, int]:
+    def run(self, dry_run: bool = True, *, target_role: str | None = None) -> dict[str, int]:
+        """Очистка qB. target_role=master|slave — только клиенты роли и правила {role, both}."""
         rules = self._db.scalars(select(CleanupRule).where(CleanupRule.enabled.is_(True))).all()
         if not rules:
             self._add_log("Cleanup: нет активных правил")
             return {"checked": 0, "matched": 0, "deleted": 0}
 
+        if target_role is not None and target_role not in {"master", "slave"}:
+            raise ValueError(f"Cleanup: неверный target_role={target_role!r}")
+
         checked = 0
         matched = 0
         deleted = 0
         for rule in rules:
+            self._check_stop()
             if rule.target_client not in {"master", "slave", "both"}:
                 self._add_log(
                     f"Cleanup: правило {rule.id} пропущено, неверный target_client={rule.target_client}",
                     "warning",
                 )
                 continue
-            clients = self._get_clients_by_target(rule.target_client)
+            if target_role is not None and rule.target_client not in {target_role, "both"}:
+                continue
+            clients_target = target_role if target_role is not None else rule.target_client
+            clients = self._get_clients_by_target(clients_target)
             if not clients:
                 self._add_log(f"Cleanup: нет активных клиентов для правила {rule.id}")
                 continue
 
             for db_client in clients:
+                self._check_stop()
                 client = qbittorrentapi.Client(
                     host=db_client.host,
                     port=db_client.port,
@@ -246,9 +261,11 @@ class TorrentCleanupService:
                 hashes_delete_files_true = [item["hash"] for item in removable if item["delete_files"]]
                 hashes_delete_files_false = [item["hash"] for item in removable if not item["delete_files"]]
                 if hashes_delete_files_true:
+                    self._check_stop()
                     client.torrents_delete(delete_files=True, torrent_hashes=hashes_delete_files_true)
                     deleted += len(hashes_delete_files_true)
                 if hashes_delete_files_false:
+                    self._check_stop()
                     client.torrents_delete(delete_files=False, torrent_hashes=hashes_delete_files_false)
                     deleted += len(hashes_delete_files_false)
         return {"checked": checked, "matched": matched, "deleted": deleted}

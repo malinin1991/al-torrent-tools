@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import ExtraUrl, JobLog, Setting
+from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.release_checkpoint import ReleaseRef, normalize_api_datetime, should_skip_unchanged
 from app.services.runtime_settings import build_anilibria_client
 from app.services.telegram_notify import list_enabled_tracked_releases
@@ -125,6 +126,9 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
     batch_releases = 0
     _add_log(db, job_id, f"Ongoing: найдено релизов {total}")
     for index, ref in enumerate(unique_releases.values(), start=1):
+        if is_stop_requested(db, job_id):
+            _add_log(db, job_id, "Ongoing: остановка по запросу", "warning")
+            raise JobStopRequested()
         if should_skip_unchanged(
             db,
             ref.release_id,

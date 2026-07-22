@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import JobLog, TorrentFile
+from app.services.file_hasher import format_file_size
+from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.qb_inventory import InventoryResult, build_inventory, connect_master
 from app.services.torrent_files_meta import (
     QB_INCOMPLETE_SUFFIX,
@@ -208,10 +210,39 @@ def find_empty_dirs(*, media_root: Path) -> list[Path]:
     return empty
 
 
-def _delete_files(paths: list[Path], *, log_fn) -> tuple[int, int]:
+def _path_size_bytes(path: Path) -> int:
+    try:
+        if path.is_file():
+            return int(path.stat().st_size)
+        if path.is_dir():
+            total = 0
+            for child in path.rglob("*"):
+                if child.is_file():
+                    try:
+                        total += int(child.stat().st_size)
+                    except OSError:
+                        continue
+            return total
+    except OSError:
+        return 0
+    return 0
+
+
+def paths_total_size(paths: list[Path]) -> int:
+    return sum(_path_size_bytes(path) for path in paths)
+
+
+def _delete_files(
+    paths: list[Path],
+    *,
+    log_fn,
+    check_stop=None,
+) -> tuple[int, int]:
     deleted = 0
     errors = 0
     for path in paths:
+        if check_stop is not None:
+            check_stop()
         try:
             path.unlink()
             deleted += 1
@@ -221,13 +252,20 @@ def _delete_files(paths: list[Path], *, log_fn) -> tuple[int, int]:
     return deleted, errors
 
 
-def _delete_dirs_recursive(paths: list[Path], *, log_fn) -> tuple[int, int]:
+def _delete_dirs_recursive(
+    paths: list[Path],
+    *,
+    log_fn,
+    check_stop=None,
+) -> tuple[int, int]:
     """Удалить деревья junk-каталогов (shutil-подобно через rmtree вручную)."""
     import shutil
 
     deleted = 0
     errors = 0
     for path in paths:
+        if check_stop is not None:
+            check_stop()
         if not path.exists():
             continue
         try:
@@ -239,16 +277,25 @@ def _delete_dirs_recursive(paths: list[Path], *, log_fn) -> tuple[int, int]:
     return deleted, errors
 
 
-def _remove_empty_dirs(media_root: Path, *, log_fn) -> tuple[int, int]:
+def _remove_empty_dirs(
+    media_root: Path,
+    *,
+    log_fn,
+    check_stop=None,
+) -> tuple[int, int]:
     """Несколько проходов deepest-first, пока появляются новые пустые."""
     deleted = 0
     errors = 0
     while True:
+        if check_stop is not None:
+            check_stop()
         empties = find_empty_dirs(media_root=media_root)
         if not empties:
             break
         progress = 0
         for path in empties:
+            if check_stop is not None:
+                check_stop()
             if not path.exists():
                 continue
             try:
@@ -341,6 +388,9 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
         _add_log(db, job_id, f"orphan_cleanup: {message}", level)
 
     # Те же валидные раздачи, что и hash_backfill (без «не зарегистрирован»).
+    if is_stop_requested(db, job_id):
+        _add_log(db, job_id, "orphan_cleanup: остановка по запросу", "warning")
+        raise JobStopRequested()
     inventory = build_inventory(db, qb, log_fn=log_fn)
     known, protected = known_paths_for_orphan_scan(db, inventory)
     failed_n = len(inventory.failed_hashes)
@@ -385,7 +435,13 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
 
     orphans: list[Path] = []
     if scan_orphans:
+        if is_stop_requested(db, job_id):
+            _add_log(db, job_id, "orphan_cleanup: остановка по запросу", "warning")
+            raise JobStopRequested()
         orphans = find_orphan_files(media_root=media_root, known=known)
+    if is_stop_requested(db, job_id):
+        _add_log(db, job_id, "orphan_cleanup: остановка по запросу", "warning")
+        raise JobStopRequested()
     junk_files = find_junk_files(media_root=media_root)
     junk_dirs = find_junk_dirs(media_root=media_root)
     # В dry-run: текущие пустые; после apply пустых станет больше (после удаления junk/orphan).
@@ -397,6 +453,15 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
         f"orphan_cleanup: orphan={len(orphans)}, junk_files={len(junk_files)}, "
         f"junk_dirs={len(junk_dirs)}, empty_dirs={len(empty_dirs)}",
     )
+    orphan_bytes = paths_total_size(orphans)
+    junk_bytes = paths_total_size(junk_files) + paths_total_size(junk_dirs)
+    removable_bytes = orphan_bytes + junk_bytes
+    _add_log(
+        db,
+        job_id,
+        f"orphan_cleanup: размер кандидатов={format_file_size(removable_bytes)} "
+        f"(orphan={format_file_size(orphan_bytes)}, junk={format_file_size(junk_bytes)})",
+    )
     _log_preview(db, job_id, "orphan", orphans)
     _log_preview(db, job_id, "junk", junk_files)
     _log_preview(db, job_id, "junk_dir", junk_dirs)
@@ -407,7 +472,8 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
             db,
             job_id,
             "orphan_cleanup: dry-run — удаление не выполнялось "
-            "(передайте apply=true и dry_run=false для удаления)",
+            f"(кандидаты {format_file_size(removable_bytes)}; "
+            "передайте apply=true и dry_run=false для удаления)",
         )
         return
 
@@ -419,10 +485,19 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
             f"({detail}). Проверьте mount :rw у api/worker и recreate контейнеров."
         )
 
-    deleted_orphans, err_orphans = _delete_files(orphans, log_fn=apply_log)
-    deleted_junk, err_junk = _delete_files(junk_files, log_fn=apply_log)
-    deleted_junk_dirs, err_junk_dirs = _delete_dirs_recursive(junk_dirs, log_fn=apply_log)
-    deleted_empty, err_empty = _remove_empty_dirs(media_root, log_fn=apply_log)
+    def check_stop() -> None:
+        if is_stop_requested(db, job_id):
+            _add_log(db, job_id, "orphan_cleanup: остановка по запросу", "warning")
+            raise JobStopRequested()
+
+    deleted_orphans, err_orphans = _delete_files(orphans, log_fn=apply_log, check_stop=check_stop)
+    deleted_junk, err_junk = _delete_files(junk_files, log_fn=apply_log, check_stop=check_stop)
+    deleted_junk_dirs, err_junk_dirs = _delete_dirs_recursive(
+        junk_dirs, log_fn=apply_log, check_stop=check_stop
+    )
+    deleted_empty, err_empty = _remove_empty_dirs(
+        media_root, log_fn=apply_log, check_stop=check_stop
+    )
 
     total_deleted = deleted_orphans + deleted_junk + deleted_junk_dirs + deleted_empty
     total_errors = err_orphans + err_junk + err_junk_dirs + err_empty
@@ -430,7 +505,8 @@ async def run_orphan_cleanup(db: Session, job_id: int, params: dict[str, Any]) -
         db,
         job_id,
         f"orphan_cleanup: удалено orphan={deleted_orphans}, junk_files={deleted_junk}, "
-        f"junk_dirs={deleted_junk_dirs}, empty_dirs={deleted_empty}, ошибок={total_errors}",
+        f"junk_dirs={deleted_junk_dirs}, empty_dirs={deleted_empty}, ошибок={total_errors}, "
+        f"размер кандидатов={format_file_size(removable_bytes)}",
     )
     if total_errors and total_deleted == 0:
         raise RuntimeError(

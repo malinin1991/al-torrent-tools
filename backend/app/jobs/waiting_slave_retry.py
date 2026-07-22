@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import JobLog
 from app.jobs.waiting_master_retry import torrent_still_in_api
 from app.services.anilibria_auth import ensure_passkey_stored
+from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import (
     ensure_announce_passkey,
@@ -20,6 +21,21 @@ from app.services.runtime_settings import build_anilibria_client
 
 _STATUS_WAITING_SLAVE = TorrentPipelineService.STATUS_WAITING_SLAVE
 _TERMINAL_OK = TorrentPipelineService._TERMINAL_OK
+
+
+def _check_stop(db: Session, job_id: int | None) -> None:
+    if job_id is None:
+        return
+    if is_stop_requested(db, job_id):
+        db.add(
+            JobLog(
+                job_id=job_id,
+                level="warning",
+                message="waiting_slave_retry: остановка по запросу",
+            )
+        )
+        db.commit()
+        raise JobStopRequested()
 
 
 async def run_waiting_slave_retry(db: Session, job_id: int, params: dict[str, Any]) -> None:
@@ -85,6 +101,7 @@ async def retry_waiting_slave_pipelines(db: Session, *, job_id: int | None = Non
         al_client.passkey = passkey
 
     for pipeline in candidates:
+        _check_stop(db, job_id)
         stats["checked"] += 1
         try:
             if not await torrent_still_in_api(al_client, pipeline):
@@ -121,6 +138,8 @@ async def retry_waiting_slave_pipelines(db: Session, *, job_id: int | None = Non
                 pipeline_service.mark_failed(
                     pipeline, f"waiting_slave retry: неожиданный status={updated.status}"
                 )
+        except JobStopRequested:
+            raise
         except Exception as exc:
             if should_wait_for_qb(exc):
                 pipeline_service.mark_waiting_slave(pipeline, qb_client_wait_message("slave", exc))

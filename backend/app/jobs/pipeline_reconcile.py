@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import JobLog, TorrentPipeline
 from app.services.anilibria_auth import ensure_passkey_stored
+from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import ensure_announce_passkey
 from app.services.runtime_settings import build_anilibria_client
@@ -34,6 +35,16 @@ async def run_pipeline_reconcile(db: Session, job_id: int, params: dict[str, Any
 
     candidates = service.get_pipelines_awaiting_slave()
     for pipeline in candidates:
+        if is_stop_requested(db, job_id):
+            db.add(
+                JobLog(
+                    job_id=job_id,
+                    level="warning",
+                    message="pipeline_reconcile: остановка по запросу",
+                )
+            )
+            db.commit()
+            raise JobStopRequested()
         try:
             if service.classify_master_torrent(pipeline) != "complete":
                 continue
@@ -43,6 +54,17 @@ async def run_pipeline_reconcile(db: Session, job_id: int, params: dict[str, Any
         except Exception:
             # Ошибки загрузки обработает reconcile (mark_failed).
             continue
+
+    if is_stop_requested(db, job_id):
+        db.add(
+            JobLog(
+                job_id=job_id,
+                level="warning",
+                message="pipeline_reconcile: остановка по запросу",
+            )
+        )
+        db.commit()
+        raise JobStopRequested()
 
     def load_cached(pipeline: TorrentPipeline) -> bytes | None:
         if pipeline.id in cache:

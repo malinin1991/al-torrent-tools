@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.models import JobLog, Setting, TorrentArchive
 from app.services.file_tracker import mark_missing_api_present_false
+from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.release_checkpoint import normalize_api_datetime
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
@@ -111,6 +112,9 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     seen_torrent_ids: set[int] = set()
 
     while page <= total_pages:
+        if is_stop_requested(db, job_id):
+            _add_log(db, job_id, "Full sync: остановка по запросу", "warning")
+            raise JobStopRequested()
         payload = await al_client.catalog_releases(
             page=page,
             limit=catalog_limit,

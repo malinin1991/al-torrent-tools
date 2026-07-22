@@ -777,8 +777,13 @@ async def run_job_action(
 ) -> HTMLResponse:
     if job_type == "orphan_cleanup":
         params: dict = {"dry_run": dry_run, "apply": apply}
+    elif job_type in ("cleanup_master", "cleanup_slave"):
+        role = "master" if job_type == "cleanup_master" else "slave"
+        params = {"dry_run": dry_run, "target_role": role}
     elif job_type == "cleanup":
-        params = {"dry_run": dry_run}
+        # Legacy URL: направляем на master.
+        params = {"dry_run": dry_run, "target_role": "master"}
+        job_type = "cleanup_master"
     else:
         params = {}
     try:
@@ -794,6 +799,31 @@ async def run_job_action(
         return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
     job_runner.schedule_job(job.id)
     message = f"Джоб {job.type} запущен в фоне (job_id={job.id})"
+    return templates.TemplateResponse(
+        request,
+        "partials/action_result.html",
+        {
+            "message": message,
+            "job_link": f"/jobs?job_type={job.type}&job_id={job.id}",
+        },
+    )
+
+
+@app.post("/actions/stop/{job_type}", response_class=HTMLResponse)
+async def stop_job_action(
+    request: Request,
+    job_type: str,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    from app.services.job_runner import JobStopError, request_stop_latest_running
+
+    try:
+        job = request_stop_latest_running(db, job_type)
+    except JobStopError as exc:
+        return templates.TemplateResponse(
+            request, "partials/action_result.html", {"message": str(exc)}
+        )
+    message = f"Остановка джоба {job.type} запрошена (job_id={job.id}, status=stopping)"
     return templates.TemplateResponse(
         request,
         "partials/action_result.html",

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import JobLog
 from app.services.file_tracker import FileTrackerService
+from app.services.job_runner import JobStopRequested, is_stop_requested
 
 # Мягкий пропуск: джоб success (нечего делать, retry не нужен).
 _SOFT_SKIP_REASONS = frozenset(
@@ -28,6 +29,10 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
     release_id = params.get("release_id")
     if not info_hash or not isinstance(torrent_id, int) or not isinstance(release_id, int):
         raise ValueError("hash_torrent: нужны info_hash, torrent_id, release_id")
+
+    if is_stop_requested(db, job_id):
+        _add_log(db, job_id, "hash_torrent: остановка по запросу", "warning")
+        raise JobStopRequested()
 
     _add_log(
         db,

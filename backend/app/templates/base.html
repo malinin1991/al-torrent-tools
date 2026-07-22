@@ -13,14 +13,51 @@
     .card { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
     .grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 12px; }
     .grid > .card { min-width: 0; overflow: hidden; }
+    .jobs-live-grid {
+      display: grid;
+      grid-template-columns: 2fr 3fr;
+      gap: 12px;
+    }
+    .jobs-live-grid > .card { min-width: 0; overflow: hidden; }
+    @media (max-width: 900px) {
+      .jobs-live-grid { grid-template-columns: 1fr; }
+    }
     .jobs-catalog-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
       gap: 12px;
     }
     .job-catalog-card h3 { color: #9ad1ff; font-size: 1.05rem; }
+    .job-card-meta { margin: 0 0 8px; font-size: 0.9rem; }
+    .job-meta-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 0;
+      min-width: 0;
+    }
+    .job-meta-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 16px;
+      height: 16px;
+      color: #9b9b9b;
+    }
+    .job-meta-icon svg { width: 16px; height: 16px; fill: currentColor; }
     .btn:disabled { opacity: 0.45; cursor: not-allowed; }
     .btn { background: #2c4f76; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    .btn-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      line-height: 0;
+    }
+    .btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
     .btn-secondary { background: #3a3a3a; }
     .btn-danger { background: #823b3b; }
     .input, select, textarea { width: 100%; background: #101010; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px; }
@@ -57,6 +94,7 @@
     .badge-ok { background: #1f3d2a; color: #8dffb0; }
     .badge-warn { background: #3d2f1f; color: #ffcc80; }
     .job-status-running, .job-status-discovered, .job-status-waiting_master, .job-status-waiting_slave, .job-status-master_added, .job-status-master_complete { color: #ffcc80; }
+    .job-status-stopping { color: #ffcc80; opacity: 0.85; }
     .job-status-success, .job-status-done, .job-status-slave_added { color: #8dffb0; }
     .job-status-failed, .job-status-error { color: #ff8a80; }
     .job-status-cancelled, .job-status-pending { color: #9b9b9b; }

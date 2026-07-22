@@ -8,12 +8,18 @@ from app.services.job_runner import (
     STATUS_CANCELLED,
     STATUS_PENDING,
     STATUS_RUNNING,
+    STATUS_STOPPING,
+    STATUS_SUCCESS,
     JobRunner,
+    JobStopError,
+    JobStopRequested,
     UnknownJobTypeError,
     cancel_jobs_by_ids,
     cancel_stale_jobs,
+    is_stop_requested,
     reclaim_orphan_jobs,
     reclaim_stale_jobs,
+    request_stop,
 )
 
 
@@ -164,3 +170,63 @@ def test_create_job_rejects_unknown_type() -> None:
     db = MagicMock()
     with pytest.raises(UnknownJobTypeError):
         runner.create_job(db, "not_a_real_job", {})
+
+
+def test_request_stop_running_to_stopping() -> None:
+    job = SimpleNamespace(id=11, status=STATUS_RUNNING)
+    db = MagicMock()
+    db.get.return_value = job
+
+    result = request_stop(db, 11)
+
+    assert result is job
+    assert job.status == STATUS_STOPPING
+    db.commit.assert_called()
+    db.add.assert_called()
+
+
+def test_request_stop_rejects_non_running() -> None:
+    job = SimpleNamespace(id=12, status=STATUS_SUCCESS)
+    db = MagicMock()
+    db.get.return_value = job
+    with pytest.raises(JobStopError):
+        request_stop(db, 12)
+
+
+def test_is_stop_requested() -> None:
+    job = SimpleNamespace(id=13, status=STATUS_STOPPING)
+    db = MagicMock()
+    db.get.return_value = job
+    assert is_stop_requested(db, 13) is True
+    job.status = STATUS_RUNNING
+    assert is_stop_requested(db, 13) is False
+
+
+def test_run_job_finalizes_stop_requested_as_cancelled(monkeypatch) -> None:
+    import asyncio
+
+    runner = JobRunner()
+
+    async def handler(db: object, job_id: int, params: dict) -> None:
+        raise JobStopRequested()
+
+    runner.register("demo_stop", handler)
+    job = SimpleNamespace(
+        id=99,
+        type="demo_stop",
+        status=STATUS_PENDING,
+        params_json={},
+        started_at=None,
+        finished_at=None,
+        error=None,
+    )
+    db = MagicMock()
+    db.get.return_value = job
+    db.execute.return_value = MagicMock()
+    monkeypatch.setattr("app.services.job_runner._acquire_run_lock", lambda *_a, **_k: None)
+    monkeypatch.setattr("app.services.job_runner._unlock_run_lock", lambda *_a, **_k: None)
+
+    result = asyncio.run(runner.run_job(db, 99))
+
+    assert result.status == STATUS_CANCELLED
+    assert result.error == "Остановлено пользователем"
