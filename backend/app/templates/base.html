@@ -15,7 +15,7 @@
     .grid > .card { min-width: 0; overflow: hidden; }
     .jobs-live-grid {
       display: grid;
-      grid-template-columns: 2fr 3fr;
+      grid-template-columns: 1fr 3fr;
       gap: 12px;
     }
     .jobs-live-grid > .card { min-width: 0; overflow: hidden; }
@@ -67,7 +67,8 @@
     .log-toolbar h3 { margin: 0; }
     .log-panel {
       max-height: 70vh;
-      overflow: auto;
+      overflow-x: hidden;
+      overflow-y: auto;
       background: #101010;
       border: 1px solid #333;
       border-radius: 6px;
@@ -76,11 +77,26 @@
       font-size: 0.85rem;
       line-height: 1.45;
     }
-    .log-line { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid #1f1f1f; }
+    .log-line {
+      display: flex;
+      gap: 8px;
+      padding: 2px 0;
+      border-bottom: 1px solid #1f1f1f;
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+    }
     .log-line:last-child { border-bottom: 0; }
     .log-ts { color: #8a8a8a; flex: 0 0 auto; white-space: nowrap; }
     .log-level { flex: 0 0 56px; text-transform: lowercase; color: #9ad1ff; }
-    .log-msg { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
+    .log-msg {
+      flex: 1 1 0;
+      min-width: 0;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
     .log-level-error { color: #ff8a80; }
     .log-level-warning { color: #ffcc80; }
     .log-level-debug { color: #6a6a6a; }
