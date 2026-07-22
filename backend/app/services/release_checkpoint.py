@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from app.utils.datetime_fmt import utcnow
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -99,7 +100,7 @@ def mark_release_processed(
     torrents_fingerprint_value: str | None = None,
 ) -> None:
     row = db.get(ReleaseCheckpoint, release_id)
-    now = datetime.utcnow()
+    now = utcnow()
     if row is None:
         db.add(
             ReleaseCheckpoint(

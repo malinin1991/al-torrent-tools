@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from app.utils.datetime_fmt import utcnow
 from pathlib import Path
 from typing import Any
 
@@ -504,7 +505,7 @@ def _recent_events_by_info_hash(
     """
     if not release_ids:
         return {}
-    since = datetime.utcnow() - _EVENT_WINDOW
+    since = utcnow() - _EVENT_WINDOW
     rows = db.scalars(
         select(FileChangeEvent)
         .where(

@@ -11,6 +11,7 @@ from app.services.qb_inventory import (
     InventoryFile,
     InventoryResult,
     prune_stale_inventory,
+    upsert_torrent_files_inventory,
 )
 from app.services.torrent_cleanup import match_cleanup_rule
 
@@ -213,6 +214,103 @@ def test_prune_keeps_torrent_files_for_archived_hashes(monkeypatch, tmp_path: Pa
     assert pruned["torrent_files"] == 0
     assert history_tf not in deleted
     assert keep_tf not in deleted
+
+
+def test_upsert_inventory_initial_status_by_prior_version() -> None:
+    """Новые строки inventory: «новый» только если файла не было в прошлой версии."""
+    from app.db.models import TorrentFile
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    calls = {"n": 0}
+
+    def fake_scalars(_stmt):
+        calls["n"] += 1
+        # 1) существующие TorrentFile текущей версии → нет,
+        # 2) состав прошлой версии (_prior_version_paths) → old.mkv уже был.
+        if calls["n"] == 1:
+            return FakeScalars([])
+        return FakeScalars(["Show/old.mkv"])
+
+    db = MagicMock()
+    db.scalars.side_effect = fake_scalars
+    db.scalar.return_value = "bb" + "b" * 38  # есть прошлая версия
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/old.mkv",  # был в прошлой версии → ok
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path="/m/Show/old.mkv",
+                folder_key="/m/Show",
+            ),
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/new.mkv",  # новый → new
+                size=1,
+                file_index=1,
+                selected=True,
+                full_path="/m/Show/new.mkv",
+                folder_key="/m/Show",
+            ),
+        ],
+    )
+
+    upsert_torrent_files_inventory(db, inventory)
+    rows = {r.relative_path: r for r in created if isinstance(r, TorrentFile)}
+    assert rows["Show/old.mkv"].ui_status == "ok"
+    assert rows["Show/new.mkv"].ui_status == "new"
+
+
+def test_upsert_inventory_first_release_all_new() -> None:
+    """Нет прошлой версии (первый торрент релиза) → все файлы «новый»."""
+    from app.db.models import TorrentFile
+
+    class FakeScalars:
+        def all(self):
+            return []
+
+    db = MagicMock()
+    db.scalars.return_value = FakeScalars()
+    db.scalar.return_value = None  # прошлой версии нет
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/ep01.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path="/m/Show/ep01.mkv",
+                folder_key="/m/Show",
+            )
+        ],
+    )
+
+    upsert_torrent_files_inventory(db, inventory)
+    rows = [r for r in created if isinstance(r, TorrentFile)]
+    assert rows[0].ui_status == "new"
 
 
 def test_load_cleanup_rules_filters_slave_only() -> None:

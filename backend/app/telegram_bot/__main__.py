@@ -29,13 +29,12 @@ def _touch_heartbeat() -> None:
     HEALTH_FILE.write_text("ok", encoding="utf-8")
     # Для страницы «Информация» (API в другом контейнере не видит /tmp бота).
     try:
-        from datetime import datetime
-
+        from app.utils.datetime_fmt import utcnow
         from app.db.models import Setting
 
         with SessionLocal() as db:
             row = db.get(Setting, "telegram_bot_heartbeat_at")
-            now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            now = utcnow().replace(microsecond=0).isoformat() + "Z"
             if row is None:
                 db.add(Setting(key="telegram_bot_heartbeat_at", value=now))
             else:

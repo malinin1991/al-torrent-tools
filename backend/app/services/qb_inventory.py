@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from app.utils.datetime_fmt import utcnow
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -235,10 +235,15 @@ def build_inventory(
 
 def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> int:
     """Upsert torrent_files по inventory; возвращает число upsert."""
-    now = datetime.utcnow()
+    now = utcnow()
     by_hash: dict[str, list[InventoryFile]] = {}
     for item in inventory.files:
         by_hash.setdefault(item.info_hash, []).append(item)
+
+    # Ленивый импорт: file_tracker импортирует из этого модуля не нужно, но избегаем циклов.
+    from app.services.file_tracker import FileTrackerService
+
+    tracker = FileTrackerService(db)
 
     upserted = 0
     for info_hash, files in by_hash.items():
@@ -246,11 +251,25 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
             row.relative_path: row
             for row in db.scalars(select(TorrentFile).where(TorrentFile.info_hash == info_hash)).all()
         }
+        # Начальный ui_status новых строк — по составу прошлой версии (как в file_tracker),
+        # чтобы не залипал ошибочный «новый» (его потом не сбрасывает _settle_ui_status).
+        torrent_id = next((f.torrent_id for f in files if f.torrent_id), None)
+        if torrent_id is not None:
+            has_prior_version, prior_version_paths = tracker.prior_version_composition(
+                torrent_id=torrent_id, info_hash=info_hash
+            )
+        else:
+            has_prior_version, prior_version_paths = False, set()
         seen_paths: set[str] = set()
         for item in files:
             seen_paths.add(item.relative_path)
             row = existing.get(item.relative_path)
             if row is None:
+                first_seen = tracker.first_seen_for_path(
+                    has_prior_version=has_prior_version,
+                    prior_version_paths=prior_version_paths,
+                    relative_path=item.relative_path,
+                )
                 db.add(
                     TorrentFile(
                         torrent_id=item.torrent_id,
@@ -261,7 +280,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                         file_index=item.file_index,
                         selected=item.selected,
                         full_path=item.full_path,
-                        ui_status="new",
+                        ui_status="new" if first_seen else "ok",
                         created_at=now,
                         updated_at=now,
                     )

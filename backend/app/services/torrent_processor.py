@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.utils.datetime_fmt import utcnow
 from typing import Any
 
 import qbittorrentapi
@@ -483,7 +483,7 @@ class TorrentProcessor:
                 info_hash=info_hash,
                 release_id=release_id,
                 uploaded_at=None,
-                processed_at=datetime.utcnow(),
+                processed_at=utcnow(),
             )
         )
         self._db.commit()

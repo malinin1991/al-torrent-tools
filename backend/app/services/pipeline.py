@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
+from app.utils.datetime_fmt import utcnow
 from typing import Any, Literal
 
 import qbittorrentapi
@@ -101,7 +102,7 @@ class TorrentPipelineService:
 
     def mark_master_added(self, pipeline: TorrentPipeline) -> TorrentPipeline:
         pipeline.status = self.STATUS_MASTER_ADDED
-        pipeline.master_added_at = datetime.utcnow()
+        pipeline.master_added_at = utcnow()
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
@@ -167,7 +168,7 @@ class TorrentPipelineService:
 
     def mark_slave_added(self, pipeline: TorrentPipeline) -> TorrentPipeline:
         pipeline.status = self.STATUS_SLAVE_ADDED
-        pipeline.slave_added_at = datetime.utcnow()
+        pipeline.slave_added_at = utcnow()
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
@@ -224,7 +225,7 @@ class TorrentPipelineService:
         return [row for row in rows if is_qb_wait_error_text(row.error)]
 
     def get_master_added_older_than(self, minutes: int) -> list[TorrentPipeline]:
-        threshold = datetime.utcnow() - timedelta(minutes=minutes)
+        threshold = utcnow() - timedelta(minutes=minutes)
         rows = self._db.scalars(
             select(TorrentPipeline).where(
                 TorrentPipeline.status == self.STATUS_MASTER_ADDED,
@@ -404,7 +405,7 @@ class TorrentPipelineService:
             row.status = STATUS_FAILED
             row.error = error_text
             if row.finished_at is None:
-                row.finished_at = datetime.utcnow()
+                row.finished_at = utcnow()
 
         for attempt in (1, 2):
             try:

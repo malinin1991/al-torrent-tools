@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from app.utils.datetime_fmt import utcnow
 from typing import Any
 
 import httpx
@@ -124,7 +124,7 @@ def upsert_tracked_release(
             title=title_value,
             enabled=enabled,
             source=source_value,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         db.add(row)
     else:
@@ -328,10 +328,10 @@ def enqueue_file_changes_notification(
         payload_json=payload,
         status=OUTBOX_PENDING,
         attempts=0,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     db.add(outbox)
-    now = datetime.utcnow()
+    now = utcnow()
     for ev in events:
         if hasattr(ev, "notified_at"):
             ev.notified_at = now
@@ -369,7 +369,7 @@ def enqueue_tracking_toggle_notification(
         payload_json=payload,
         status=OUTBOX_PENDING,
         attempts=0,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     db.add(outbox)
     if commit:
@@ -519,7 +519,7 @@ def enqueue_pipeline_telegram_notification(
             payload_json=payload,
             status=OUTBOX_PENDING,
             attempts=0,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
     )
     pipeline.tg_status = TG_STATUS_QUEUED
@@ -530,7 +530,7 @@ def enqueue_pipeline_telegram_notification(
 
 def mark_outbox_sent(db: Session, outbox: TelegramOutbox) -> None:
     outbox.status = OUTBOX_SENT
-    outbox.sent_at = datetime.utcnow()
+    outbox.sent_at = utcnow()
     outbox.last_error = None
     if outbox.pipeline_id is not None:
         pipeline = db.get(TorrentPipeline, outbox.pipeline_id)

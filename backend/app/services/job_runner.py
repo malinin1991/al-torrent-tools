@@ -4,6 +4,7 @@ import threading
 import zlib
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
+from app.utils.datetime_fmt import utcnow
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -109,7 +110,7 @@ def cancel_stale_jobs(
     if not stale:
         return []
 
-    now = datetime.utcnow()
+    now = utcnow()
     cancelled_ids: list[int] = []
     for job in stale:
         _mark_job_cancelled(db, job, reason=reason, now=now)
@@ -134,7 +135,7 @@ def cancel_jobs_by_ids(
     )
     if not jobs:
         return []
-    now = datetime.utcnow()
+    now = utcnow()
     cancelled_ids: list[int] = []
     for job in jobs:
         _mark_job_cancelled(db, job, reason=reason, now=now)
@@ -236,7 +237,7 @@ def reclaim_orphan_jobs(
     if not candidates:
         return []
 
-    now = datetime.utcnow()
+    now = utcnow()
     pending_threshold = now - timedelta(seconds=max(0, pending_grace_sec))
     cancelled_ids: list[int] = []
     for job in candidates:
@@ -272,7 +273,7 @@ def reclaim_stale_jobs(
     age = max_age_minutes if max_age_minutes is not None else settings.job_stale_minutes
     if age <= 0:
         return []
-    threshold = datetime.utcnow() - timedelta(minutes=age)
+    threshold = utcnow() - timedelta(minutes=age)
     msg = reason or (
         f"Джоб без активности дольше {age} мин (pending/running) и помечен как cancelled"
     )
@@ -280,7 +281,7 @@ def reclaim_stale_jobs(
         db.scalars(select(Job).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
     )
     cancelled_ids: list[int] = []
-    now = datetime.utcnow()
+    now = utcnow()
     for job in candidates:
         anchor = _job_last_activity_at(db, job)
         if anchor is None or anchor > threshold:
@@ -380,7 +381,7 @@ class JobRunner:
             _active_job_ids.add(job_id)
 
         job.status = STATUS_RUNNING
-        job.started_at = datetime.utcnow()
+        job.started_at = utcnow()
         job.error = None
         job.finished_at = None
         db.commit()
@@ -421,7 +422,7 @@ class JobRunner:
                     job.status = final_status
                     job.error = final_error
                 if job.finished_at is None:
-                    job.finished_at = datetime.utcnow()
+                    job.finished_at = utcnow()
                 db.commit()
                 db.refresh(job)
             finally:

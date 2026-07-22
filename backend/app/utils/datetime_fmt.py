@@ -1,5 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
+
+
+def utcnow() -> datetime:
+    """Naive UTC now — замена deprecated datetime.utcnow() без смены семантики.
+
+    В БД храним naive UTC, поэтому возвращаем datetime без tzinfo.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def as_utc_iso(value: Any) -> str:
