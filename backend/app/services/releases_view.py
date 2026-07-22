@@ -19,9 +19,14 @@ from app.db.models import (
     TorrentPipeline,
     TrackedRelease,
 )
-from app.services.file_tracker import KIND_ORPHAN, KIND_REMOVED, file_status_for_ui
+from app.services.file_tracker import (
+    KIND_ORPHAN,
+    KIND_REMOVED,
+    file_status_for_ui,
+    resolve_orphan_scan_root,
+)
 from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
-from app.services.torrent_files_meta import path_exists_including_incomplete
+from app.services.torrent_files_meta import path_exists_including_incomplete, resolve_media_root
 from app.services.torrent_qb_meta import (
     build_release_torrents_url,
     genres_from_quality_json,
@@ -210,12 +215,16 @@ def list_release_groups(
             status, error = pipeline_by_hash.get(item.info_hash.lower(), (None, None))
             info_hash_key = item.info_hash.lower()
             torrent_events = events_by_torrent.get(item.torrent_id) or _TorrentEvents()
+            torrent_files = files_by_hash.get(info_hash_key, [])
             file_rows = _build_file_rows(
-                files_by_hash.get(info_hash_key, []),
+                torrent_files,
                 torrent_events.latest_by_path,
                 hashes_by_path,
                 hash_job_active=info_hash_key in active_hash_jobs,
-                removed_candidates=torrent_events.removed_candidates,
+                removed_candidates=_filter_removed_candidates(
+                    torrent_events.removed_candidates,
+                    torrent_files,
+                ),
             )
             row = ReleaseTorrentRow(
                 archive_id=item.id,
@@ -274,6 +283,38 @@ def split_active_archived(
     active = [t for t in torrents if t.api_present]
     archived = [t for t in torrents if not t.api_present]
     return active, archived
+
+
+def _filter_removed_candidates(
+    candidates: list[tuple[str, str | None]],
+    files: list[TorrentFile],
+) -> list[tuple[str, str | None]]:
+    """Отбрасывает «удалён/orphan» вне корня этого торрента (старые ложные события)."""
+    if not candidates:
+        return []
+    known = {f.full_path for f in files if f.full_path}
+    root = resolve_orphan_scan_root(
+        save_path=None,
+        content_path=None,
+        known_full_paths=known,
+        media_root=resolve_media_root(),
+    )
+    if root is None:
+        # Нет якоря по файлам торрента — показываем только removed с relative_path
+        # (состав .torrent), без абсолютных orphan-путей чужих тайтлов.
+        return [(display, full) for display, full in candidates if display and not display.startswith("/")]
+
+    filtered: list[tuple[str, str | None]] = []
+    for display, full in candidates:
+        path_raw = full or display
+        if not path_raw:
+            continue
+        try:
+            Path(path_raw).resolve().relative_to(root)
+        except (ValueError, OSError):
+            continue
+        filtered.append((display, full))
+    return filtered
 
 
 def _build_file_rows(

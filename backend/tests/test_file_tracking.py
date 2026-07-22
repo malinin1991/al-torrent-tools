@@ -540,3 +540,94 @@ def test_file_status_for_ui_checking_requires_prior_hash(tmp_path: Path) -> None
         )
         == "ok"
     )
+
+
+def test_resolve_orphan_scan_root_prefers_content_path(tmp_path: Path) -> None:
+    from app.services.file_tracker import resolve_orphan_scan_root
+
+    media = tmp_path / "anilibria"
+    year = media / "2012"
+    show = year / "Sakurasou"
+    show.mkdir(parents=True)
+    (show / "ep01.mkv").write_bytes(b"1")
+    other = year / "Nekomonogatari"
+    other.mkdir()
+    (other / "bonus.mkv").write_bytes(b"x")
+
+    root = resolve_orphan_scan_root(
+        save_path=str(year),
+        content_path=str(show),
+        known_full_paths={str(show / "ep01.mkv")},
+        media_root=media,
+    )
+    assert root == show.resolve()
+
+
+def test_resolve_orphan_scan_root_rejects_shared_year_save_path(tmp_path: Path) -> None:
+    """save_path=год без content_path → не сканируем весь год."""
+    from app.services.file_tracker import resolve_orphan_scan_root
+
+    media = tmp_path / "anilibria"
+    year = media / "2012"
+    show = year / "Sakurasou"
+    show.mkdir(parents=True)
+    ep = show / "ep01.mkv"
+    ep.write_bytes(b"1")
+
+    # Без content_path корень из known = Show — ок (уже не год).
+    root = resolve_orphan_scan_root(
+        save_path=str(year),
+        content_path=None,
+        known_full_paths={str(ep)},
+        media_root=media,
+    )
+    assert root == show.resolve()
+
+    # Файл лежит прямо в годе (= save_path) — orphan-скан запрещён.
+    flat = year / "movie.mkv"
+    flat.write_bytes(b"m")
+    assert (
+        resolve_orphan_scan_root(
+            save_path=str(year),
+            content_path=str(flat),
+            known_full_paths={str(flat)},
+            media_root=media,
+        )
+        is None
+    )
+    assert (
+        resolve_orphan_scan_root(
+            save_path=str(year),
+            content_path=None,
+            known_full_paths={str(flat)},
+            media_root=media,
+        )
+        is None
+    )
+
+
+def test_find_orphans_only_under_torrent_content(tmp_path: Path) -> None:
+    from app.services.file_tracker import FileTrackerService, KIND_ORPHAN
+
+    media = tmp_path / "anilibria"
+    year = media / "2012"
+    show = year / "Sakurasou"
+    show.mkdir(parents=True)
+    known = show / "ep01.mkv"
+    known.write_bytes(b"ok")
+    local_orphan = show / "extra.mkv"
+    local_orphan.write_bytes(b"orphan")
+    foreign = year / "Nekomonogatari" / "bonus.mkv"
+    foreign.parent.mkdir()
+    foreign.write_bytes(b"foreign")
+
+    svc = FileTrackerService(MagicMock())
+    changes = svc._find_orphans_under_root(
+        root=show,
+        known_full_paths={str(known.resolve())},
+        media_root=media,
+    )
+    paths = {c.full_path for c in changes}
+    assert str(local_orphan.resolve()) in paths
+    assert str(foreign.resolve()) not in paths
+    assert all(c.kind == KIND_ORPHAN for c in changes)

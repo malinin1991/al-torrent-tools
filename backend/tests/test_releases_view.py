@@ -198,6 +198,34 @@ def test_build_file_rows_checking_only_with_active_hash_job(monkeypatch) -> None
     assert rows[1].in_torrent is False
 
 
+def test_filter_removed_candidates_drops_foreign_titles(tmp_path, monkeypatch) -> None:
+    from app.services.releases_view import _filter_removed_candidates
+
+    media = tmp_path / "anilibria"
+    show = media / "2012" / "Sakurasou"
+    show.mkdir(parents=True)
+    ep = show / "ep01.mkv"
+    ep.write_bytes(b"1")
+    foreign = media / "2012" / "Nekomonogatari" / "bonus.mkv"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_bytes(b"x")
+    local_gone = show / "old.mkv"
+    local_gone.write_bytes(b"old")
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: media)
+
+    files = [SimpleNamespace(full_path=str(ep.resolve()))]
+    filtered = _filter_removed_candidates(
+        [
+            ("old.mkv", str(local_gone.resolve())),
+            (str(foreign.resolve()), str(foreign.resolve())),
+        ],
+        files,  # type: ignore[arg-type]
+    )
+    assert len(filtered) == 1
+    assert filtered[0][0] == "old.mkv"
+
+
 def test_info_hashes_with_active_hash_job_filters_wanted() -> None:
     info = "ab" * 20
     db = MagicMock()

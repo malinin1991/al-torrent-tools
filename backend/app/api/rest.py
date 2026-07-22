@@ -17,7 +17,7 @@ from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback, run_pi
 from app.jobs.waiting_master_retry import run_waiting_master_retry
 from app.jobs.waiting_slave_retry import run_waiting_slave_retry
 from app.services.anilibria_auth import login_and_store_token
-from app.services.db_maintenance import reset_full, reset_operational_state
+from app.services.db_maintenance import purge_false_orphan_events, reset_full, reset_operational_state
 from app.services.file_hasher import normalize_file_hash_workers_setting
 from app.services.job_runner import JobAlreadyRunningError, JobRunner, UnknownJobTypeError
 from app.services.pipeline import TorrentPipelineService
@@ -226,6 +226,12 @@ def api_reset_state(db: Session = Depends(get_db)) -> dict:
 @router.post("/maintenance/reset-full")
 def api_reset_full(db: Session = Depends(get_db)) -> dict:
     return reset_full(db)
+
+
+@router.post("/maintenance/purge-false-orphans")
+def api_purge_false_orphans(db: Session = Depends(get_db)) -> dict:
+    """Удалить ложные orphan-события (чужие тайтлы после скана save_path года)."""
+    return purge_false_orphan_events(db)
 
 
 @router.get("/extra-urls")

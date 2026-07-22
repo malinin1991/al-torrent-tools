@@ -3,7 +3,17 @@ from pathlib import Path
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Job, JobLog, ReleaseCheckpoint, SeenTorrent, TelegramOutbox, TorrentArchive, TorrentPipeline
+from app.db.models import (
+    FileChangeEvent,
+    Job,
+    JobLog,
+    ReleaseCheckpoint,
+    SeenTorrent,
+    TelegramOutbox,
+    TorrentArchive,
+    TorrentFile,
+    TorrentPipeline,
+)
 from app.services.torrent_archive import resolve_torrent_storage_root
 
 
@@ -53,3 +63,93 @@ def reset_full(db: Session, storage_root: Path | None = None) -> dict[str, int]:
     stats["torrent_files_removed"] = files_removed
     stats.pop("archive_kept", None)
     return stats
+
+
+def purge_false_orphan_events(
+    db: Session,
+    *,
+    media_root: Path | None = None,
+    commit: bool = True,
+) -> dict[str, int]:
+    """Удаляет ложные orphan-события вне корня контента торрента.
+
+    Раньше orphan-скан шёл по общему save_path года (/anilibria/2012) и писал
+    в file_change_events чужие тайтлы. Также снимает дубликаты (torrent_id+path).
+    """
+    from app.services.file_tracker import KIND_ORPHAN, resolve_orphan_scan_root
+    from app.services.torrent_files_meta import resolve_media_root
+
+    root_media = media_root or resolve_media_root()
+    orphans = list(
+        db.scalars(select(FileChangeEvent).where(FileChangeEvent.kind == KIND_ORPHAN)).all()
+    )
+    if not orphans:
+        return {
+            "orphan_events_scanned": 0,
+            "orphan_events_removed": 0,
+            "orphan_events_kept": 0,
+            "orphan_duplicates_removed": 0,
+        }
+
+    torrent_ids = {int(e.torrent_id) for e in orphans if e.torrent_id is not None}
+    files_by_torrent: dict[int, list[str]] = {}
+    if torrent_ids:
+        for row in db.scalars(
+            select(TorrentFile).where(TorrentFile.torrent_id.in_(torrent_ids))
+        ).all():
+            if row.full_path:
+                files_by_torrent.setdefault(int(row.torrent_id), []).append(row.full_path)
+
+    root_by_torrent: dict[int, Path | None] = {}
+    for tid, paths in files_by_torrent.items():
+        root_by_torrent[tid] = resolve_orphan_scan_root(
+            save_path=None,
+            content_path=None,
+            known_full_paths=set(paths),
+            media_root=root_media,
+        )
+
+    false_ids: set[int] = set()
+    for event in orphans:
+        if event.torrent_id is None:
+            false_ids.add(event.id)
+            continue
+        path_raw = event.full_path or event.relative_path
+        if not path_raw:
+            false_ids.add(event.id)
+            continue
+        scan_root = root_by_torrent.get(int(event.torrent_id))
+        if scan_root is None:
+            # Нет якоря по torrent_files — orphan от широкого скана, удаляем.
+            false_ids.add(event.id)
+            continue
+        try:
+            Path(path_raw).resolve().relative_to(scan_root)
+        except (ValueError, OSError):
+            false_ids.add(event.id)
+
+    # Дубликаты среди оставшихся: оставляем событие с наибольшим id.
+    remaining = [e for e in orphans if e.id not in false_ids]
+    keep_by_key: dict[tuple[int | None, str], int] = {}
+    dup_ids: set[int] = set()
+    for event in sorted(remaining, key=lambda item: item.id, reverse=True):
+        key = (event.torrent_id, (event.full_path or event.relative_path or "").strip())
+        if key in keep_by_key:
+            dup_ids.add(event.id)
+        else:
+            keep_by_key[key] = event.id
+
+    remove_ids = false_ids | dup_ids
+    if remove_ids:
+        db.execute(delete(FileChangeEvent).where(FileChangeEvent.id.in_(remove_ids)))
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+
+    return {
+        "orphan_events_scanned": len(orphans),
+        "orphan_events_removed": len(false_ids),
+        "orphan_duplicates_removed": len(dup_ids),
+        "orphan_events_kept": len(orphans) - len(remove_ids),
+    }

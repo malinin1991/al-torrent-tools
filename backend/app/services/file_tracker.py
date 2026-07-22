@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -277,13 +278,19 @@ class FileTrackerService:
                         )
                     )
 
-        # Orphan под корнем торрента относительно активных torrent_files
-        orphan_root = save_path or content_path
-        if orphan_root:
+        # Orphan только под корнем контента торрента (не общий save_path года).
+        known_paths = {r.full_path for r in rows if r.full_path}
+        orphan_root = resolve_orphan_scan_root(
+            save_path=save_path,
+            content_path=content_path,
+            known_full_paths=known_paths,
+            media_root=media_root,
+        )
+        if orphan_root is not None:
             result.changes.extend(
-                self._find_orphans_under_save_path(
-                    save_path=orphan_root,
-                    known_full_paths={r.full_path for r in rows if r.full_path},
+                self._find_orphans_under_root(
+                    root=orphan_root,
+                    known_full_paths=known_paths,
                     media_root=media_root,
                 )
             )
@@ -304,39 +311,42 @@ class FileTrackerService:
             )
         return result
 
-    def _find_orphans_under_save_path(
+    def _find_orphans_under_root(
         self,
         *,
-        save_path: str,
+        root: Path,
         known_full_paths: set[str | None],
         media_root: Path,
     ) -> list[FileChange]:
-        base = Path(save_path).resolve()
+        try:
+            base = root.resolve()
+        except OSError:
+            return []
         if not is_under_media_root(base, media_root=media_root):
             return []
-        if not base.exists():
+        if not base.is_dir():
             return []
         known = {Path(p).resolve() for p in known_full_paths if p}
         changes: list[FileChange] = []
-        walk_root = base if base.is_dir() else base.parent
-        if not walk_root.is_dir():
-            return []
-        for path in walk_root.rglob("*"):
+        for path in base.rglob("*"):
             if not path.is_file():
                 continue
             if path.name.endswith(".!qB"):
                 continue
-            if path.resolve() in known:
-                continue
-            if not is_under_media_root(path, media_root=media_root):
-                continue
-            # Только файлы под save_path этого торрента
             try:
-                path.resolve().relative_to(base if base.is_dir() else base.parent)
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved in known:
+                continue
+            if not is_under_media_root(resolved, media_root=media_root):
+                continue
+            try:
+                resolved.relative_to(base)
             except ValueError:
                 continue
             changes.append(
-                FileChange(kind=KIND_ORPHAN, relative_path=None, full_path=str(path.resolve()))
+                FileChange(kind=KIND_ORPHAN, relative_path=None, full_path=str(resolved))
             )
         return changes
 
@@ -346,8 +356,8 @@ class FileTrackerService:
         torrent_id: int,
         changes: list[FileChange],
     ) -> list[FileChange]:
-        """Не дублировать повторные missing/modified/removed для того же пути."""
-        dedup_kinds = {KIND_MISSING, KIND_MODIFIED, KIND_REMOVED}
+        """Не дублировать повторные missing/modified/removed/orphan для того же пути."""
+        dedup_kinds = {KIND_MISSING, KIND_MODIFIED, KIND_REMOVED, KIND_ORPHAN}
         filtered: list[FileChange] = []
         for change in changes:
             if change.kind not in dedup_kinds:
@@ -496,6 +506,91 @@ class FileTrackerService:
         except Exception as exc:
             self._log(f"hash_torrent: ошибка qB master: {exc}", "warning")
             return None, None, {}
+
+
+def resolve_orphan_scan_root(
+    *,
+    save_path: str | None,
+    content_path: str | None,
+    known_full_paths: set[str | None] | set[str],
+    media_root: Path,
+) -> Path | None:
+    """Корень для orphan-скана: папка контента торрента, не общий save_path категории.
+
+    qB часто ставит save_path=/anilibria/2012 на все раздачи года — обход этого каталога
+    помечал бы чужие тайтлы как orphan текущего торрента.
+    """
+    try:
+        media = media_root.resolve()
+    except OSError:
+        media = media_root
+
+    save_resolved: Path | None = None
+    if save_path and save_path.strip():
+        try:
+            save_resolved = Path(save_path).resolve()
+        except OSError:
+            save_resolved = Path(save_path)
+
+    known_files: list[Path] = []
+    for raw in known_full_paths:
+        if not raw:
+            continue
+        try:
+            known_files.append(Path(raw).resolve())
+        except OSError:
+            known_files.append(Path(raw))
+    known_strs = {str(p) for p in known_files}
+
+    if content_path and content_path.strip():
+        try:
+            content = Path(content_path).resolve()
+        except OSError:
+            content = Path(content_path)
+        content_is_file = False
+        try:
+            if content.exists():
+                content_is_file = content.is_file()
+            else:
+                # Медиа может быть не смонтировано (UI): файл = путь из known.
+                content_is_file = str(content) in known_strs
+        except OSError:
+            content_is_file = str(content) in known_strs
+        if content_is_file:
+            return None
+        if is_under_media_root(content, media_root=media) and content != media:
+            return content
+
+    if not known_files:
+        return None
+
+    try:
+        common = Path(os.path.commonpath([str(p) for p in known_files]))
+    except ValueError:
+        return None
+
+    # commonpath одного файла = сам файл; нескольких под Show/ = каталог Show
+    # (без exists(): на UI диск может быть недоступен).
+    root = common.parent if str(common) in known_strs else common
+    try:
+        root = root.resolve()
+    except OSError:
+        pass
+    if not is_under_media_root(root, media_root=media) or root == media:
+        return None
+
+    # Корень совпал с общим save_path категории (год) — слишком широко, кроме случая
+    # когда qB save_path уже = папка этого торрента (content_path совпадает).
+    if save_resolved is not None and root == save_resolved:
+        content_ok = False
+        if content_path and content_path.strip():
+            try:
+                content_ok = Path(content_path).resolve() == root
+            except OSError:
+                content_ok = Path(content_path) == root
+        if not content_ok:
+            return None
+    return root
 
 
 def update_api_present_for_release(
