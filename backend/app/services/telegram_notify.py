@@ -354,7 +354,7 @@ def enqueue_tracking_toggle_notification(
     if not chat_id:
         return None
     title_value = _safe_notify_title(title)
-    prefix = "✅ Добавлен: " if enabled else "✅ Отключен: "
+    prefix = "✅ Добавлен: " if enabled else "❌ Отключен: "
     text = truncate_telegram_text(f"{prefix}{title_value}", _TELEGRAM_TEXT_MAX)
     payload = {
         "disable_web_page_preview": True,

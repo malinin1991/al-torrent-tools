@@ -250,7 +250,7 @@ def test_enqueue_tracking_toggle_notification_add_and_del() -> None:
     disabled = enqueue_tracking_toggle_notification(db, enabled=False, title="Show!", commit=False)
     assert disabled is not None
     outbox2 = db.add.call_args[0][0]
-    assert outbox2.payload_json["text"] == "✅ Отключен: Show!"
+    assert outbox2.payload_json["text"] == "❌ Отключен: Show!"
     assert "parse_mode" not in outbox2.payload_json
     assert db.commit.call_count == 0
     assert db.flush.called

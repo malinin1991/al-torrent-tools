@@ -139,7 +139,7 @@ async def del_alias(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if row is None:
                 await update.message.reply_text("❌ Релиз не найден в отслеживании")
                 return
-            await update.message.reply_text(f"✅ Отключен: {row.title or row.release_alias}")
+            await update.message.reply_text(f"❌ Отключен: {row.title or row.release_alias}")
     except Exception as exc:
         logger.exception("Ошибка /del")
         await update.message.reply_text(f"❌ Ошибка: {exc}")
