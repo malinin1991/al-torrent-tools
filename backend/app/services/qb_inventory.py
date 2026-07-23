@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from app.utils.datetime_fmt import utcnow
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -235,10 +235,15 @@ def build_inventory(
 
 def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> int:
     """Upsert torrent_files по inventory; возвращает число upsert."""
-    now = datetime.utcnow()
+    now = utcnow()
     by_hash: dict[str, list[InventoryFile]] = {}
     for item in inventory.files:
         by_hash.setdefault(item.info_hash, []).append(item)
+
+    # Ленивый импорт: file_tracker импортирует из этого модуля не нужно, но избегаем циклов.
+    from app.services.file_tracker import FileTrackerService
+
+    tracker = FileTrackerService(db)
 
     upserted = 0
     for info_hash, files in by_hash.items():
@@ -246,11 +251,25 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
             row.relative_path: row
             for row in db.scalars(select(TorrentFile).where(TorrentFile.info_hash == info_hash)).all()
         }
+        # Начальный ui_status новых строк — по составу прошлой версии (как в file_tracker),
+        # чтобы не залипал ошибочный «новый» (его потом не сбрасывает _settle_ui_status).
+        torrent_id = next((f.torrent_id for f in files if f.torrent_id), None)
+        if torrent_id is not None:
+            has_prior_version, prior_version_paths = tracker.prior_version_composition(
+                torrent_id=torrent_id, info_hash=info_hash
+            )
+        else:
+            has_prior_version, prior_version_paths = False, set()
         seen_paths: set[str] = set()
         for item in files:
             seen_paths.add(item.relative_path)
             row = existing.get(item.relative_path)
             if row is None:
+                first_seen = tracker.first_seen_for_path(
+                    has_prior_version=has_prior_version,
+                    prior_version_paths=prior_version_paths,
+                    relative_path=item.relative_path,
+                )
                 db.add(
                     TorrentFile(
                         torrent_id=item.torrent_id,
@@ -261,6 +280,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                         file_index=item.file_index,
                         selected=item.selected,
                         full_path=item.full_path,
+                        ui_status="new" if first_seen else "ok",
                         created_at=now,
                         updated_at=now,
                     )
@@ -273,6 +293,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                 row.selected = item.selected
                 row.full_path = item.full_path
                 row.updated_at = now
+                # Не трогаем sticky ui_status — его выставляет file_tracker.
             upserted += 1
         for rel, row in existing.items():
             if rel not in seen_paths:
@@ -285,6 +306,8 @@ def prune_stale_inventory(db: Session, inventory: InventoryResult) -> dict[str, 
     """Удалить torrent_files / disk_file_hashes, которых нет в актуальном inventory.
 
     Hash с failed torrents_files не трогаем (временный сбой qB).
+    Hash, сохранённые в torrent_archive (в т.ч. superseded/архивные) — не трогаем:
+    это история состава по каждому торренту релиза.
     """
     if not inventory.valid_hashes:
         # Пустой inventory (сбой qB / всё отфильтровано) — не трогаем БД.
@@ -295,7 +318,23 @@ def prune_stale_inventory(db: Session, inventory: InventoryResult) -> dict[str, 
     known_paths = {item.full_path for item in inventory.files if item.full_path}
 
     tf_rows = list(db.scalars(select(TorrentFile)).all())
-    # Пути failed-раздач защищаем и в disk_file_hashes.
+    # Архивные hash защищаем точечно: только кандидаты на удаление (не весь archive).
+    candidate_hashes = {
+        (row.info_hash or "").strip().lower()
+        for row in tf_rows
+        if (row.info_hash or "").strip()
+    } - known_hashes - protect_hashes
+    if candidate_hashes:
+        archive_protect = {
+            (h or "").strip().lower()
+            for h in db.scalars(
+                select(TorrentArchive.info_hash).where(TorrentArchive.info_hash.in_(candidate_hashes))
+            ).all()
+            if h
+        }
+        protect_hashes |= archive_protect
+
+    # Пути failed-раздач и архивной истории защищаем и в disk_file_hashes.
     for row in tf_rows:
         info_hash = (row.info_hash or "").strip().lower()
         if info_hash in protect_hashes and row.full_path:

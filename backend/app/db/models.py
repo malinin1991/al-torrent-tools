@@ -5,13 +5,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.utils.datetime_fmt import utcnow
 
 
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class ExtraUrl(Base):
@@ -21,7 +22,7 @@ class ExtraUrl(Base):
     release_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Job(Base):
@@ -33,7 +34,7 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     logs: Mapped[list["JobLog"]] = relationship(back_populates="job", cascade="all, delete-orphan")
 
 
@@ -43,7 +44,7 @@ class JobLog(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     level: Mapped[str] = mapped_column(String(20), nullable=False, default="info")
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     job: Mapped["Job"] = relationship(back_populates="logs")
 
 
@@ -54,7 +55,7 @@ class SeenTorrent(Base):
     info_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     release_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     uploaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    processed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ReleaseCheckpoint(Base):
@@ -65,7 +66,7 @@ class ReleaseCheckpoint(Base):
     api_updated_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     api_fresh_at: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     torrents_fingerprint: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    processed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class TrackedRelease(Base):
@@ -77,7 +78,7 @@ class TrackedRelease(Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="ui")  # bot|ui
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class TelegramOutbox(Base):
@@ -95,7 +96,7 @@ class TelegramOutbox(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -111,7 +112,7 @@ class TorrentPipeline(Base):
     master_added_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     slave_added_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class TorrentArchive(Base):
@@ -131,7 +132,9 @@ class TorrentArchive(Base):
     file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # True = торрент сейчас в ответе AniLibria API; False = архивный (снят с раздачи).
     api_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # True = заменён новой версией того же torrent_id (другой info_hash) — храним как историю.
+    superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class TorrentFile(Base):
@@ -148,8 +151,10 @@ class TorrentFile(Base):
     file_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     selected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     full_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Sticky статус для UI: new|ok|changed — не пересчитывается с диска.
+    ui_status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class DiskFileHash(Base):
@@ -162,7 +167,7 @@ class DiskFileHash(Base):
     mtime: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     content_hash: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     hash_algo: Mapped[str] = mapped_column(String(32), nullable=False, default="blake3")
-    last_checked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_hashed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
@@ -173,11 +178,12 @@ class FileChangeEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     release_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     torrent_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    info_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     full_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     details_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 

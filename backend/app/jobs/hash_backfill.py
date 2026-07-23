@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from app.utils.datetime_fmt import utcnow
 from pathlib import Path
 from typing import Any
 
@@ -38,10 +38,10 @@ def _get_checkpoint(db: Session) -> str:
 def _set_checkpoint(db: Session, value: str) -> None:
     row = db.get(Setting, CHECKPOINT_KEY)
     if row is None:
-        db.add(Setting(key=CHECKPOINT_KEY, value=value, updated_at=datetime.utcnow()))
+        db.add(Setting(key=CHECKPOINT_KEY, value=value, updated_at=utcnow()))
     else:
         row.value = value
-        row.updated_at = datetime.utcnow()
+        row.updated_at = utcnow()
     db.commit()
 
 

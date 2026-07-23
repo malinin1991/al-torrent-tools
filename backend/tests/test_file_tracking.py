@@ -99,17 +99,19 @@ def test_hash_gate_skips_reread_when_size_mtime_match(tmp_path: Path) -> None:
 
 def test_update_api_present_for_release() -> None:
     db = MagicMock()
-    a = SimpleNamespace(torrent_id=1, api_present=True)
-    b = SimpleNamespace(torrent_id=2, api_present=True)
-    c = SimpleNamespace(torrent_id=3, api_present=False)
-    db.scalars.return_value.all.return_value = [a, b, c]
+    a = SimpleNamespace(torrent_id=1, api_present=True, superseded=False)
+    b = SimpleNamespace(torrent_id=2, api_present=True, superseded=False)
+    c = SimpleNamespace(torrent_id=3, api_present=False, superseded=False)
+    old = SimpleNamespace(torrent_id=1, api_present=True, superseded=True)
+    db.scalars.return_value.all.return_value = [a, b, c, old]
 
     stats = update_api_present_for_release(db, release_id=10, present_torrent_ids={1, 3})
 
     assert a.api_present is True
     assert b.api_present is False
     assert c.api_present is True
-    assert stats["false"] == 1
+    assert old.api_present is False
+    assert stats["false"] == 2
     assert stats["true"] == 1
     db.commit.assert_called()
 
@@ -350,6 +352,164 @@ def test_hash_torrent_retriable_skip_raises(monkeypatch: pytest.MonkeyPatch) -> 
         )
 
 
+def test_sync_composition_persists_added_before_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """added/removed пишутся до хеша — stop не должен их терять."""
+    from app.services.file_tracker import KIND_ADDED, _CompositionSync
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "ab" * 20
+    torrent_id = 42
+    release_id = 7
+
+    db = MagicMock()
+    # previous torrent_files empty
+    db.scalars.return_value.all.return_value = []
+    db.scalar.side_effect = [
+        None,  # _prior_version_hash → нет предыдущей версии
+    ]
+
+    service = FileTrackerService(db)
+    persisted: list[list[FileChange]] = []
+
+    def fake_persist(*, release_id, torrent_id, changes, info_hash=None):  # noqa: ANN001
+        persisted.append(list(changes))
+        return [SimpleNamespace(kind=c.kind, relative_path=c.relative_path) for c in changes]
+
+    monkeypatch.setattr(service, "_persist_events", fake_persist)
+    monkeypatch.setattr(
+        service,
+        "_qb_paths_and_priorities",
+        lambda _h: (str(media), str(media), {}),
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_media_root",
+        lambda: media,
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_full_path",
+        lambda *a, **k: media / "Show Name" / "ep01.mkv",
+    )
+
+    synced = service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=torrent_id,
+        release_id=release_id,
+        torrent_bytes=_multi_file_torrent_bytes(),
+    )
+    assert isinstance(synced, _CompositionSync)
+    assert synced.has_prior_version is False
+    assert len(persisted) == 1
+    assert all(c.kind == KIND_ADDED for c in persisted[0])
+    assert len(persisted[0]) == 2
+    assert synced.result.files_upserted == 2
+
+
+def test_sync_composition_heals_added_when_rows_exist_without_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inventory успел записать torrent_files без events → heal added."""
+    from app.services.file_tracker import KIND_ADDED
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "cd" * 20
+    rel = str(Path("Show Name") / "ep01.mkv")
+    existing = SimpleNamespace(
+        relative_path=rel,
+        torrent_id=1,
+        release_id=1,
+        size=1,
+        file_index=0,
+        selected=True,
+        full_path=str(media / rel),
+        ui_status="ok",
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [existing]
+    # _prior_version_hash → None; per-row _has_prior_event → None
+    db.scalar.side_effect = [None, None]
+
+    service = FileTrackerService(db)
+    persisted: list[FileChange] = []
+
+    def fake_persist(*, release_id, torrent_id, changes, info_hash=None):  # noqa: ANN001
+        persisted.extend(changes)
+        return [SimpleNamespace(kind=c.kind) for c in changes]
+
+    monkeypatch.setattr(service, "_persist_events", fake_persist)
+    monkeypatch.setattr(service, "_qb_paths_and_priorities", lambda _h: (str(media), str(media), {}))
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_full_path",
+        lambda *_a, **_k: media / "x.mkv",
+    )
+    # Только один файл из multi — подменим parse
+    monkeypatch.setattr(
+        "app.services.file_tracker.parse_torrent_file_list",
+        lambda _b: [SimpleNamespace(relative_path=rel, size=100, file_index=0)],
+    )
+
+    synced = service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=9,
+        release_id=3,
+        torrent_bytes=b"unused",
+    )
+    assert synced.has_prior_version is False
+    assert len(persisted) == 1
+    assert persisted[0].kind == KIND_ADDED
+    assert persisted[0].relative_path == rel
+    assert existing.ui_status == "new"
+
+
+def test_mark_master_added_triggers_composition_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = MagicMock()
+    pipeline = SimpleNamespace(
+        id=1,
+        status="discovered",
+        info_hash="ef" * 20,
+        torrent_id=5,
+        release_id=8,
+        master_added_at=None,
+        error="x",
+    )
+    service = TorrentPipelineService(db)
+    service._add_log = MagicMock()  # type: ignore[method-assign]
+    called: dict[str, object] = {}
+
+    class FakeTracker:
+        def __init__(self, _db):
+            pass
+
+        def sync_torrent_composition(self, **kwargs):
+            called.update(kwargs)
+            return SimpleNamespace(
+                skipped_reason=None,
+                files_upserted=2,
+                changes=[
+                    FileChange(kind="added", relative_path="a.mkv"),
+                    FileChange(kind="added", relative_path="b.mkv"),
+                ],
+            )
+
+    monkeypatch.setattr(
+        "app.services.file_tracker.FileTrackerService",
+        FakeTracker,
+    )
+    service.load_torrent_bytes_from_archive = MagicMock(return_value=b"torrent")  # type: ignore[method-assign]
+
+    service.mark_master_added(pipeline)
+
+    assert pipeline.status == TorrentPipelineService.STATUS_MASTER_ADDED
+    assert called["info_hash"] == pipeline.info_hash
+    assert called["torrent_id"] == 5
+    assert called["notify"] is False
+    assert any("sync состава" in str(c) for c in service._add_log.call_args_list)
+
+
 def test_filter_duplicate_changes_skips_repeated_missing() -> None:
     db = MagicMock()
     service = FileTrackerService(db)
@@ -357,6 +517,7 @@ def test_filter_duplicate_changes_skips_repeated_missing() -> None:
 
     filtered = service._filter_duplicate_changes(  # type: ignore[attr-defined]
         torrent_id=10,
+        info_hash="aa" * 20,
         changes=[
             FileChange(kind="missing", relative_path="Show/ep01.mkv", full_path="/anilibria/Show/ep01.mkv"),
             FileChange(kind="added", relative_path="Show/ep02.mkv", full_path="/anilibria/Show/ep02.mkv"),
@@ -439,28 +600,33 @@ def test_split_active_archived() -> None:
     assert len(archived) == 1 and archived[0].torrent_id == 2
 
 
-def test_file_status_for_ui_disk_semantics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_file_status_for_ui_sticky_semantics() -> None:
     from app.services.file_tracker import file_status_for_ui
 
-    present = tmp_path / "present.mkv"
-    present.write_bytes(b"x")
-    missing = tmp_path / "missing.mkv"
-    incomplete = tmp_path / "dl.mkv"
-    (tmp_path / "dl.mkv.!qB").write_bytes(b"partial")
-
+    # Sticky new — не зависит от диска
     assert (
-        file_status_for_ui(relative_path="m.mkv", full_path=str(missing), in_torrent=True)
+        file_status_for_ui(
+            relative_path="p.mkv",
+            full_path="/media/p.mkv",
+            ui_status="new",
+            in_torrent=True,
+        )
         == "new"
     )
     assert (
-        file_status_for_ui(relative_path="p.mkv", full_path=str(present), in_torrent=True)
+        file_status_for_ui(
+            relative_path="p.mkv",
+            full_path="/media/p.mkv",
+            ui_status="ok",
+            in_torrent=True,
+        )
         == "ok"
     )
     assert (
         file_status_for_ui(
             relative_path="p.mkv",
-            full_path=str(present),
-            latest_kind="modified",
+            full_path="/media/p.mkv",
+            ui_status="changed",
             in_torrent=True,
         )
         == "changed"
@@ -468,52 +634,420 @@ def test_file_status_for_ui_disk_semantics(tmp_path: Path, monkeypatch: pytest.M
     assert (
         file_status_for_ui(
             relative_path="old.mkv",
-            full_path=str(present),
+            full_path="/media/old.mkv",
             in_torrent=False,
         )
         == "removed"
     )
-    # Новый .!qB без прежнего hash → new
+    # Fallback на latest_kind, если ui_status пуст
     assert (
         file_status_for_ui(
-            relative_path="dl.mkv",
-            full_path=str(incomplete),
-            disk_hash=None,
+            relative_path="p.mkv",
+            full_path="/media/p.mkv",
+            latest_kind="added",
             in_torrent=True,
         )
         == "new"
     )
-    # Известный файл ушёл в .!qB → checking
-    assert (
-        file_status_for_ui(
-            relative_path="dl.mkv",
-            full_path=str(incomplete),
-            disk_hash=SimpleNamespace(content_hash="abc", size=1, mtime=1.0),
-            in_torrent=True,
-        )
-        == "checking"
-    )
-    # Событие added не делает «новый», если файл уже на диске
     assert (
         file_status_for_ui(
             relative_path="p.mkv",
-            full_path=str(present),
-            latest_kind="added",
+            full_path="/media/p.mkv",
+            latest_kind="modified",
             in_torrent=True,
         )
-        == "ok"
+        == "changed"
     )
-    # Active hash job на известном файле → checking
+    # checking — временный оверлей
     assert (
         file_status_for_ui(
             relative_path="p.mkv",
-            full_path=str(present),
-            disk_hash=SimpleNamespace(content_hash="abc", size=1, mtime=1.0),
+            full_path="/media/p.mkv",
+            ui_status="ok",
             hash_job_active=True,
             in_torrent=True,
         )
         == "checking"
     )
+    # incremental new без prior hash — остаётся new даже при active job
+    assert (
+        file_status_for_ui(
+            relative_path="p.mkv",
+            full_path="/media/p.mkv",
+            ui_status="new",
+            disk_hash=None,
+            hash_job_active=True,
+            in_torrent=True,
+        )
+        == "new"
+    )
+
+
+def test_settle_ui_status_rules() -> None:
+    from app.services.file_tracker import (
+        FileTrackerService,
+        UI_STATUS_CHANGED,
+        UI_STATUS_NEW,
+        UI_STATUS_OK,
+    )
+
+    # new/changed — финальные, не понижаются
+    row = SimpleNamespace(ui_status=UI_STATUS_NEW)
+    FileTrackerService._settle_ui_status(row, first_seen=False, mismatch=True, matched=False)
+    assert row.ui_status == UI_STATUS_NEW
+
+    row.ui_status = UI_STATUS_CHANGED
+    FileTrackerService._settle_ui_status(row, first_seen=True, mismatch=False, matched=True)
+    assert row.ui_status == UI_STATUS_CHANGED
+
+    # ok + first_seen → new (файла не было в прошлой версии)
+    row.ui_status = UI_STATUS_OK
+    FileTrackerService._settle_ui_status(row, first_seen=True, mismatch=False, matched=False)
+    assert row.ui_status == UI_STATUS_NEW
+
+    # ok + mismatch → changed
+    row.ui_status = UI_STATUS_OK
+    FileTrackerService._settle_ui_status(row, first_seen=False, mismatch=True, matched=False)
+    assert row.ui_status == UI_STATUS_CHANGED
+
+    # ok + matched → ok
+    row.ui_status = UI_STATUS_OK
+    FileTrackerService._settle_ui_status(row, first_seen=False, mismatch=False, matched=True)
+    assert row.ui_status == UI_STATUS_OK
+
+    # нет данных для сравнения → статус не меняем (существовавший файл уже создан как ok)
+    row.ui_status = UI_STATUS_OK
+    FileTrackerService._settle_ui_status(row, first_seen=False, mismatch=False, matched=False)
+    assert row.ui_status == UI_STATUS_OK
+
+    # нет данных, пустой статус → остаётся как есть (не фабрикуем ok)
+    row.ui_status = ""
+    FileTrackerService._settle_ui_status(row, first_seen=False, mismatch=False, matched=False)
+    assert row.ui_status == ""
+
+
+def test_sync_composition_status_by_prior_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Новый файл vs прошлая версия → «новый»; существовавший → «ok» (хеш уточнит)."""
+    from app.services.file_tracker import TorrentFile, UI_STATUS_NEW, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "33" * 20
+    ep01 = "Show Name/ep01.mkv"  # был в прошлой версии
+    ep02 = "Show Name/ep02.mkv"  # новый
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []  # для этого info_hash строк ещё нет
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(service, "_prior_version_hash", lambda **_k: "prev")
+    monkeypatch.setattr(service, "_prior_version_paths", lambda **_k: {ep01})
+    persisted: list[FileChange] = []
+    monkeypatch.setattr(
+        service,
+        "_persist_events",
+        lambda *, release_id, torrent_id, changes, info_hash=None: persisted.extend(changes) or [],
+    )
+    monkeypatch.setattr(service, "_qb_paths_and_priorities", lambda _h: (str(media), str(media), {}))
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_full_path",
+        lambda base, rel, **_k: media / rel,
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.parse_torrent_file_list",
+        lambda _b: [
+            SimpleNamespace(relative_path=ep01, size=1, file_index=0),
+            SimpleNamespace(relative_path=ep02, size=2, file_index=1),
+        ],
+    )
+
+    synced = service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=1,
+        release_id=2,
+        torrent_bytes=b"x",
+    )
+
+    assert synced.has_prior_version is True
+    assert synced.first_seen_paths == {ep02}
+    rows = {r.relative_path: r for r in created if isinstance(r, TorrentFile)}
+    assert rows[ep01].ui_status == UI_STATUS_OK
+    assert rows[ep02].ui_status == UI_STATUS_NEW
+    # added-событие только на реально новый файл
+    assert [c.relative_path for c in persisted] == [ep02]
+
+
+def _run_track_settle(
+    tmp_path,
+    monkeypatch,
+    *,
+    initial_status: str,
+    first_seen: bool,
+    has_prior: bool,
+    prev_hash: object,
+    new_hash: str,
+    events: list,
+):
+    """Хелпер: прогнать track_torrent над одним файлом и вернуть (row, notified)."""
+    from app.services.file_tracker import TrackTorrentResult
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "44" * 20
+    rel = "Show/ep01.mkv"
+    full = media / rel
+    full.parent.mkdir(parents=True)
+    full.write_bytes(b"data")
+
+    file_row = SimpleNamespace(
+        relative_path=rel, selected=True, full_path=str(full), ui_status=initial_status
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [file_row]
+    db.scalar.side_effect = [prev_hash, SimpleNamespace(content_hash=new_hash)]
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(
+        service,
+        "_prepare_track",
+        lambda **_k: SimpleNamespace(
+            normalized_hash=info_hash, torrent_bytes=b"x", archive=None, skipped_reason=None
+        ),
+    )
+    monkeypatch.setattr(service, "_prior_version_hash", lambda **_k: None)
+    monkeypatch.setattr(service, "_prior_version_hashes", lambda **_k: {})
+    monkeypatch.setattr(
+        service,
+        "_sync_composition",
+        lambda **_k: SimpleNamespace(
+            result=TrackTorrentResult(),
+            events=list(events),
+            has_prior_version=has_prior,
+            save_path=str(media),
+            content_path=str(media),
+            first_seen_paths={rel} if first_seen else set(),
+        ),
+    )
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.hash_paths_parallel",
+        lambda *_a, **_k: {"hashed": 1, "gated": 0, "errors": 0, "stopped": False},
+    )
+    monkeypatch.setattr(service, "_filter_duplicate_changes", lambda **_k: [])
+    monkeypatch.setattr(service, "_persist_events", lambda **_k: [])
+    monkeypatch.setattr("app.services.file_tracker.resolve_orphan_scan_root", lambda **_k: None)
+    notified: list[dict] = []
+    monkeypatch.setattr(service, "_maybe_notify_telegram", lambda **kw: notified.append(kw))
+
+    service.track_torrent(info_hash=info_hash, torrent_id=1, release_id=2, notify=True)
+    return file_row, notified
+
+
+def test_track_new_version_unchanged_file_ok(tmp_path, monkeypatch) -> None:
+    """Новая версия, файл был раньше и хеш совпал → ok."""
+    from app.services.file_tracker import UI_STATUS_OK
+
+    row, _ = _run_track_settle(
+        tmp_path,
+        monkeypatch,
+        initial_status="ok",
+        first_seen=False,
+        has_prior=True,
+        prev_hash=SimpleNamespace(content_hash="abc"),
+        new_hash="abc",
+        events=[],
+    )
+    assert row.ui_status == UI_STATUS_OK
+
+
+def test_track_new_version_changed_file_changed(tmp_path, monkeypatch) -> None:
+    """Новая версия, хеш разошёлся с прошлой → изменён (финально)."""
+    from app.services.file_tracker import UI_STATUS_CHANGED
+
+    row, _ = _run_track_settle(
+        tmp_path,
+        monkeypatch,
+        initial_status="ok",
+        first_seen=False,
+        has_prior=True,
+        prev_hash=SimpleNamespace(content_hash="abc"),
+        new_hash="xyz",
+        events=[],
+    )
+    assert row.ui_status == UI_STATUS_CHANGED
+
+
+def test_track_first_ever_file_stays_new(tmp_path, monkeypatch) -> None:
+    """Первый торрент релиза (нет прошлой версии) → файл «новый» и остаётся новым."""
+    from app.services.file_tracker import UI_STATUS_NEW
+
+    row, notified = _run_track_settle(
+        tmp_path,
+        monkeypatch,
+        initial_status="new",
+        first_seen=True,
+        has_prior=False,
+        prev_hash=None,
+        new_hash="abc",
+        events=[SimpleNamespace(kind="added", relative_path="Show/ep01.mkv")],
+    )
+    assert row.ui_status == UI_STATUS_NEW
+    assert len(notified) == 1
+    assert notified[0]["baseline"] is True
+
+
+def test_prepare_track_prefers_exact_info_hash() -> None:
+    """Не берём активную другую версию torrent_id вместо точного info_hash."""
+    old = SimpleNamespace(info_hash="aa" * 20, torrent_id=7, api_present=False, superseded=True)
+    db = MagicMock()
+    # Первый scalar — exact hash (superseded, api_present=False) → skip
+    db.scalar.return_value = old
+
+    service = FileTrackerService(db)
+    prepared = service._prepare_track(  # type: ignore[attr-defined]
+        info_hash="aa" * 20,
+        torrent_id=7,
+        torrent_bytes=None,
+    )
+    assert prepared.skipped_reason == "торрент не api_present (архивный)"
+    assert prepared.archive is old
+    # Не должно быть второго lookup по torrent_id
+    assert db.scalar.call_count == 1
+
+
+def test_prior_version_hash_selection() -> None:
+    """Возвращает самый свежий info_hash того же torrent_id, отличный от текущего."""
+    db = MagicMock()
+    db.scalar.return_value = "BB" + "b" * 38  # архив вернул uppercase
+    service = FileTrackerService(db)
+    prior = service._prior_version_hash(torrent_id=7, current_hash="aa" * 20)  # type: ignore[attr-defined]
+    assert prior == ("bb" + "b" * 38)  # нормализован в lower
+    # Нет предыдущей версии → None
+    db.scalar.return_value = None
+    assert service._prior_version_hash(torrent_id=7, current_hash="aa" * 20) is None  # type: ignore[attr-defined]
+
+
+def test_prior_version_hashes_single_in_query() -> None:
+    """content_hash прошлой версии собираются одним IN-запросом (без N+1)."""
+    db = MagicMock()
+    prior_files = [
+        SimpleNamespace(relative_path="a.mkv", full_path="/m/a.mkv"),
+        SimpleNamespace(relative_path="b.mkv", full_path="/m/b.mkv"),
+        SimpleNamespace(relative_path="c.mkv", full_path=None),  # без пути — пропуск
+    ]
+    disk = [
+        SimpleNamespace(full_path="/m/a.mkv", content_hash="h1"),
+        SimpleNamespace(full_path="/m/b.mkv", content_hash="h2"),
+    ]
+    calls = {"n": 0}
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    def fake_scalars(_stmt):
+        calls["n"] += 1
+        return FakeScalars(prior_files if calls["n"] == 1 else disk)
+
+    db.scalars.side_effect = fake_scalars
+    service = FileTrackerService(db)
+    result = service._prior_version_hashes(prior_hash="bb" * 20)  # type: ignore[attr-defined]
+    assert result == {"a.mkv": "h1", "b.mkv": "h2"}
+    # ровно 2 запроса scalars: TorrentFile + DiskFileHash IN (не N+1)
+    assert calls["n"] == 2
+
+
+def test_sync_composition_prior_archive_but_lost_composition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Прошлая версия есть (архив), но её состав потерян → файлы НЕ помечаются «новый»."""
+    from app.services.file_tracker import TorrentFile, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "55" * 20
+    rel = "Show/ep01.mkv"
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []  # нет строк текущей версии
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    service = FileTrackerService(db)
+    # Прошлая версия существует, но её состав пуст (потерян).
+    monkeypatch.setattr(service, "_prior_version_hash", lambda **_k: "44" * 20)
+    monkeypatch.setattr(service, "_prior_version_paths", lambda **_k: set())
+    persisted: list[FileChange] = []
+    monkeypatch.setattr(
+        service,
+        "_persist_events",
+        lambda *, release_id, torrent_id, changes, info_hash=None: persisted.extend(changes) or [],
+    )
+    monkeypatch.setattr(service, "_qb_paths_and_priorities", lambda _h: (str(media), str(media), {}))
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr("app.services.file_tracker.resolve_full_path", lambda base, r, **_k: media / r)
+    monkeypatch.setattr(
+        "app.services.file_tracker.parse_torrent_file_list",
+        lambda _b: [SimpleNamespace(relative_path=rel, size=1, file_index=0)],
+    )
+
+    synced = service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=1,
+        release_id=2,
+        torrent_bytes=b"x",
+    )
+    # Архив прошлой версии есть → это НЕ baseline (никакой сводки «файлы в базе»).
+    assert synced.has_prior_version is True
+    # Состав неизвестен → файл считается существовавшим (ok), не «новый», без added-события.
+    assert synced.first_seen_paths == set()
+    rows = [r for r in created if isinstance(r, TorrentFile)]
+    assert rows[0].ui_status == UI_STATUS_OK
+    assert persisted == []
+
+
+def test_maybe_notify_baseline_skips_missing() -> None:
+    from app.services.file_tracker import KIND_ADDED, KIND_MISSING
+
+    db = MagicMock()
+    db.get.return_value = SimpleNamespace(enabled=True)
+    service = FileTrackerService(db)
+    notified: list = []
+
+    def fake_enqueue(db, **kwargs):  # noqa: ANN001
+        notified.append(kwargs)
+        return None
+
+    import app.services.telegram_notify as tg
+
+    original = tg.enqueue_file_changes_notification
+    tg.enqueue_file_changes_notification = fake_enqueue  # type: ignore[assignment]
+    try:
+        # monkeypatch via module — проще через notify path
+        service._maybe_notify_telegram(  # type: ignore[attr-defined]
+            release_id=1,
+            torrent_id=2,
+            events=[
+                SimpleNamespace(kind=KIND_ADDED, relative_path="a.mkv", full_path=None),
+                SimpleNamespace(kind=KIND_MISSING, relative_path="b.mkv", full_path=None),
+            ],
+            archive=None,
+            baseline=True,
+        )
+    finally:
+        tg.enqueue_file_changes_notification = original  # type: ignore[assignment]
+
+    assert len(notified) == 1
+    kinds = [getattr(e, "kind", None) for e in notified[0]["events"]]
+    assert kinds == [KIND_ADDED]
 
 
 def test_file_status_for_ui_checking_requires_prior_hash(tmp_path: Path) -> None:
@@ -526,6 +1060,7 @@ def test_file_status_for_ui_checking_requires_prior_hash(tmp_path: Path) -> None
         file_status_for_ui(
             relative_path="ep.mkv",
             full_path=str(present),
+            ui_status="ok",
             disk_hash=disk_hash,
             hash_job_active=False,
         )
@@ -535,10 +1070,21 @@ def test_file_status_for_ui_checking_requires_prior_hash(tmp_path: Path) -> None
         file_status_for_ui(
             relative_path="ep.mkv",
             full_path=str(present),
+            ui_status="new",
             disk_hash=None,
             hash_job_active=True,
         )
-        == "ok"
+        == "new"
+    )
+    assert (
+        file_status_for_ui(
+            relative_path="ep.mkv",
+            full_path=str(present),
+            ui_status="new",
+            disk_hash=disk_hash,
+            hash_job_active=True,
+        )
+        == "checking"
     )
 
 

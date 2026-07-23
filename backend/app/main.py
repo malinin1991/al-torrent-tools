@@ -29,7 +29,7 @@ from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, build_anilibria_client, get_setting_value
 from app.services.file_hasher import normalize_file_hash_workers_setting
-from app.services.releases_view import list_release_groups
+from app.services.releases_view import build_archive_page_rows, list_release_groups
 from app.services.system_status import collect_system_status
 from app.services.telegram_notify import (
     SOURCE_UI,
@@ -750,9 +750,12 @@ def archive_page(
         query = query.where(TorrentArchive.anime_name.ilike(f"%{search}%"))
         count_query = count_query.where(TorrentArchive.anime_name.ilike(f"%{search}%"))
 
-    rows = db.scalars(query.order_by(TorrentArchive.id.desc()).offset((page - 1) * per_page).limit(per_page)).all()
+    archives = db.scalars(
+        query.order_by(TorrentArchive.id.desc()).offset((page - 1) * per_page).limit(per_page)
+    ).all()
     total = db.scalar(select(func.count()).select_from(count_query.subquery())) or 0
     total_pages = max(1, (total + per_page - 1) // per_page)
+    rows = build_archive_page_rows(db, list(archives))
     return templates.TemplateResponse(
         request,
         "archive.html",

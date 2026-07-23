@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from app.utils.datetime_fmt import utcnow
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -65,8 +66,8 @@ def test_cancel_jobs_by_ids() -> None:
 
 
 def test_reclaim_stale_jobs_by_age() -> None:
-    old = datetime.utcnow() - timedelta(minutes=60)
-    fresh = datetime.utcnow() - timedelta(minutes=1)
+    old = utcnow() - timedelta(minutes=60)
+    fresh = utcnow() - timedelta(minutes=1)
     stale_running = SimpleNamespace(
         id=1, status=STATUS_RUNNING, error=None, finished_at=None, started_at=old, created_at=old
     )
@@ -90,8 +91,8 @@ def test_reclaim_stale_jobs_by_age() -> None:
 
 def test_reclaim_keeps_long_running_job_with_recent_logs() -> None:
     """full_sync старше порога, но с свежими логами — не отменяем."""
-    old = datetime.utcnow() - timedelta(minutes=120)
-    recent_log = datetime.utcnow() - timedelta(minutes=2)
+    old = utcnow() - timedelta(minutes=120)
+    recent_log = utcnow() - timedelta(minutes=2)
     long_running = SimpleNamespace(
         id=9,
         status=STATUS_RUNNING,
@@ -117,8 +118,8 @@ def test_reclaim_orphan_running_when_lock_free() -> None:
         status=STATUS_RUNNING,
         error=None,
         finished_at=None,
-        started_at=datetime.utcnow(),
-        created_at=datetime.utcnow(),
+        started_at=utcnow(),
+        created_at=utcnow(),
     )
     db = MagicMock()
     db.scalars.return_value.all.return_value = [running]
@@ -137,8 +138,8 @@ def test_reclaim_orphan_skips_running_when_lock_held() -> None:
         status=STATUS_RUNNING,
         error=None,
         finished_at=None,
-        started_at=datetime.utcnow(),
-        created_at=datetime.utcnow(),
+        started_at=utcnow(),
+        created_at=utcnow(),
     )
     db = MagicMock()
     db.scalars.return_value.all.return_value = [running]
@@ -152,7 +153,7 @@ def test_reclaim_orphan_skips_running_when_lock_held() -> None:
 
 
 def test_reclaim_orphan_pending_older_than_grace() -> None:
-    old = datetime.utcnow() - timedelta(seconds=120)
+    old = utcnow() - timedelta(seconds=120)
     pending = SimpleNamespace(
         id=5, status=STATUS_PENDING, error=None, finished_at=None, started_at=None, created_at=old
     )

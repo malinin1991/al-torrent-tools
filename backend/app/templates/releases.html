@@ -94,11 +94,11 @@
               <ul class="file-list" style="margin:6px 0 0; padding-left:16px; font-size:0.9em;">
                 {% for f in t.files %}
                 <li>
-                  {% if f.status == 'new' %}<span class="badge badge-ok" title="В торренте, нет на диске">новый</span>
-                  {% elif f.status == 'changed' %}<span class="badge badge-warn" title="Хеш изменился">изменён</span>
-                  {% elif f.status == 'checking' %}<span class="badge badge-warn" title="Ожидание проверки хеша">проверка</span>
-                  {% elif f.status == 'removed' %}<span class="badge badge-danger" title="На диске, нет в торренте">удалён</span>
-                  {% else %}<span class="badge badge-muted" title="В торренте и на диске">ok</span>{% endif %}
+                  {% if f.status == 'new' %}<span class="badge badge-ok" title="Добавлен в состав этого торрента">новый</span>
+                  {% elif f.status == 'changed' %}<span class="badge badge-warn" title="Хеш не совпал с предыдущей версией">изменён</span>
+                  {% elif f.status == 'checking' %}<span class="badge badge-warn" title="Идёт проверка хеша">проверка</span>
+                  {% elif f.status == 'removed' %}<span class="badge badge-danger" title="Убран из состава этого торрента">удалён</span>
+                  {% else %}<span class="badge badge-muted" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
                   <code>{{ f.relative_path }}</code>
                 </li>
                 {% endfor %}
@@ -128,6 +128,7 @@
             <th>Pipeline</th>
             <th>Добавлен</th>
             <th>Hash</th>
+            <th>Файлы</th>
             <th></th>
           </tr>
         </thead>
@@ -150,6 +151,27 @@
               {% else %}-{% endif %}
             </td>
             <td><code>{{ t.info_hash[:12] }}…</code></td>
+            <td>
+              {% if t.files %}
+              <details>
+                <summary class="muted">{{ t.files|length }} файл.</summary>
+                <ul class="file-list" style="margin:6px 0 0; padding-left:16px; font-size:0.9em;">
+                  {% for f in t.files %}
+                  <li>
+                    {% if f.status == 'new' %}<span class="badge badge-ok" title="Добавлен в состав этого торрента">новый</span>
+                    {% elif f.status == 'changed' %}<span class="badge badge-warn" title="Хеш не совпал с предыдущей версией">изменён</span>
+                    {% elif f.status == 'checking' %}<span class="badge badge-warn" title="Идёт проверка хеша">проверка</span>
+                    {% elif f.status == 'removed' %}<span class="badge badge-danger" title="Убран из состава этого торрента">удалён</span>
+                    {% else %}<span class="badge badge-muted" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
+                    <code>{{ f.relative_path }}</code>
+                  </li>
+                  {% endfor %}
+                </ul>
+              </details>
+              {% else %}
+              <span class="muted">—</span>
+              {% endif %}
+            </td>
             <td><a class="btn" href="/api/archive/{{ t.archive_id }}/download">Скачать</a></td>
           </tr>
           {% endfor %}

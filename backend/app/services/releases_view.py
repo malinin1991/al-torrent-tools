@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from app.utils.datetime_fmt import utcnow
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +23,12 @@ from app.db.models import (
 from app.services.file_tracker import (
     KIND_ORPHAN,
     KIND_REMOVED,
+    UI_STATUS_REMOVED,
     file_status_for_ui,
     resolve_orphan_scan_root,
 )
 from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
-from app.services.torrent_files_meta import path_exists_including_incomplete, resolve_media_root
+from app.services.torrent_files_meta import resolve_media_root
 from app.services.torrent_qb_meta import (
     build_release_torrents_url,
     genres_from_quality_json,
@@ -102,6 +104,87 @@ def format_bytes(size: int | None) -> str:
     return f"{size} B"
 
 
+@dataclass
+class ArchivePageRow:
+    """Строка /archive с составом файлов и sticky-статусами."""
+
+    id: int
+    anime_name: str | None
+    release_alias: str | None
+    category: str | None
+    torrent_type: str | None
+    torrent_description: str | None
+    release_id: int
+    torrent_id: int
+    info_hash: str
+    file_size: int | None
+    file_size_label: str
+    created_at: datetime | None
+    api_present: bool
+    superseded: bool
+    files: list[ReleaseFileRow] = field(default_factory=list)
+
+
+def build_archive_page_rows(db: Session, archives: list[TorrentArchive]) -> list[ArchivePageRow]:
+    """Обогащает записи архива составом файлов (как на /releases)."""
+    if not archives:
+        return []
+    hashes = [a.info_hash for a in archives]
+    release_ids = sorted({int(a.release_id) for a in archives})
+    files_by_hash = _files_by_hash(db, hashes)
+    events_by_hash = _recent_events_by_info_hash(db, release_ids)
+    all_full_paths = [
+        f.full_path
+        for files in files_by_hash.values()
+        for f in files
+        if f.full_path
+    ]
+    for events in events_by_hash.values():
+        for _rel, full in events.removed_candidates:
+            if full:
+                all_full_paths.append(full)
+    hashes_by_path = _disk_hashes_by_path(db, all_full_paths)
+    active_hash_jobs = (
+        _info_hashes_with_active_hash_job(db, list(files_by_hash.keys())) if files_by_hash else set()
+    )
+
+    result: list[ArchivePageRow] = []
+    for item in archives:
+        info_hash_key = (item.info_hash or "").strip().lower()
+        torrent_events = events_by_hash.get(info_hash_key) or _TorrentEvents()
+        torrent_files = files_by_hash.get(info_hash_key, [])
+        file_rows = _build_file_rows(
+            torrent_files,
+            torrent_events.latest_by_path,
+            hashes_by_path,
+            hash_job_active=info_hash_key in active_hash_jobs,
+            removed_candidates=_filter_removed_candidates(
+                torrent_events.removed_candidates,
+                torrent_files,
+            ),
+        )
+        result.append(
+            ArchivePageRow(
+                id=item.id,
+                anime_name=item.anime_name,
+                release_alias=item.release_alias,
+                category=item.category,
+                torrent_type=item.torrent_type,
+                torrent_description=item.torrent_description,
+                release_id=item.release_id,
+                torrent_id=item.torrent_id,
+                info_hash=item.info_hash,
+                file_size=item.file_size,
+                file_size_label=format_bytes(item.file_size),
+                created_at=item.created_at,
+                api_present=bool(getattr(item, "api_present", True)),
+                superseded=bool(getattr(item, "superseded", False)),
+                files=file_rows,
+            )
+        )
+    return result
+
+
 def list_release_groups(
     db: Session,
     *,
@@ -173,14 +256,14 @@ def list_release_groups(
     pipeline_by_hash = _latest_pipeline_by_hash(db, [a.info_hash for a in archives])
     tracked_by_id = _tracked_by_release_id(db, release_ids)
     files_by_hash = _files_by_hash(db, [a.info_hash for a in archives])
-    events_by_torrent = _recent_events_by_torrent(db, release_ids)
+    events_by_hash = _recent_events_by_info_hash(db, release_ids)
     all_full_paths = [
         f.full_path
         for files in files_by_hash.values()
         for f in files
         if f.full_path
     ]
-    for events in events_by_torrent.values():
+    for events in events_by_hash.values():
         for _rel, full in events.removed_candidates:
             if full:
                 all_full_paths.append(full)
@@ -214,7 +297,7 @@ def list_release_groups(
         for item in items:
             status, error = pipeline_by_hash.get(item.info_hash.lower(), (None, None))
             info_hash_key = item.info_hash.lower()
-            torrent_events = events_by_torrent.get(item.torrent_id) or _TorrentEvents()
+            torrent_events = events_by_hash.get(info_hash_key) or _TorrentEvents()
             torrent_files = files_by_hash.get(info_hash_key, [])
             file_rows = _build_file_rows(
                 torrent_files,
@@ -345,6 +428,7 @@ def _build_file_rows(
                     disk_hash=disk_hash,
                     hash_job_active=hash_job_active,
                     in_torrent=True,
+                    ui_status=getattr(item, "ui_status", None),
                 ),
             )
         )
@@ -358,28 +442,29 @@ def _build_file_rows(
             continue
         if full_path and full_path in seen_keys:
             continue
-        if not full_path or not path_exists_including_incomplete(Path(full_path)):
-            continue
-        disk_hash = hash_map.get(full_path)
+        # Sticky «удалён»: показываем по событию, даже если файла уже нет на диске.
+        disk_hash = hash_map.get(full_path) if full_path else None
         rows.append(
             ReleaseFileRow(
-                relative_path=display_path or Path(full_path).name,
+                relative_path=display_path or (Path(full_path).name if full_path else "?"),
                 size=0,
                 selected=False,
                 full_path=full_path,
                 in_torrent=False,
                 status=file_status_for_ui(
-                    relative_path=display_path or Path(full_path).name,
+                    relative_path=display_path or (Path(full_path).name if full_path else "?"),
                     full_path=full_path,
                     latest_kind=KIND_REMOVED,
                     disk_hash=disk_hash,
                     hash_job_active=False,
                     in_torrent=False,
+                    ui_status=UI_STATUS_REMOVED,
                 ),
             )
         )
         seen_keys.add(key)
-        seen_keys.add(full_path)
+        if full_path:
+            seen_keys.add(full_path)
     return rows
 
 
@@ -410,14 +495,17 @@ def _files_by_hash(db: Session, hashes: list[str]) -> dict[str, list[TorrentFile
     return result
 
 
-def _recent_events_by_torrent(
+def _recent_events_by_info_hash(
     db: Session,
     release_ids: list[int],
-) -> dict[int, _TorrentEvents]:
-    """torrent_id → latest kind по пути + кандидаты removed/orphan для UI."""
+) -> dict[str, _TorrentEvents]:
+    """info_hash → latest kind по пути + кандидаты removed/orphan для UI.
+
+    История привязана к конкретной версии торрента (info_hash), а не только к torrent_id.
+    """
     if not release_ids:
         return {}
-    since = datetime.utcnow() - _EVENT_WINDOW
+    since = utcnow() - _EVENT_WINDOW
     rows = db.scalars(
         select(FileChangeEvent)
         .where(
@@ -426,12 +514,31 @@ def _recent_events_by_torrent(
         )
         .order_by(FileChangeEvent.id.desc())
     ).all()
-    result: dict[int, _TorrentEvents] = {}
-    removed_seen: dict[int, set[str]] = {}
-    for row in rows:
-        if row.torrent_id is None:
+    # torrent_id → info_hash для legacy-событий без info_hash
+    archive_hash_by_torrent: dict[int, str] = {}
+    archives = db.scalars(
+        select(TorrentArchive).where(TorrentArchive.release_id.in_(release_ids))
+    ).all()
+    for archive in archives:
+        tid = int(archive.torrent_id)
+        # Актуальная (не superseded) версия предпочтительнее для legacy fallback
+        key = (archive.info_hash or "").strip().lower()
+        if not key:
             continue
-        bucket = result.setdefault(row.torrent_id, _TorrentEvents())
+        if bool(getattr(archive, "superseded", False)):
+            archive_hash_by_torrent.setdefault(tid, key)
+        else:
+            archive_hash_by_torrent[tid] = key
+
+    result: dict[str, _TorrentEvents] = {}
+    removed_seen: dict[str, set[str]] = {}
+    for row in rows:
+        hash_key = (getattr(row, "info_hash", None) or "").strip().lower()
+        if not hash_key and row.torrent_id is not None:
+            hash_key = archive_hash_by_torrent.get(int(row.torrent_id), "")
+        if not hash_key:
+            continue
+        bucket = result.setdefault(hash_key, _TorrentEvents())
         path_key = row.relative_path or row.full_path or ""
         if path_key and path_key not in bucket.latest_by_path:
             bucket.latest_by_path[path_key] = row.kind
@@ -443,7 +550,7 @@ def _recent_events_by_torrent(
         display = row.relative_path or row.full_path or ""
         if not display:
             continue
-        seen = removed_seen.setdefault(row.torrent_id, set())
+        seen = removed_seen.setdefault(hash_key, set())
         dedupe_key = row.full_path or display
         if dedupe_key in seen:
             continue
@@ -451,6 +558,9 @@ def _recent_events_by_torrent(
         bucket.removed_candidates.append((display, row.full_path))
     return result
 
+
+# Совместимость для тестов, которые импортировали старое имя.
+_recent_events_by_torrent = _recent_events_by_info_hash
 
 def _info_hashes_with_active_hash_job(db: Session, info_hashes: list[str]) -> set[str]:
     """info_hash с pending/running job hash_torrent (для бейджа «проверка»)."""

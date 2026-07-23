@@ -6,7 +6,7 @@ import logging
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
-from datetime import datetime
+from app.utils.datetime_fmt import utcnow
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Callable
@@ -82,7 +82,7 @@ def _apply_hash_row(
     content_hash: str,
     hashed: bool,
 ) -> HashResult:
-    now = datetime.utcnow()
+    now = utcnow()
     row = db.scalar(select(DiskFileHash).where(DiskFileHash.full_path == full_path).limit(1))
     if not hashed and row is not None:
         row.last_checked_at = now
