@@ -65,14 +65,20 @@ def parse_torrent_file_list(torrent_bytes: bytes) -> list[TorrentFileMeta]:
             parts = [_bdecode_str(p) for p in path_parts if isinstance(p, (bytes, str))]
             if not parts:
                 continue
-            relative = str(Path(name, *parts))
+            # Всегда POSIX-разделители: иначе prior на Linux не матчится с путями из Windows/qB.
+            relative = "/".join([name, *parts])
             result.append(TorrentFileMeta(relative_path=relative, size=size, file_index=index))
         return result
 
     length = info.get(b"length", 0)
     size = int(length) if isinstance(length, int) else 0
-    result.append(TorrentFileMeta(relative_path=name, size=size, file_index=0))
+    result.append(TorrentFileMeta(relative_path=name.replace("\\", "/"), size=size, file_index=0))
     return result
+
+
+def normalize_rel_path(path: str) -> str:
+    """Единый вид relative_path для сравнения составов версий."""
+    return (path or "").replace("\\", "/").strip("/")
 
 
 def _bdecode_str(value: bytes | str) -> str:
@@ -310,3 +316,12 @@ def path_exists_including_incomplete(path: Path) -> bool:
 
 def is_incomplete_path(path: Path) -> bool:
     return path.name.endswith(QB_INCOMPLETE_SUFFIX) or Path(str(path) + QB_INCOMPLETE_SUFFIX).is_file()
+
+
+def complete_path_for(path: Path | str) -> Path:
+    """Канонический путь без суффикса .!qB (как в torrent_files / disk_file_hashes)."""
+    p = Path(path)
+    name = p.name
+    if name.endswith(QB_INCOMPLETE_SUFFIX):
+        return p.with_name(name[: -len(QB_INCOMPLETE_SUFFIX)])
+    return p

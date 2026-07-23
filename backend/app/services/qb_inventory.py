@@ -21,6 +21,7 @@ from app.services.torrent_files_meta import (
     extract_qb_save_path,
     extract_qb_torrent_hash,
     is_under_media_root,
+    normalize_rel_path,
     resolve_full_path,
     resolve_media_root,
 )
@@ -210,7 +211,7 @@ def build_inventory(
                     info_hash=torrent.hash,
                     torrent_id=torrent_id,
                     release_id=release_id,
-                    relative_path=rel_name,
+                    relative_path=normalize_rel_path(rel_name),
                     size=size,
                     file_index=file_index,
                     selected=selected,
@@ -251,25 +252,38 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
             row.relative_path: row
             for row in db.scalars(select(TorrentFile).where(TorrentFile.info_hash == info_hash)).all()
         }
-        # Начальный ui_status новых строк — по составу прошлой версии (как в file_tracker),
-        # чтобы не залипал ошибочный «новый» (его потом не сбрасывает _settle_ui_status).
+        # Начальный ui_status: «новый» только если есть prior и файла там не было.
+        # Первый торрент (без prior): complete → ok;
+        # .!qB + хэш в БД по пути без суффикса → ok (известный/изменённый);
+        # .!qB без хэша → new (первая закачка).
         torrent_id = next((f.torrent_id for f in files if f.torrent_id), None)
-        if torrent_id is not None:
+        if torrent_id:
             has_prior_version, prior_version_paths = tracker.prior_version_composition(
                 torrent_id=torrent_id, info_hash=info_hash
             )
         else:
             has_prior_version, prior_version_paths = False, set()
+        hashed_paths = set()
+        if not has_prior_version:
+            hashed_paths = tracker._load_hashed_canonical_paths(
+                [f.full_path for f in files if f.full_path]
+            )
         seen_paths: set[str] = set()
         for item in files:
             seen_paths.add(item.relative_path)
             row = existing.get(item.relative_path)
             if row is None:
-                first_seen = tracker.first_seen_for_path(
-                    has_prior_version=has_prior_version,
-                    prior_version_paths=prior_version_paths,
-                    relative_path=item.relative_path,
-                )
+                if has_prior_version:
+                    first_seen = tracker.first_seen_for_path(
+                        has_prior_version=True,
+                        prior_version_paths=prior_version_paths,
+                        relative_path=item.relative_path,
+                    )
+                    initial_status = "new" if first_seen else "ok"
+                else:
+                    initial_status = tracker._baseline_provisional_status(
+                        item.full_path, hashed_paths=hashed_paths
+                    )
                 db.add(
                     TorrentFile(
                         torrent_id=item.torrent_id,
@@ -280,7 +294,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                         file_index=item.file_index,
                         selected=item.selected,
                         full_path=item.full_path,
-                        ui_status="new" if first_seen else "ok",
+                        ui_status=initial_status,
                         created_at=now,
                         updated_at=now,
                     )

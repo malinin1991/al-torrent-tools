@@ -26,10 +26,13 @@ from app.db.models import (
 from app.services.file_hasher import clamp_hash_workers, hash_paths_parallel
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.torrent_files_meta import (
+    complete_path_for,
     extract_qb_content_path,
     extract_qb_file_priorities,
     extract_qb_save_path,
+    is_incomplete_path,
     is_under_media_root,
+    normalize_rel_path,
     parse_torrent_file_list,
     path_exists_including_incomplete,
     resolve_full_path,
@@ -225,6 +228,8 @@ class FileTrackerService:
         workers = clamp_hash_workers(
             get_setting_value(self._db, "file_hash_workers", str(settings.file_hash_workers))
         )
+        is_baseline = not has_prior_version
+        settled_rels: set[str] = set()
         if to_hash:
             self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
             stop_fn = None
@@ -275,7 +280,28 @@ class FileTrackerService:
                     first_seen=first_seen,
                     mismatch=mismatch,
                     matched=matched,
+                    is_baseline=is_baseline,
                 )
+                settled_rels.add(rel)
+
+        # Первый торрент релиза: после hash-settle early «новый» → ok (снимок принят).
+        # Unselected / без пути / missing тоже ok.
+        # .!qB не трогаем: provisional уже выставлен (ok если был хэш без суффикса, иначе new).
+        if is_baseline:
+            for row in rows:
+                if row.relative_path in settled_rels:
+                    continue
+                if row.full_path and is_incomplete_path(Path(row.full_path)):
+                    continue
+                self._settle_ui_status(
+                    row,
+                    first_seen=False,
+                    mismatch=False,
+                    matched=False,
+                    is_baseline=True,
+                )
+            self._db.commit()
+        elif to_hash:
             self._db.commit()
 
         # Orphan только под корнем контента торрента (не общий save_path года).
@@ -327,21 +353,32 @@ class FileTrackerService:
         first_seen: bool,
         mismatch: bool,
         matched: bool,
+        is_baseline: bool = False,
     ) -> None:
         """Sticky ui_status относительно ПРЕДЫДУЩЕЙ версии торрента.
 
-        Спецификация (статусы неизменны после работы над версией):
+        Спецификация:
+        - baseline (нет прошлой версии) после hash-settle → ok;
+          mismatch с уже известным disk hash → changed (докачка / граница кусков)
         - new — файла не было в прошлой версии → остаётся навсегда
         - changed — хеш разошёлся с прошлой версией → финальный
-        - ok — только если файл не менялся относительно прошлой версии
+        - ok — файл не менялся относительно прошлой версии
 
         Если сравнить не с чем (прошлая версия не хеширована) — статус НЕ меняем:
-        строка уже создана с корректным дефолтом (ok для существовавшего файла),
-        и мы не фабрикуем ok поверх возможного иного значения.
+        строка уже создана с корректным дефолтом (ok для существовавшего файла).
         """
         current = (row.ui_status or "").strip().lower()
+        if is_baseline:
+            # Baseline: early «новый» → ok, НО расхождение с уже известным disk hash → changed
+            # (докачка на границе кусков / пересборка без prior-версии в архиве).
+            if mismatch:
+                row.ui_status = UI_STATUS_CHANGED
+                return
+            if current != UI_STATUS_CHANGED:
+                row.ui_status = UI_STATUS_OK
+            return
         if current in _STICKY_FINAL:
-            # new/changed — финальные для этой версии, не понижаем.
+            # new/changed относительно prior — финальные, не понижаем.
             return
         if first_seen:
             row.ui_status = UI_STATUS_NEW
@@ -355,29 +392,57 @@ class FileTrackerService:
         # Нет данных для сравнения → оставляем текущий статус как есть.
 
     def _prior_version_hash(self, *, torrent_id: int, current_hash: str) -> str | None:
-        """info_hash самой свежей предыдущей версии этого torrent_id (или None)."""
+        """info_hash самой свежей предыдущей версии этого torrent_id (или None).
+
+        Предпочитаем prior, у которого уже есть состав в torrent_files — иначе
+        first_seen_for_path при пустом составе считает всё «не новым», а UI
+        теряет реальные added; пустой prior пропускаем в пользу более старого
+        с файлами.
+        """
         normalized = (current_hash or "").strip().lower()
-        row = self._db.scalar(
-            select(TorrentArchive.info_hash)
-            .where(
-                TorrentArchive.torrent_id == torrent_id,
-                TorrentArchive.info_hash != normalized,
-            )
-            .order_by(TorrentArchive.id.desc())
-            .limit(1)
+        candidates = list(
+            self._db.scalars(
+                select(TorrentArchive.info_hash)
+                .where(
+                    TorrentArchive.torrent_id == torrent_id,
+                    TorrentArchive.info_hash != normalized,
+                )
+                .order_by(TorrentArchive.id.desc())
+            ).all()
         )
-        prior = (row or "").strip().lower()
-        return prior or None
+        if not candidates:
+            return None
+        normalized_candidates = [
+            h.strip().lower() for h in candidates if isinstance(h, str) and h.strip()
+        ]
+        if not normalized_candidates:
+            return None
+        # Есть ли состав у кандидатов (один запрос).
+        with_files = {
+            (row or "").strip().lower()
+            for row in self._db.scalars(
+                select(TorrentFile.info_hash)
+                .where(TorrentFile.info_hash.in_(normalized_candidates))
+                .distinct()
+            ).all()
+            if isinstance(row, str) and row
+        }
+        for prior in normalized_candidates:
+            if prior in with_files:
+                return prior
+        # Состава ни у кого нет — всё равно вернём самый свежий (has_prior=True, paths пустые).
+        return normalized_candidates[0]
 
     def _prior_version_paths(self, *, prior_hash: str) -> set[str]:
         """relative_path состава предыдущей версии (для определения «новый»)."""
         if not prior_hash:
             return set()
         return {
-            row
+            normalize_rel_path(row)
             for row in self._db.scalars(
                 select(TorrentFile.relative_path).where(TorrentFile.info_hash == prior_hash)
             ).all()
+            if row
         }
 
     def prior_version_composition(
@@ -395,25 +460,72 @@ class FileTrackerService:
     ) -> bool:
         """«Новый» = достоверный состав прошлой версии есть и файла там не было.
 
-        Нет прошлой версии вовсе → первый торрент релиза, всё «новое».
+        Нет прошлой версии вовсе → не first_seen по составу: provisional статус
+        считает _baseline_provisional_status (диск + хэш в БД без .!qB).
         Прошлая версия есть, но состав неизвестен → считаем, что файл был (не «новый»).
         """
         if not has_prior_version:
-            return True
+            return False
         if not prior_version_paths:
             return False
-        return relative_path not in prior_version_paths
+        return normalize_rel_path(relative_path) not in prior_version_paths
+
+    @staticmethod
+    def _canonical_full_path(full_path: str) -> str:
+        return str(complete_path_for(full_path))
+
+    def _load_hashed_canonical_paths(self, full_paths: list[str]) -> set[str]:
+        """full_path (без .!qB), для которых уже есть content_hash в disk_file_hashes."""
+        canonicals = {self._canonical_full_path(p) for p in full_paths if p}
+        if not canonicals:
+            return set()
+        return {
+            row
+            for row in self._db.scalars(
+                select(DiskFileHash.full_path).where(
+                    DiskFileHash.full_path.in_(list(canonicals)),
+                    DiskFileHash.content_hash.is_not(None),
+                )
+            ).all()
+            if isinstance(row, str) and row
+        }
+
+    def _baseline_provisional_status(
+        self, full_path: str | None, *, hashed_paths: set[str]
+    ) -> str:
+        """Первый торрент torrent_id: provisional ui_status до hash-settle.
+
+        - complete на диске → ok
+        - .!qB + хэш в БД по пути без суффикса → ok (известный/изменённый, не «новый»)
+        - .!qB без хэша → new (первая закачка)
+        - нет файла и нет хэша → new
+        """
+        if not full_path:
+            return UI_STATUS_NEW
+        path = Path(full_path)
+        canonical = self._canonical_full_path(full_path)
+        has_stored_hash = canonical in hashed_paths
+        if is_incomplete_path(path):
+            return UI_STATUS_OK if has_stored_hash else UI_STATUS_NEW
+        try:
+            if path.is_file():
+                return UI_STATUS_OK
+        except OSError:
+            pass
+        if has_stored_hash:
+            return UI_STATUS_OK
+        return UI_STATUS_NEW
 
     def _prior_version_hashes(self, *, prior_hash: str) -> dict[str, str]:
         """relative_path → content_hash файлов предыдущей версии торрента (один IN-запрос)."""
         if not prior_hash:
             return {}
         rel_by_path: dict[str, str] = {
-            row.full_path: row.relative_path
+            row.full_path: normalize_rel_path(row.relative_path)
             for row in self._db.scalars(
                 select(TorrentFile).where(TorrentFile.info_hash == prior_hash)
             ).all()
-            if row.full_path
+            if row.full_path and row.relative_path
         }
         if not rel_by_path:
             return {}
@@ -497,28 +609,38 @@ class FileTrackerService:
         save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
 
         previous = {
-            row.relative_path: row
+            normalize_rel_path(row.relative_path): row
             for row in self._db.scalars(
                 select(TorrentFile).where(TorrentFile.info_hash == normalized_hash)
             ).all()
         }
         previous_paths = set(previous.keys())
         # Предыдущая версия этого torrent_id (факт наличия — по архиву, не по составу).
-        has_prior_version, prior_version_paths = self.prior_version_composition(
-            torrent_id=torrent_id, info_hash=normalized_hash
+        prior_hash = self._prior_version_hash(torrent_id=torrent_id, current_hash=normalized_hash)
+        has_prior_version = prior_hash is not None
+        prior_version_paths = (
+            self._prior_version_paths(prior_hash=prior_hash) if prior_hash else set()
         )
         current_paths: set[str] = set()
         now = utcnow()
         media_root = resolve_media_root()
         composition_changes: list[FileChange] = []
         first_seen_paths: set[str] = set()
+        # Baseline heal new→ok: копим пути, один IN вместо N+1 SELECT.
+        baseline_heal_candidates: list[tuple[TorrentFile, str]] = []
+        status_new = 0
+        status_ok = 0
 
+        # Сначала резолвим пути — для baseline нужен batched lookup хэшей без .!qB.
+        prepared_metas: list[tuple[Any, str, bool, str | None, bool]] = []
+        resolved_for_hash_lookup: list[str] = []
         for meta in file_metas:
-            current_paths.add(meta.relative_path)
+            rel_norm = normalize_rel_path(meta.relative_path)
+            current_paths.add(rel_norm)
             first_seen = self.first_seen_for_path(
                 has_prior_version=has_prior_version,
                 prior_version_paths=prior_version_paths,
-                relative_path=meta.relative_path,
+                relative_path=rel_norm,
             )
             selected = True
             if priorities:
@@ -533,29 +655,52 @@ class FileTrackerService:
                 )
                 if resolved is not None:
                     full_path = str(resolved)
+                    resolved_for_hash_lookup.append(full_path)
+            prepared_metas.append((meta, rel_norm, first_seen, full_path, selected))
 
-            row = previous.get(meta.relative_path)
+        hashed_paths = (
+            set()
+            if has_prior_version
+            else self._load_hashed_canonical_paths(resolved_for_hash_lookup)
+        )
+
+        for meta, rel_norm, first_seen, full_path, selected in prepared_metas:
+            if has_prior_version:
+                initial_status = UI_STATUS_NEW if first_seen else UI_STATUS_OK
+            else:
+                # Baseline: .!qB + хэш без суффикса → ok; .!qB без хэша → new.
+                initial_status = self._baseline_provisional_status(
+                    full_path, hashed_paths=hashed_paths
+                )
+                first_seen = initial_status == UI_STATUS_NEW
+
+            if initial_status == UI_STATUS_NEW:
+                status_new += 1
+            else:
+                status_ok += 1
+
+            row = previous.get(meta.relative_path) or previous.get(rel_norm)
             if row is None:
-                # Новый файл vs прошлая версия → «новый»; иначе пока «ok» (хеш уточнит).
+                # Новый файл vs прошлая версия → «новый»; иначе provisional по диску/хэшу.
                 row = TorrentFile(
                     torrent_id=torrent_id,
                     info_hash=normalized_hash,
                     release_id=release_id,
-                    relative_path=meta.relative_path,
+                    relative_path=rel_norm,
                     size=meta.size,
                     file_index=meta.file_index,
                     selected=selected,
                     full_path=full_path,
-                    ui_status=UI_STATUS_NEW if first_seen else UI_STATUS_OK,
+                    ui_status=initial_status,
                     created_at=now,
                     updated_at=now,
                 )
                 self._db.add(row)
                 if first_seen:
-                    first_seen_paths.add(meta.relative_path)
+                    first_seen_paths.add(rel_norm)
                     composition_changes.append(
                         FileChange(
-                            kind=KIND_ADDED, relative_path=meta.relative_path, full_path=full_path
+                            kind=KIND_ADDED, relative_path=rel_norm, full_path=full_path
                         )
                     )
             else:
@@ -565,27 +710,62 @@ class FileTrackerService:
                 row.file_index = meta.file_index
                 row.selected = selected
                 row.full_path = full_path
+                row.relative_path = rel_norm
                 row.updated_at = now
                 if first_seen:
-                    first_seen_paths.add(meta.relative_path)
-                    if (row.ui_status or "").strip().lower() not in _STICKY_FINAL:
-                        row.ui_status = UI_STATUS_NEW
+                    first_seen_paths.add(rel_norm)
+                    if has_prior_version:
+                        # Incremental: файла не было в prior → sticky new.
+                        if (row.ui_status or "").strip().lower() not in _STICKY_FINAL:
+                            row.ui_status = UI_STATUS_NEW
+                    else:
+                        # Baseline: не апгрейдим ok→new (иначе после settle снова залипает).
+                        # Heal уже залипший sticky new, если хеш уже посчитан.
+                        if (row.ui_status or "").strip().lower() == UI_STATUS_NEW and full_path:
+                            baseline_heal_candidates.append((row, full_path))
                     # Heal: inventory/stop успели записать строку без события added.
                     if not self._has_prior_event(
                         torrent_id=torrent_id,
                         info_hash=normalized_hash,
                         kind=KIND_ADDED,
-                        relative_path=meta.relative_path,
+                        relative_path=rel_norm,
                         full_path=full_path,
                     ):
                         composition_changes.append(
                             FileChange(
                                 kind=KIND_ADDED,
-                                relative_path=meta.relative_path,
+                                relative_path=rel_norm,
                                 full_path=full_path,
                             )
                         )
+                elif not has_prior_version:
+                    # Re-sync baseline: снять ошибочный sticky new, если файл уже известен
+                    # (хэш без .!qB / complete → provisional ok).
+                    cur = (row.ui_status or "").strip().lower()
+                    if cur == UI_STATUS_NEW and initial_status == UI_STATUS_OK:
+                        row.ui_status = UI_STATUS_OK
+                    elif cur not in _STICKY_FINAL and cur != UI_STATUS_CHANGED:
+                        row.ui_status = initial_status
             result.files_upserted += 1
+
+        self._log(
+            f"sync_composition hash={normalized_hash[:12]}… torrent_id={torrent_id}: "
+            f"prior={'yes:' + (prior_hash or '')[:12] + '…' if has_prior_version else 'no'} "
+            f"prior_paths={len(prior_version_paths)} files={len(file_metas)} "
+            f"ui_new={status_new} ui_ok={status_ok} first_seen={len(first_seen_paths)} "
+            f"hashed_known={len(hashed_paths)} "
+            f"sample_prior={sorted(prior_version_paths)[:3]!r} "
+            f"sample_cur={sorted(current_paths)[:3]!r}",
+            "info",
+        )
+
+        if baseline_heal_candidates:
+            heal_hashed = self._load_hashed_canonical_paths(
+                [fp for _, fp in baseline_heal_candidates]
+            )
+            for row, fp in baseline_heal_candidates:
+                if self._canonical_full_path(fp) in heal_hashed:
+                    row.ui_status = UI_STATUS_OK
 
         removed_paths = previous_paths - current_paths
         for rel in removed_paths:
@@ -988,7 +1168,7 @@ def file_status_for_ui(
     - new — файл добавлен в состав этого торрента
     - removed — файл убран из состава (событие removed)
     - changed — хеш разошёлся с предыдущей версией
-    - ok — хеш совпал с предыдущей версией / baseline принят
+    - ok — хеш совпал с предыдущей версией / baseline (первый торрент) после settle
 
     Временный:
     - checking — идёт hash_torrent (оверлей поверх ok/changed/new с известным hash)

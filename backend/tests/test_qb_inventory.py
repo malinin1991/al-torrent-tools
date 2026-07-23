@@ -277,13 +277,18 @@ def test_upsert_inventory_initial_status_by_prior_version() -> None:
     assert rows["Show/new.mkv"].ui_status == "new"
 
 
-def test_upsert_inventory_first_release_all_new() -> None:
-    """Нет прошлой версии (первый торрент релиза) → все файлы «новый»."""
+def test_upsert_inventory_first_release_all_ok(tmp_path: Path) -> None:
+    """Нет прошлой версии + готовый файл на диске → inventory сразу ok."""
     from app.db.models import TorrentFile
 
     class FakeScalars:
         def all(self):
             return []
+
+    media = tmp_path / "anilibria" / "Show"
+    media.mkdir(parents=True)
+    complete = media / "ep01.mkv"
+    complete.write_bytes(b"done")
 
     db = MagicMock()
     db.scalars.return_value = FakeScalars()
@@ -302,15 +307,156 @@ def test_upsert_inventory_first_release_all_new() -> None:
                 size=1,
                 file_index=0,
                 selected=True,
-                full_path="/m/Show/ep01.mkv",
-                folder_key="/m/Show",
+                full_path=str(complete),
+                folder_key=str(media),
             )
         ],
     )
 
     upsert_torrent_files_inventory(db, inventory)
     rows = [r for r in created if isinstance(r, TorrentFile)]
+    assert rows[0].ui_status == "ok"
+
+
+def test_upsert_inventory_first_release_incomplete_is_new(tmp_path: Path) -> None:
+    """Baseline + .!qB без хэша в БД → new (первая закачка)."""
+    from app.db.models import TorrentFile
+
+    class FakeScalars:
+        def all(self):
+            return []
+
+    media = tmp_path / "anilibria" / "Show"
+    media.mkdir(parents=True)
+    complete = media / "ep01.mkv"
+    incomplete = Path(str(complete) + ".!qB")
+    incomplete.write_bytes(b"partial")
+
+    db = MagicMock()
+    db.scalars.return_value = FakeScalars()
+    db.scalar.return_value = None
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/ep01.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path=str(complete),
+                folder_key=str(media),
+            )
+        ],
+    )
+
+    upsert_torrent_files_inventory(db, inventory)
+    rows = [r for r in created if isinstance(r, TorrentFile)]
+    assert len(rows) == 1
     assert rows[0].ui_status == "new"
+
+
+def test_upsert_inventory_incomplete_with_prior_hash_is_ok(tmp_path: Path) -> None:
+    """Baseline + .!qB, но в disk_file_hashes уже есть хэш без суффикса → ok (не new)."""
+    from app.db.models import TorrentFile
+
+    media = tmp_path / "anilibria" / "Show"
+    media.mkdir(parents=True)
+    complete = media / "ep01.mkv"
+    Path(str(complete) + ".!qB").write_bytes(b"partial")
+
+    db = MagicMock()
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    calls = {"n": 0}
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    def fake_scalars(_stmt):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return FakeScalars([])  # existing torrent_files
+        if calls["n"] == 2:
+            return FakeScalars([])  # prior candidates
+        # hashed canonical
+        return FakeScalars([str(complete)])
+
+    db.scalars.side_effect = fake_scalars
+    db.scalar.return_value = None
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/ep01.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path=str(complete),
+                folder_key=str(media),
+            )
+        ],
+    )
+
+    upsert_torrent_files_inventory(db, inventory)
+    rows = [r for r in created if isinstance(r, TorrentFile)]
+    assert len(rows) == 1
+    assert rows[0].ui_status == "ok"
+
+
+def test_upsert_inventory_first_release_complete_file_ok(tmp_path: Path) -> None:
+    """Baseline + реальный файл на диске (без .!qB) → ok."""
+    from app.db.models import TorrentFile
+
+    class FakeScalars:
+        def all(self):
+            return []
+
+    media = tmp_path / "anilibria" / "Show"
+    media.mkdir(parents=True)
+    complete = media / "ep01.mkv"
+    complete.write_bytes(b"done")
+
+    db = MagicMock()
+    db.scalars.return_value = FakeScalars()
+    db.scalar.return_value = None
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/ep01.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path=str(complete),
+                folder_key=str(media),
+            )
+        ],
+    )
+
+    upsert_torrent_files_inventory(db, inventory)
+    rows = [r for r in created if isinstance(r, TorrentFile)]
+    assert rows[0].ui_status == "ok"
 
 
 def test_load_cleanup_rules_filters_slave_only() -> None:

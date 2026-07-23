@@ -59,7 +59,25 @@ docker compose up --build
 
 Один образ используется и для `api`, и для `worker`. Контекст сборки — `./backend`.
 
-Мультиархитектурная сборка и пуш в registry:
+Мультиархитектурная сборка и пуш в registry.
+
+Один раз создай именованный builder `container` (драйвер `docker-container` нужен для multi-arch `--push`; обычный `default`/`desktop-linux` для этого не подходит):
+
+```bash
+docker buildx create --name container --driver docker-container --use
+docker buildx inspect --bootstrap
+```
+
+PowerShell (то же самое):
+
+```powershell
+docker buildx create --name container --driver docker-container --use
+docker buildx inspect --bootstrap
+```
+
+Проверка: `docker buildx ls` — в списке должен быть `container` со статусом `running`. Если builder уже есть, команду `create` можно пропустить.
+
+Затем сборка (multi-arch; `--provenance=false --sbom=false` — без OCI attestations, иначе Unraid вечно показывает Update available):
 
 ```bash
 cd /Users/geekaz0id/PycharmProjects/al-torrent-tools
@@ -67,6 +85,8 @@ cd /Users/geekaz0id/PycharmProjects/al-torrent-tools
 docker buildx build \
   --builder=container \
   --platform=linux/amd64,linux/arm64/v8 \
+  --provenance=false \
+  --sbom=false \
   --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   -t registry.mageek.su/al-torrent-tools:latest \
@@ -74,7 +94,26 @@ docker buildx build \
   ./backend
 ```
 
+PowerShell (Windows):
+
+```powershell
+cd c:\Users\GeeKaZ0iD\Cursor\al-torrent-tools
+
+docker buildx build `
+  --builder=container `
+  --platform=linux/amd64,linux/arm64/v8 `
+  --provenance=false `
+  --sbom=false `
+  --build-arg BUILD_TIME="$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))" `
+  --build-arg GIT_SHA="$(git rev-parse --short HEAD)" `
+  -t registry.mageek.su/al-torrent-tools:latest `
+  --push `
+  ./backend
+```
+
 В образе пишется метка сборки (`/etc/altt_build_time`); на странице **Информация** видно дату/время образа и короткий git SHA — чтобы проверить, что Unraid действительно подтянул новый `latest`.
+
+Новый BuildKit по умолчанию кладёт в registry OCI index + provenance/SBOM (`unknown/unknown`). Unraid сравнивает digests криво и после такого пуша вечно пишет Update available. Флаги выше отключают attestations — получается классический multi-arch list, как раньше на macOS.
 
 На Unraid (Compose Manager или `docker compose`):
 

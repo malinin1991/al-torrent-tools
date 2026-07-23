@@ -140,8 +140,9 @@ class TorrentPipelineService:
             removed = sum(1 for c in result.changes if c.kind == "removed")
             self._add_log(
                 f"Pipeline {pipeline.id}: sync состава files={result.files_upserted}, "
-                f"added={added}, removed={removed}",
-                "debug",
+                f"added={added}, removed={removed} "
+                f"(детали prior/ui_status — в логе sync_composition)",
+                "info",
             )
         except Exception as exc:
             self._add_log(
