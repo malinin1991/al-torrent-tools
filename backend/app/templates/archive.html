@@ -20,7 +20,6 @@
         <th>Статус</th>
         <th>Hash</th>
         <th>Размер</th>
-        <th>Файлы</th>
         <th>Создан</th>
         <th>Скачать</th>
       </tr>
@@ -43,32 +42,20 @@
         </td>
         <td><code>{{ row.info_hash[:12] }}…</code></td>
         <td>{{ row.file_size_label }}</td>
-        <td>
-          {% if row.files %}
-          <details>
-            <summary class="muted">{{ row.files|length }} файл.</summary>
-            <ul class="file-list" style="margin:6px 0 0; padding-left:16px; font-size:0.9em;">
-              {% for f in row.files %}
-              <li>
-                {% if f.status == 'new' %}<span class="badge badge-ok" title="Добавлен в состав этого торрента">новый</span>
-                {% elif f.status == 'changed' %}<span class="badge badge-warn" title="Хеш не совпал с предыдущей версией">изменён</span>
-                {% elif f.status == 'checking' %}<span class="badge badge-warn" title="Идёт проверка хеша">проверка</span>
-                {% elif f.status == 'removed' %}<span class="badge badge-danger" title="Убран из состава этого торрента">удалён</span>
-                {% else %}<span class="badge badge-muted" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
-                <code>{{ f.relative_path }}</code>
-              </li>
-              {% endfor %}
-            </ul>
-          </details>
-          {% else %}
-          <span class="muted">—</span>
-          {% endif %}
-        </td>
         <td>{% if row.created_at %}<time class="local-time" datetime="{{ row.created_at|as_utc_iso }}">{{ row.created_at }}</time>{% else %}-{% endif %}</td>
         <td><a class="btn" href="/api/archive/{{ row.id }}/download">Скачать</a></td>
       </tr>
+      {% if row.files %}
+      <tr class="torrent-files-row">
+        <td colspan="10">
+          {% with files=row.files %}
+          {% include "partials/torrent_file_list.html" %}
+          {% endwith %}
+        </td>
+      </tr>
+      {% endif %}
       {% else %}
-      <tr><td colspan="11" class="muted">Записей пока нет</td></tr>
+      <tr><td colspan="10" class="muted">Записей пока нет</td></tr>
       {% endfor %}
     </tbody>
   </table>

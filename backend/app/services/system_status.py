@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import platform
 import sys
 from importlib.metadata import PackageNotFoundError, version as pkg_version
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -42,6 +44,8 @@ _APP_PACKAGES = (
 )
 
 _TELEGRAM_HEARTBEAT_STALE_SEC = 120
+_BUILD_TIME_FILE = Path(os.environ.get("APP_BUILD_TIME_FILE", "/etc/altt_build_time"))
+_GIT_SHA_FILE = Path(os.environ.get("APP_GIT_SHA_FILE", "/etc/altt_git_sha"))
 
 
 def _pkg_version(name: str) -> str:
@@ -49,6 +53,26 @@ def _pkg_version(name: str) -> str:
         return pkg_version(name)
     except PackageNotFoundError:
         return "—"
+
+
+def _read_build_stamp(path: Path, *, env_key: str) -> str | None:
+    """ENV (override) → файл из Docker-образа → None."""
+    raw = (os.environ.get(env_key) or "").strip()
+    if raw:
+        return raw
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def resolve_build_info() -> dict[str, str | None]:
+    """Дата/время сборки образа и опциональный git SHA."""
+    return {
+        "time": _read_build_stamp(_BUILD_TIME_FILE, env_key="APP_BUILD_TIME"),
+        "git_sha": _read_build_stamp(_GIT_SHA_FILE, env_key="APP_GIT_SHA"),
+    }
 
 
 async def collect_system_status(db: Session) -> dict[str, Any]:
@@ -70,19 +94,20 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
     telegram = await _probe_telegram(db)
 
     storage = resolve_torrent_storage_root()
-    from pathlib import Path
-
     from app.jobs.orphan_cleanup import media_root_writable_status
     from app.services.torrent_files_meta import resolve_media_root
 
     media_root = resolve_media_root()
     media_ok, media_detail = media_root_writable_status(media_root)
+    build = resolve_build_info()
     return {
         "app": {
             "name": settings.app_name,
             "env": settings.app_env,
             "python": sys.version.split()[0],
             "platform": platform.platform(),
+            "build_time": build["time"],
+            "git_sha": build["git_sha"],
         },
         "anilibria": {
             "base_url": al_settings.base_url,

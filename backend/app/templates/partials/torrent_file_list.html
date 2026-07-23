@@ -1,0 +1,15 @@
+<details class="torrent-files">
+  <summary class="muted">{{ files|length }} файл.</summary>
+  <ul class="file-list">
+    {% for f in files %}
+    <li>
+      {% if f.status == 'new' %}<span class="badge badge-ok" title="Добавлен в состав этого торрента">новый</span>
+      {% elif f.status == 'changed' %}<span class="badge badge-warn" title="Хеш не совпал с предыдущей версией">изменён</span>
+      {% elif f.status == 'checking' %}<span class="badge badge-warn" title="Идёт проверка хеша">проверка</span>
+      {% elif f.status == 'removed' %}<span class="badge badge-danger" title="Убран из состава этого торрента">удалён</span>
+      {% else %}<span class="badge badge-muted" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
+      <code>{{ f.relative_path }}</code>
+    </li>
+    {% endfor %}
+  </ul>
+</details>

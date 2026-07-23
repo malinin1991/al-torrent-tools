@@ -17,6 +17,8 @@ services:
 
   api:
     image: registry.mageek.su/al-torrent-tools:latest
+    # Всегда тянуть latest при up — иначе легко остаться на старом digest.
+    pull_policy: always
     container_name: altt_api
     restart: unless-stopped
     env_file:
@@ -60,6 +62,7 @@ services:
 
   worker:
     image: registry.mageek.su/al-torrent-tools:latest
+    pull_policy: always
     container_name: altt_worker
     restart: unless-stopped
     env_file:
@@ -86,6 +89,7 @@ services:
 
   telegram-bot:
     image: registry.mageek.su/al-torrent-tools:latest
+    pull_policy: always
     container_name: altt_telegram
     restart: unless-stopped
     env_file:

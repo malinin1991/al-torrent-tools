@@ -9,6 +9,18 @@
     <table class="info-table">
       <tr><th>Имя</th><td>{{ status.app.name }}</td></tr>
       <tr><th>Окружение</th><td>{{ status.app.env }}</td></tr>
+      <tr><th>Сборка</th>
+        <td>
+          {% if status.app.build_time %}
+          <time class="local-time" datetime="{{ status.app.build_time }}">{{ status.app.build_time }}</time>
+          {% else %}
+          <span class="muted">не задана (локальный запуск / старый образ)</span>
+          {% endif %}
+          {% if status.app.git_sha %}
+          <span class="muted">·</span> <code>{{ status.app.git_sha[:12] }}</code>
+          {% endif %}
+        </td>
+      </tr>
       <tr><th>Python</th><td>{{ status.app.python }}</td></tr>
       <tr><th>Платформа</th><td class="muted">{{ status.app.platform }}</td></tr>
       <tr><th>Хранилище .torrent</th>

@@ -67,10 +67,14 @@ cd /Users/geekaz0id/PycharmProjects/al-torrent-tools
 docker buildx build \
   --builder=container \
   --platform=linux/amd64,linux/arm64/v8 \
+  --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --build-arg GIT_SHA="$(git rev-parse --short HEAD)" \
   -t registry.mageek.su/al-torrent-tools:latest \
   --push \
   ./backend
 ```
+
+В образе пишется метка сборки (`/etc/altt_build_time`); на странице **Информация** видно дату/время образа и короткий git SHA — чтобы проверить, что Unraid действительно подтянул новый `latest`.
 
 На Unraid (Compose Manager или `docker compose`):
 
@@ -86,11 +90,14 @@ DATABASE_URL=postgresql+psycopg://altt:<пароль>@postgres:5432/altt
 
 `DATABASE_URL` задаётся только в `.env` (хост сервиса — `postgres`). Пароль в `DATABASE_URL` и `POSTGRES_PASSWORD` должен совпадать. Не подставляй `${…}` внутрь URL — на Unraid это ломает строку (получается хост вроде `$@postgres`).
 
-3. Подними стек из `docker-compose.unraid.yml` (образ `registry.mageek.su/al-torrent-tools:latest`, без bind-mount исходников и без `--reload`).
+3. Подними стек из `docker-compose.unraid.yml` (образ `registry.mageek.su/al-torrent-tools:latest`, без bind-mount исходников и без `--reload`). У `api` / `worker` / `telegram-bot` стоит `pull_policy: always` — при `up` compose тянет свежий digest тега `latest`.
 
 ```bash
+docker compose -f docker-compose.unraid.yml pull
 docker compose -f docker-compose.unraid.yml up -d
 ```
+
+После обновления сверь дату сборки на `/info`.
 
 UI/API: `http://UNRAID_IP:8000`, health: `http://UNRAID_IP:8000/health`.
 

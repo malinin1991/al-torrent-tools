@@ -19,6 +19,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BUILD_TIME: ${BUILD_TIME:-}
+        GIT_SHA: ${GIT_SHA:-}
     container_name: altt_api
     restart: unless-stopped
     env_file:
@@ -53,6 +56,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BUILD_TIME: ${BUILD_TIME:-}
+        GIT_SHA: ${GIT_SHA:-}
     container_name: altt_worker
     restart: unless-stopped
     env_file:
@@ -79,6 +85,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        BUILD_TIME: ${BUILD_TIME:-}
+        GIT_SHA: ${GIT_SHA:-}
     container_name: altt_telegram
     restart: unless-stopped
     env_file:
