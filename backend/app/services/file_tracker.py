@@ -229,6 +229,12 @@ class FileTrackerService:
             get_setting_value(self._db, "file_hash_workers", str(settings.file_hash_workers))
         )
         is_baseline = not has_prior_version
+        # Mixed baseline: часть файлов уже ok/changed (были на диске/в хэшах) —
+        # настоящие «новый» не сбрасываем в ok после hash. Чистый baseline (все new) → снимок в ok.
+        preserve_baseline_new = is_baseline and any(
+            (row.ui_status or "").strip().lower() in {UI_STATUS_OK, UI_STATUS_CHANGED}
+            for row in rows
+        )
         settled_rels: set[str] = set()
         if to_hash:
             self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
@@ -281,10 +287,12 @@ class FileTrackerService:
                     mismatch=mismatch,
                     matched=matched,
                     is_baseline=is_baseline,
+                    preserve_baseline_new=preserve_baseline_new,
                 )
                 settled_rels.add(rel)
 
-        # Первый торрент релиза: после hash-settle early «новый» → ok (снимок принят).
+        # Первый торрент релиза: после hash-settle early «новый» → ok (снимок принят),
+        # кроме mixed baseline — там sticky new сохраняем.
         # Unselected / без пути / missing тоже ok.
         # .!qB не трогаем: provisional уже выставлен (ok если был хэш без суффикса, иначе new).
         if is_baseline:
@@ -299,6 +307,7 @@ class FileTrackerService:
                     mismatch=False,
                     matched=False,
                     is_baseline=True,
+                    preserve_baseline_new=preserve_baseline_new,
                 )
             self._db.commit()
         elif to_hash:
@@ -354,12 +363,14 @@ class FileTrackerService:
         mismatch: bool,
         matched: bool,
         is_baseline: bool = False,
+        preserve_baseline_new: bool = False,
     ) -> None:
         """Sticky ui_status относительно ПРЕДЫДУЩЕЙ версии торрента.
 
         Спецификация:
-        - baseline (нет прошлой версии) после hash-settle → ok;
-          mismatch с уже известным disk hash → changed (докачка / граница кусков)
+        - baseline чистый (все файлы новые) после hash-settle → ok
+        - baseline mixed (часть уже ok/changed) → sticky new сохраняем;
+          mismatch с disk hash → changed
         - new — файла не было в прошлой версии → остаётся навсегда
         - changed — хеш разошёлся с прошлой версией → финальный
         - ok — файл не менялся относительно прошлой версии
@@ -369,10 +380,13 @@ class FileTrackerService:
         """
         current = (row.ui_status or "").strip().lower()
         if is_baseline:
-            # Baseline: early «новый» → ok, НО расхождение с уже известным disk hash → changed
+            # Baseline: mismatch с уже известным disk hash → changed
             # (докачка на границе кусков / пересборка без prior-версии в архиве).
             if mismatch:
                 row.ui_status = UI_STATUS_CHANGED
+                return
+            # Mixed: эпизод реально новый среди уже известных — не сбрасываем в ok.
+            if current == UI_STATUS_NEW and preserve_baseline_new:
                 return
             if current != UI_STATUS_CHANGED:
                 row.ui_status = UI_STATUS_OK

@@ -844,12 +844,24 @@ def test_settle_ui_status_rules() -> None:
     FileTrackerService._settle_ui_status(row, first_seen=False, mismatch=False, matched=False)
     assert row.ui_status == ""
 
-    # baseline: early «новый» уходит в ok
+    # baseline: early «новый» уходит в ok (чистый baseline)
     row.ui_status = UI_STATUS_NEW
     FileTrackerService._settle_ui_status(
         row, first_seen=True, mismatch=False, matched=False, is_baseline=True
     )
     assert row.ui_status == UI_STATUS_OK
+
+    # baseline mixed: среди известных файлов настоящий new сохраняем
+    row.ui_status = UI_STATUS_NEW
+    FileTrackerService._settle_ui_status(
+        row,
+        first_seen=True,
+        mismatch=False,
+        matched=False,
+        is_baseline=True,
+        preserve_baseline_new=True,
+    )
+    assert row.ui_status == UI_STATUS_NEW
 
     # baseline + mismatch с уже известным disk hash → changed (граница кусков)
     row.ui_status = UI_STATUS_OK
