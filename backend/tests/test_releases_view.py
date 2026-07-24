@@ -604,6 +604,34 @@ def test_filter_removed_candidates_drops_foreign_titles(tmp_path, monkeypatch) -
     assert str(foreign.resolve()) not in paths
 
 
+def test_filter_removed_candidates_drops_ds_store(tmp_path, monkeypatch) -> None:
+    from app.services.releases_view import _filter_removed_candidates
+
+    media = tmp_path / "anilibria"
+    show = media / "2009" / "Hetalia"
+    show.mkdir(parents=True)
+    ep = show / "ep01.mkv"
+    ep.write_bytes(b"1")
+    ds = show / ".DS_Store"
+    ds.write_bytes(b"junk")
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.releases_view.resolve_orphan_scan_root",
+        lambda **kwargs: show.resolve(),
+    )
+    files = [SimpleNamespace(relative_path="ep01.mkv", full_path=str(ep))]
+    filtered = _filter_removed_candidates(
+        [
+            ("ep01.mkv", str(ep)),
+            (str(ds), str(ds)),
+            (".DS_Store", str(ds)),
+        ],
+        files,  # type: ignore[arg-type]
+    )
+    assert all(not str(p).endswith(".DS_Store") for _, p in filtered if p)
+
+
 def test_info_hashes_with_active_hash_job() -> None:
     db = MagicMock()
     wanted = "aa" * 20

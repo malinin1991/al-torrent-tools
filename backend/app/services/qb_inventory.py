@@ -268,7 +268,9 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
             hashed_paths = tracker._load_hashed_canonical_paths(
                 [f.full_path for f in files if f.full_path]
             )
-            baseline_had_known = tracker._baseline_has_known_among(existing.values())
+            baseline_had_known = tracker._baseline_has_known_among(
+                existing.values(), hashed_paths=hashed_paths
+            )
         seen_paths: set[str] = set()
         for item in files:
             seen_paths.add(item.relative_path)

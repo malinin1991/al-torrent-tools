@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.db.models import CleanupRule
 from app.services.qb_inventory import (
     InventoryFile,
@@ -216,9 +218,12 @@ def test_prune_keeps_torrent_files_for_archived_hashes(monkeypatch, tmp_path: Pa
     assert keep_tf not in deleted
 
 
-def test_upsert_inventory_initial_status_by_prior_version() -> None:
+def test_upsert_inventory_initial_status_by_prior_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Новые строки inventory: «новый» только если файла не было в прошлой версии."""
     from app.db.models import TorrentFile
+    from app.services.file_tracker import FileTrackerService
 
     class FakeScalars:
         def __init__(self, rows):
@@ -227,21 +232,16 @@ def test_upsert_inventory_initial_status_by_prior_version() -> None:
         def all(self):
             return list(self._rows)
 
-    calls = {"n": 0}
-
-    def fake_scalars(_stmt):
-        calls["n"] += 1
-        # 1) существующие TorrentFile текущей версии → нет,
-        # 2) состав прошлой версии (_prior_version_paths) → old.mkv уже был.
-        if calls["n"] == 1:
-            return FakeScalars([])
-        return FakeScalars(["Show/old.mkv"])
-
     db = MagicMock()
-    db.scalars.side_effect = fake_scalars
-    db.scalar.return_value = "bb" + "b" * 38  # есть прошлая версия
+    db.scalars.return_value = FakeScalars([])  # нет строк текущей версии
     created: list[object] = []
     db.add.side_effect = lambda obj: created.append(obj)
+
+    monkeypatch.setattr(
+        FileTrackerService,
+        "prior_version_composition",
+        lambda self, *, torrent_id, info_hash: (True, {"Show/old.mkv"}),
+    )
 
     inventory = InventoryResult(
         valid_hashes={"a" * 40},
@@ -277,8 +277,8 @@ def test_upsert_inventory_initial_status_by_prior_version() -> None:
     assert rows["Show/new.mkv"].ui_status == "new"
 
 
-def test_upsert_inventory_first_release_all_ok(tmp_path: Path) -> None:
-    """Нет прошлой версии + готовый файл на диске → inventory сразу ok."""
+def test_upsert_inventory_first_release_all_new(tmp_path: Path) -> None:
+    """Нет прошлой версии + готовый файл на диске → inventory new (добавление версии)."""
     from app.db.models import TorrentFile
 
     class FakeScalars:
@@ -315,7 +315,7 @@ def test_upsert_inventory_first_release_all_ok(tmp_path: Path) -> None:
 
     upsert_torrent_files_inventory(db, inventory)
     rows = [r for r in created if isinstance(r, TorrentFile)]
-    assert rows[0].ui_status == "ok"
+    assert rows[0].ui_status == "new"
 
 
 def test_upsert_inventory_mixed_baseline_new_episode_is_new(tmp_path: Path) -> None:
@@ -438,8 +438,8 @@ def test_upsert_inventory_first_release_incomplete_is_new(tmp_path: Path) -> Non
     assert rows[0].ui_status == "new"
 
 
-def test_upsert_inventory_incomplete_with_prior_hash_is_ok(tmp_path: Path) -> None:
-    """Baseline + .!qB, но в disk_file_hashes уже есть хэш без суффикса → ok (не new)."""
+def test_upsert_inventory_incomplete_with_prior_hash_still_new_on_first(tmp_path: Path) -> None:
+    """Первый торрент: .!qB + хэш в БД → всё равно new (нет prior-версии)."""
     from app.db.models import TorrentFile
 
     media = tmp_path / "anilibria" / "Show"
@@ -466,7 +466,6 @@ def test_upsert_inventory_incomplete_with_prior_hash_is_ok(tmp_path: Path) -> No
             return FakeScalars([])  # existing torrent_files
         if calls["n"] == 2:
             return FakeScalars([])  # prior candidates
-        # hashed canonical
         return FakeScalars([str(complete)])
 
     db.scalars.side_effect = fake_scalars
@@ -492,11 +491,11 @@ def test_upsert_inventory_incomplete_with_prior_hash_is_ok(tmp_path: Path) -> No
     upsert_torrent_files_inventory(db, inventory)
     rows = [r for r in created if isinstance(r, TorrentFile)]
     assert len(rows) == 1
-    assert rows[0].ui_status == "ok"
+    assert rows[0].ui_status == "new"
 
 
-def test_upsert_inventory_first_release_complete_file_ok(tmp_path: Path) -> None:
-    """Baseline + реальный файл на диске (без .!qB) → ok."""
+def test_upsert_inventory_first_release_complete_file_new(tmp_path: Path) -> None:
+    """Baseline + реальный файл на диске → new (добавление первого торрента)."""
     from app.db.models import TorrentFile
 
     class FakeScalars:
@@ -533,7 +532,7 @@ def test_upsert_inventory_first_release_complete_file_ok(tmp_path: Path) -> None
 
     upsert_torrent_files_inventory(db, inventory)
     rows = [r for r in created if isinstance(r, TorrentFile)]
-    assert rows[0].ui_status == "ok"
+    assert rows[0].ui_status == "new"
 
 
 def test_load_cleanup_rules_filters_slave_only() -> None:

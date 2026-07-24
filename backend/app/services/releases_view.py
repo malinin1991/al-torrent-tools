@@ -33,6 +33,7 @@ from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
 from app.services.torrent_files_meta import (
     QB_INCOMPLETE_SUFFIX,
     complete_path_for,
+    is_junk_file,
     is_under_media_root,
     resolve_media_root,
 )
@@ -501,7 +502,7 @@ def _filter_removed_candidates(
     candidates: list[tuple[str, str | None]],
     files: list[TorrentFile],
 ) -> list[tuple[str, str | None]]:
-    """Отбрасывает «удалён/orphan» вне корня этого торрента (старые ложные события)."""
+    """Отбрасывает «удалён/orphan» вне корня этого торрента и служебный мусор."""
     if not candidates:
         return []
     known = {f.full_path for f in files if f.full_path}
@@ -514,12 +515,20 @@ def _filter_removed_candidates(
     if root is None:
         # Нет якоря по файлам торрента — показываем только removed с relative_path
         # (состав .torrent), без абсолютных orphan-путей чужих тайтлов.
-        return [(display, full) for display, full in candidates if display and not display.startswith("/")]
+        return [
+            (display, full)
+            for display, full in candidates
+            if display
+            and not display.startswith("/")
+            and not is_junk_file(display)
+        ]
 
     filtered: list[tuple[str, str | None]] = []
     for display, full in candidates:
         path_raw = full or display
         if not path_raw:
+            continue
+        if is_junk_file(path_raw):
             continue
         try:
             Path(path_raw).resolve().relative_to(root)

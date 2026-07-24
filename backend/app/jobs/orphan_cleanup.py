@@ -16,30 +16,13 @@ from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.qb_inventory import InventoryResult, build_inventory, connect_master
 from app.services.torrent_files_meta import (
     QB_INCOMPLETE_SUFFIX,
+    is_junk_dir,
+    is_junk_file,
     is_under_media_root,
     resolve_media_root,
 )
 
 MEDIA_EXTENSIONS = {".mkv", ".mp4", ".webm", ".avi", ".m2ts", ".ts"}
-
-# Мусор macOS / Windows / служебные метки — не контент раздач.
-JUNK_FILENAMES = frozenset(
-    {
-        ".DS_Store",
-        "Thumbs.db",
-        "desktop.ini",
-        ".localized",
-        ".AppleDouble",
-        ".Parent",
-    }
-)
-JUNK_DIRNAMES = frozenset(
-    {
-        "__MACOSX",
-        ".AppleDouble",
-        "@eaDir",  # Synology
-    }
-)
 
 
 def _add_log(db: Session, job_id: int, message: str, level: str = "info") -> None:
@@ -95,20 +78,6 @@ def media_root_is_writable(media_root: Path) -> bool:
     """Проверка, что apply сможет удалять файлы (не read-only mount)."""
     ok, _ = media_root_writable_status(media_root)
     return ok
-
-
-def is_junk_file(path: Path) -> bool:
-    name = path.name
-    if name in JUNK_FILENAMES:
-        return True
-    # AppleDouble / resource fork: ._filename
-    if name.startswith("._") and len(name) > 2:
-        return True
-    return False
-
-
-def is_junk_dir(path: Path) -> bool:
-    return path.name in JUNK_DIRNAMES
 
 
 def find_orphan_files(

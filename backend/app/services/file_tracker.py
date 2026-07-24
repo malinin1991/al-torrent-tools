@@ -32,6 +32,7 @@ from app.services.torrent_files_meta import (
     extract_qb_file_priorities,
     extract_qb_save_path,
     is_incomplete_path,
+    is_junk_file,
     is_partial_only,
     is_under_media_root,
     normalize_rel_path,
@@ -240,9 +241,6 @@ class FileTrackerService:
             get_setting_value(self._db, "file_hash_workers", str(settings.file_hash_workers))
         )
         is_baseline = not has_prior_version
-        # Sticky new только если ДО sync уже были известные файлы (ok/changed).
-        # Иначе partial hash_backfill на пустом составе даёт ложный mixed и new навсегда.
-        preserve_baseline_new = is_baseline and bool(synced.baseline_had_known)
         settled_rels: set[str] = set()
         if to_hash:
             self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
@@ -295,14 +293,12 @@ class FileTrackerService:
                     mismatch=mismatch,
                     matched=matched,
                     is_baseline=is_baseline,
-                    preserve_baseline_new=preserve_baseline_new,
                 )
                 settled_rels.add(rel)
 
-        # Первый торрент релиза: после hash-settle early «новый» → ok (снимок принят),
-        # кроме mixed baseline — там sticky new сохраняем.
-        # Unselected / без пути / missing тоже ok.
-        # .!qB не трогаем: provisional уже выставлен (ok если хэш, иначе new).
+        # Первый торрент: после hash-settle добавления остаются new (финальный статус версии).
+        # Unselected / без пути / missing: settle без mismatch не трогает sticky new.
+        # .!qB не трогаем: provisional уже выставлен.
         if is_baseline:
             for row in rows:
                 if row.relative_path in settled_rels:
@@ -315,7 +311,6 @@ class FileTrackerService:
                     mismatch=False,
                     matched=False,
                     is_baseline=True,
-                    preserve_baseline_new=preserve_baseline_new,
                 )
             self._db.commit()
         elif to_hash:
@@ -383,30 +378,21 @@ class FileTrackerService:
         mismatch: bool,
         matched: bool,
         is_baseline: bool = False,
-        preserve_baseline_new: bool = False,
     ) -> None:
         """Sticky ui_status относительно ПРЕДЫДУЩЕЙ версии торрента.
 
-        Спецификация:
-        - baseline чистый (все файлы новые) после hash-settle → ok
-        - baseline mixed (часть уже ok/changed) → sticky new сохраняем;
-          mismatch с disk hash → changed
-        - new — файла не было в прошлой версии → остаётся навсегда
+        - new — файл добавлен ЭТОЙ версией (не было в prior) → финальный
         - changed — хеш разошёлся с прошлой версией → финальный
-        - ok — файл не менялся относительно прошлой версии
-
-        Если сравнить не с чем (прошлая версия не хеширована) — статус НЕ меняем:
-        строка уже создана с корректным дефолтом (ok для существовавшего файла).
+        - ok — файл был в прошлой версии и хеш совпал
+        - первый торрент (нет prior): все — new; после hash остаются new
         """
         current = (row.ui_status or "").strip().lower()
         if is_baseline:
-            # Baseline: mismatch с уже известным disk hash → changed
-            # (докачка на границе кусков / пересборка без prior-версии в архиве).
             if mismatch:
                 row.ui_status = UI_STATUS_CHANGED
                 return
-            # Mixed: эпизод реально новый среди уже известных — не сбрасываем в ok.
-            if current == UI_STATUS_NEW and preserve_baseline_new:
+            # Добавления первого торрента — финальный new, не сбрасываем в ok.
+            if current == UI_STATUS_NEW:
                 return
             if current != UI_STATUS_CHANGED:
                 row.ui_status = UI_STATUS_OK
@@ -469,15 +455,20 @@ class FileTrackerService:
 
     def _prior_version_paths(self, *, prior_hash: str) -> set[str]:
         """relative_path состава предыдущей версии (для определения «новый»)."""
+        return set(self._prior_version_files(prior_hash=prior_hash).keys())
+
+    def _prior_version_files(self, *, prior_hash: str) -> dict[str, str | None]:
+        """relative_path → full_path состава предыдущей версии."""
         if not prior_hash:
-            return set()
-        return {
-            normalize_rel_path(row)
-            for row in self._db.scalars(
-                select(TorrentFile.relative_path).where(TorrentFile.info_hash == prior_hash)
-            ).all()
-            if row
-        }
+            return {}
+        result: dict[str, str | None] = {}
+        for row in self._db.scalars(
+            select(TorrentFile).where(TorrentFile.info_hash == prior_hash)
+        ).all():
+            if not row.relative_path:
+                continue
+            result[normalize_rel_path(row.relative_path)] = row.full_path
+        return result
 
     def prior_version_composition(
         self, *, torrent_id: int, info_hash: str
@@ -534,15 +525,28 @@ class FileTrackerService:
         rows: object,
         *,
         exclude_rel: str | None = None,
+        hashed_paths: set[str] | None = None,
     ) -> bool:
-        """Есть ли среди строк ok/changed (опционально исключая relative_path)."""
+        """Есть ли среди строк ok/changed с реальным content_hash (не provisional early ok).
+
+        hashed_paths — canonical full_path с хэшем в disk_file_hashes.
+        Без хэша provisional ok с диска не считается mixed (иначе после early sync
+        hash_torrent залипает в sticky new).
+        """
         exclude = normalize_rel_path(exclude_rel) if exclude_rel else None
         for row in rows:
             if exclude is not None:
                 rel = normalize_rel_path(getattr(row, "relative_path", "") or "")
                 if rel == exclude:
                     continue
-            if cls._ui_status_is_known(getattr(row, "ui_status", None)):
+            if not cls._ui_status_is_known(getattr(row, "ui_status", None)):
+                continue
+            if hashed_paths is None:
+                return True
+            full = getattr(row, "full_path", None) or ""
+            if not full:
+                continue
+            if cls._canonical_full_path(full) in hashed_paths:
                 return True
         return False
 
@@ -555,31 +559,20 @@ class FileTrackerService:
     ) -> str:
         """Первый торрент torrent_id: provisional ui_status до hash-settle.
 
-        Чистый baseline (mixed=False — в составе ещё не было ok/changed):
-        - complete на диске → ok (снимок принят)
-        - .!qB / missing → new
+        Чистый baseline (нет prior / ещё не было ok|changed с хэшем):
+        - все файлы → new (добавления ЭТОЙ версии; «ok» только vs prior)
 
-        Mixed baseline (mixed=True — до sync уже были известные файлы):
+        Mixed baseline (уже были известные ok/changed с хэшем):
         - есть хэш → ok
-        - без хэша (complete / .!qB / missing) → new
-          Не путать с partial hash_backfill на пустом составе: там mixed=False.
+        - без хэша → new
         """
+        if not mixed:
+            return UI_STATUS_NEW
         if not full_path:
             return UI_STATUS_NEW
-        path = Path(full_path)
         canonical = self._canonical_full_path(full_path)
-        has_stored_hash = canonical in hashed_paths
-        if has_stored_hash:
+        if canonical in hashed_paths:
             return UI_STATUS_OK
-        if mixed:
-            return UI_STATUS_NEW
-        if is_incomplete_path(path):
-            return UI_STATUS_NEW
-        try:
-            if path.is_file():
-                return UI_STATUS_OK
-        except OSError:
-            pass
         return UI_STATUS_NEW
 
     def _prior_version_hashes(self, *, prior_hash: str) -> dict[str, str]:
@@ -685,9 +678,8 @@ class FileTrackerService:
         # Предыдущая версия этого torrent_id (факт наличия — по архиву, не по составу).
         prior_hash = self._prior_version_hash(torrent_id=torrent_id, current_hash=normalized_hash)
         has_prior_version = prior_hash is not None
-        prior_version_paths = (
-            self._prior_version_paths(prior_hash=prior_hash) if prior_hash else set()
-        )
+        prior_files = self._prior_version_files(prior_hash=prior_hash) if prior_hash else {}
+        prior_version_paths = set(prior_files.keys())
         current_paths: set[str] = set()
         now = utcnow()
         media_root = resolve_media_root()
@@ -728,9 +720,11 @@ class FileTrackerService:
             if has_prior_version
             else self._load_hashed_canonical_paths(resolved_for_hash_lookup)
         )
-        # Mixed: до sync уже были ok/changed. Не hashed_paths — иначе partial backfill
-        # на пустом составе залипает в sticky new.
-        baseline_had_known = self._baseline_has_known_among(previous.values())
+        # Mixed: до sync уже были ok/changed С хэшем. Provisional ok без hash
+        # (early sync) не считается — иначе sticky new после первого hash_torrent.
+        baseline_had_known = self._baseline_has_known_among(
+            previous.values(), hashed_paths=hashed_paths
+        )
 
         for meta, rel_norm, first_seen, full_path, selected in prepared_metas:
             if has_prior_version:
@@ -741,7 +735,11 @@ class FileTrackerService:
                     hashed_paths=hashed_paths,
                     mixed=baseline_had_known,
                 )
-                first_seen = initial_status == UI_STATUS_NEW
+                if baseline_had_known:
+                    first_seen = initial_status == UI_STATUS_NEW
+                else:
+                    # Чистый baseline: все файлы — added этой версии; после hash остаются new.
+                    first_seen = True
 
             if initial_status == UI_STATUS_NEW:
                 status_new += 1
@@ -788,16 +786,20 @@ class FileTrackerService:
                         # Incremental: файла не было в prior → sticky new.
                         if cur not in _STICKY_FINAL:
                             row.ui_status = UI_STATUS_NEW
-                    else:
-                        # Baseline first_seen → sticky new.
-                        # ok→new только в mixed (есть другие ok/changed): иначе
-                        # inventory baseline ok + heal added ломается в new.
+                    elif baseline_had_known:
+                        # Mixed: sticky new среди уже известных (с хэшем).
                         if cur not in _STICKY_FINAL:
                             siblings_known = self._baseline_has_known_among(
-                                previous.values(), exclude_rel=rel_norm
+                                previous.values(),
+                                exclude_rel=rel_norm,
+                                hashed_paths=hashed_paths,
                             )
                             if cur != UI_STATUS_OK or siblings_known:
                                 row.ui_status = UI_STATUS_NEW
+                    else:
+                        # Чистый baseline: sticky new/changed не затираем.
+                        if cur not in _STICKY_FINAL:
+                            row.ui_status = UI_STATUS_NEW
                     # Heal: inventory/stop успели записать строку без события added.
                     if not self._has_prior_event(
                         torrent_id=torrent_id,
@@ -814,16 +816,9 @@ class FileTrackerService:
                             )
                         )
                 elif not has_prior_version:
-                    # Re-sync baseline: в чистом — снять ошибочный new после появления хэша;
-                    # в mixed — sticky new сохраняем (как new при prior).
+                    # Re-sync baseline: sticky new/changed; provisional только если пусто.
                     cur = (row.ui_status or "").strip().lower()
-                    if (
-                        cur == UI_STATUS_NEW
-                        and initial_status == UI_STATUS_OK
-                        and not baseline_had_known
-                    ):
-                        row.ui_status = UI_STATUS_OK
-                    elif cur not in _STICKY_FINAL and cur != UI_STATUS_CHANGED:
+                    if cur not in _STICKY_FINAL:
                         row.ui_status = initial_status
             result.files_upserted += 1
 
@@ -849,6 +844,27 @@ class FileTrackerService:
                 )
             )
             self._db.delete(old)
+
+        # Смена версии: путь был в immediate prior, в новом составе нет → removed
+        # только у ЭТОЙ версии (info_hash). Следующая версия сравнивает уже с ней —
+        # старое удаление не повторяется. Пример: file__1 ушёл на v2, на v3 его нет в UI.
+        if has_prior_version:
+            for rel in sorted(set(prior_files) - current_paths - removed_paths):
+                if self._has_prior_event(
+                    torrent_id=torrent_id,
+                    info_hash=normalized_hash,
+                    kind=KIND_REMOVED,
+                    relative_path=rel,
+                    full_path=prior_files.get(rel),
+                ):
+                    continue
+                composition_changes.append(
+                    FileChange(
+                        kind=KIND_REMOVED,
+                        relative_path=rel,
+                        full_path=prior_files.get(rel),
+                    )
+                )
 
         self._db.commit()
         result.changes.extend(composition_changes)
@@ -891,6 +907,8 @@ class FileTrackerService:
             if not path.is_file():
                 continue
             if path.name.endswith(".!qB"):
+                continue
+            if is_junk_file(path):
                 continue
             try:
                 resolved = path.resolve()

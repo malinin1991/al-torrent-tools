@@ -18,6 +18,25 @@ logger = logging.getLogger(__name__)
 
 QB_INCOMPLETE_SUFFIX = ".!qB"
 
+# Мусор macOS / Windows / служебные метки — не контент раздач (orphan/UI).
+JUNK_FILENAMES = frozenset(
+    {
+        ".DS_Store",
+        "Thumbs.db",
+        "desktop.ini",
+        ".localized",
+        ".AppleDouble",
+        ".Parent",
+    }
+)
+JUNK_DIRNAMES = frozenset(
+    {
+        "__MACOSX",
+        ".AppleDouble",
+        "@eaDir",  # Synology
+    }
+)
+
 
 @dataclass(frozen=True)
 class TorrentFileMeta:
@@ -316,6 +335,20 @@ def path_exists_including_incomplete(path: Path) -> bool:
 
 def is_incomplete_path(path: Path) -> bool:
     return path.name.endswith(QB_INCOMPLETE_SUFFIX) or Path(str(path) + QB_INCOMPLETE_SUFFIX).is_file()
+
+
+def is_junk_file(path: Path | str) -> bool:
+    """Служебный мусор (.DS_Store, Thumbs.db, ._*), не контент торрента."""
+    name = Path(path).name
+    if name in JUNK_FILENAMES:
+        return True
+    if name.startswith("._") and len(name) > 2:
+        return True
+    return False
+
+
+def is_junk_dir(path: Path | str) -> bool:
+    return Path(path).name in JUNK_DIRNAMES
 
 
 def is_partial_only(path: Path | str) -> bool:
