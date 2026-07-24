@@ -476,6 +476,145 @@ def test_sync_composition_baseline_complete_on_disk_is_ok(
     assert synced.first_seen_paths == {ep02}
 
 
+def test_sync_composition_mixed_baseline_complete_without_hash_is_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """prior=no, в составе уже ok/ok, новый эпизод complete без хеша → new."""
+    from app.services.file_tracker import TorrentFile, UI_STATUS_NEW, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "b2" * 20
+    ep01 = "Show/ep01.mkv"
+    ep02 = "Show/ep02.mkv"
+    ep03 = "Show/ep03.mkv"
+    for rel in (ep01, ep02, ep03):
+        path = media / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+
+    row01 = SimpleNamespace(
+        relative_path=ep01,
+        torrent_id=39150,
+        release_id=10227,
+        size=1,
+        file_index=0,
+        selected=True,
+        full_path=str(media / ep01),
+        ui_status=UI_STATUS_OK,
+    )
+    row02 = SimpleNamespace(
+        relative_path=ep02,
+        torrent_id=39150,
+        release_id=10227,
+        size=2,
+        file_index=1,
+        selected=True,
+        full_path=str(media / ep02),
+        ui_status=UI_STATUS_OK,
+    )
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [row01, row02]
+    db.scalar.return_value = None
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(service, "_persist_events", lambda **_k: [])
+    monkeypatch.setattr(service, "_qb_paths_and_priorities", lambda _h: (str(media), str(media), {}))
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_full_path",
+        lambda _base, rel, **_k: media / rel,
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.parse_torrent_file_list",
+        lambda _b: [
+            SimpleNamespace(relative_path=ep01, size=1, file_index=0),
+            SimpleNamespace(relative_path=ep02, size=2, file_index=1),
+            SimpleNamespace(relative_path=ep03, size=3, file_index=2),
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_hashed_canonical_paths",
+        lambda paths: {str(media / ep01), str(media / ep02)},
+    )
+
+    synced = service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=39150,
+        release_id=10227,
+        torrent_bytes=b"x",
+    )
+    assert synced.has_prior_version is False
+    assert synced.baseline_had_known is True
+    assert row01.ui_status == UI_STATUS_OK
+    assert row02.ui_status == UI_STATUS_OK
+    rows = {r.relative_path: r for r in created if isinstance(r, TorrentFile)}
+    assert rows[ep03].ui_status == UI_STATUS_NEW
+    assert synced.first_seen_paths == {ep03}
+
+
+def test_sync_composition_partial_backfill_without_known_is_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Пустой состав + partial hashed_paths → clean baseline, не sticky new."""
+    from app.services.file_tracker import TorrentFile, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "b3" * 20
+    ep01 = "Show/ep01.mkv"
+    ep02 = "Show/ep02.mkv"
+    ep03 = "Show/ep03.mkv"
+    for rel in (ep01, ep02, ep03):
+        path = media / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(service, "_persist_events", lambda **_k: [])
+    monkeypatch.setattr(service, "_qb_paths_and_priorities", lambda _h: (str(media), str(media), {}))
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_full_path",
+        lambda _base, rel, **_k: media / rel,
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.parse_torrent_file_list",
+        lambda _b: [
+            SimpleNamespace(relative_path=ep01, size=1, file_index=0),
+            SimpleNamespace(relative_path=ep02, size=2, file_index=1),
+            SimpleNamespace(relative_path=ep03, size=3, file_index=2),
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_hashed_canonical_paths",
+        lambda paths: {str(media / ep01), str(media / ep02)},
+    )
+
+    synced = service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=1,
+        release_id=2,
+        torrent_bytes=b"x",
+    )
+    assert synced.baseline_had_known is False
+    rows = {r.relative_path: r for r in created if isinstance(r, TorrentFile)}
+    assert rows[ep01].ui_status == UI_STATUS_OK
+    assert rows[ep02].ui_status == UI_STATUS_OK
+    assert rows[ep03].ui_status == UI_STATUS_OK
+    assert synced.first_seen_paths == set()
+
+
 def test_sync_composition_prior_keeps_existing_ok(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -976,6 +1115,7 @@ def _run_track_settle(
             save_path=str(media),
             content_path=str(media),
             first_seen_paths={rel} if first_seen else set(),
+            baseline_had_known=False,
         ),
     )
     monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
@@ -1085,6 +1225,7 @@ def test_track_baseline_incomplete_not_forced_to_new(tmp_path, monkeypatch) -> N
             save_path=str(media),
             content_path=str(media),
             first_seen_paths=set(),
+            baseline_had_known=False,
         ),
     )
     monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
@@ -1105,7 +1246,7 @@ def test_track_baseline_incomplete_not_forced_to_new(tmp_path, monkeypatch) -> N
 
 
 def test_baseline_provisional_incomplete_with_and_without_hash(tmp_path: Path) -> None:
-    """!qB: есть хэш без суффикса → ok; нет хэша → new."""
+    """!qB: есть хэш без суффикса → ok; нет хэша → new (clean и mixed)."""
     from app.services.file_tracker import UI_STATUS_NEW, UI_STATUS_OK
 
     media = tmp_path / "anilibria"
@@ -1127,6 +1268,43 @@ def test_baseline_provisional_incomplete_with_and_without_hash(tmp_path: Path) -
     qb_path = str(full) + ".!qB"
     assert (
         service._baseline_provisional_status(qb_path, hashed_paths={str(full)})
+        == UI_STATUS_OK
+    )
+    # Mixed: без хэша → new даже для .!qB
+    assert (
+        service._baseline_provisional_status(
+            qb_path, hashed_paths=set(), mixed=True
+        )
+        == UI_STATUS_NEW
+    )
+
+
+def test_baseline_provisional_mixed_complete_without_hash_is_new(tmp_path: Path) -> None:
+    """Mixed=True: complete на диске без хеша → new; clean → ok."""
+    from app.services.file_tracker import UI_STATUS_NEW, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    known = media / "Show" / "ep01.mkv"
+    newbie = media / "Show" / "ep03.mkv"
+    known.parent.mkdir(parents=True)
+    known.write_bytes(b"old")
+    newbie.write_bytes(b"fresh")
+
+    service = FileTrackerService(MagicMock())
+    hashed = {str(known)}
+    assert service._baseline_provisional_status(str(known), hashed_paths=hashed) == UI_STATUS_OK
+    assert (
+        service._baseline_provisional_status(
+            str(newbie), hashed_paths=hashed, mixed=True
+        )
+        == UI_STATUS_NEW
+    )
+    # Чистый baseline: complete без mixed → ok (даже если hashed_paths от backfill)
+    assert (
+        service._baseline_provisional_status(
+            str(newbie), hashed_paths=hashed, mixed=False
+        )
         == UI_STATUS_OK
     )
 
@@ -1216,6 +1394,220 @@ def test_sync_composition_heals_baseline_new_when_hash_exists(
     assert row_b.ui_status == UI_STATUS_OK
     # previous + prior candidates + hashed lookup (provisional закрывает heal)
     assert len(scalars_calls) == 3
+
+
+def test_sync_composition_mixed_keeps_sticky_new_after_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mixed baseline: ok+new, у new уже есть хэш → re-sync не лечит в ok."""
+    from app.services.file_tracker import UI_STATUS_NEW, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "77" * 20
+    rel_a = "Show/ep01.mkv"
+    rel_b = "Show/ep03.mkv"
+    full_a = str(media / rel_a)
+    full_b = str(media / rel_b)
+    (media / "Show").mkdir(parents=True)
+    Path(full_a).write_bytes(b"a")
+    Path(full_b).write_bytes(b"b")
+
+    row_a = SimpleNamespace(
+        relative_path=rel_a,
+        torrent_id=1,
+        release_id=1,
+        size=1,
+        file_index=0,
+        selected=True,
+        full_path=full_a,
+        ui_status=UI_STATUS_OK,
+    )
+    row_b = SimpleNamespace(
+        relative_path=rel_b,
+        torrent_id=1,
+        release_id=1,
+        size=2,
+        file_index=1,
+        selected=True,
+        full_path=full_b,
+        ui_status=UI_STATUS_NEW,
+    )
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [row_a, row_b]
+    db.scalar.return_value = None
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(service, "_persist_events", lambda **_k: [])
+    monkeypatch.setattr(service, "_qb_paths_and_priorities", lambda _h: (str(media), str(media), {}))
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_full_path",
+        lambda _base, rel, **_k: media / rel,
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.parse_torrent_file_list",
+        lambda _b: [
+            SimpleNamespace(relative_path=rel_a, size=1, file_index=0),
+            SimpleNamespace(relative_path=rel_b, size=2, file_index=1),
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_hashed_canonical_paths",
+        lambda _paths: {full_a, full_b},
+    )
+
+    synced = service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=1,
+        release_id=2,
+        torrent_bytes=b"x",
+    )
+    assert synced.has_prior_version is False
+    assert synced.baseline_had_known is True
+    assert row_a.ui_status == UI_STATUS_OK
+    assert row_b.ui_status == UI_STATUS_NEW
+
+
+def test_track_mixed_baseline_e2e_preserves_new_after_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """e2e track_torrent: baseline_had_known + ep03 new → после hash settle остаётся new."""
+    from app.services.file_tracker import TrackTorrentResult, UI_STATUS_NEW, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "e2" * 20
+    rows: list[SimpleNamespace] = []
+    for idx, name in enumerate(("ep01.mkv", "ep02.mkv", "ep03.mkv")):
+        rel = f"Show/{name}"
+        full = media / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_bytes(b"data")
+        rows.append(
+            SimpleNamespace(
+                relative_path=rel,
+                selected=True,
+                full_path=str(full),
+                ui_status=UI_STATUS_NEW if idx == 2 else UI_STATUS_OK,
+            )
+        )
+    ep03 = rows[2].relative_path
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = rows
+    db.scalar.return_value = SimpleNamespace(content_hash="old")
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(
+        service,
+        "_prepare_track",
+        lambda **_k: SimpleNamespace(
+            normalized_hash=info_hash,
+            torrent_bytes=b"x",
+            archive=None,
+            skipped_reason=None,
+        ),
+    )
+    monkeypatch.setattr(service, "_prior_version_hash", lambda **_k: None)
+    monkeypatch.setattr(service, "_prior_version_hashes", lambda **_k: {})
+    monkeypatch.setattr(
+        service,
+        "_sync_composition",
+        lambda **_k: SimpleNamespace(
+            result=TrackTorrentResult(),
+            events=[],
+            has_prior_version=False,
+            save_path=str(media),
+            content_path=str(media),
+            first_seen_paths={ep03},
+            baseline_had_known=True,
+        ),
+    )
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.hash_paths_parallel",
+        lambda *_a, **_k: {"hashed": 3, "gated": 0, "errors": 0, "stopped": False},
+    )
+    monkeypatch.setattr(service, "_filter_duplicate_changes", lambda **_k: [])
+    monkeypatch.setattr(service, "_persist_events", lambda **_k: [])
+    monkeypatch.setattr("app.services.file_tracker.resolve_orphan_scan_root", lambda **_k: None)
+    monkeypatch.setattr(service, "_maybe_notify_telegram", lambda **_k: None)
+
+    service.track_torrent(info_hash=info_hash, torrent_id=1, release_id=2, notify=False)
+    assert rows[0].ui_status == UI_STATUS_OK
+    assert rows[1].ui_status == UI_STATUS_OK
+    assert rows[2].ui_status == UI_STATUS_NEW
+
+
+def test_track_partial_backfill_e2e_settles_all_to_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """e2e: baseline_had_known=False (partial backfill) → settle сносит new в ok."""
+    from app.services.file_tracker import TrackTorrentResult, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "e3" * 20
+    rows: list[SimpleNamespace] = []
+    for name in ("ep01.mkv", "ep02.mkv", "ep03.mkv"):
+        rel = f"Show/{name}"
+        full = media / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_bytes(b"data")
+        rows.append(
+            SimpleNamespace(
+                relative_path=rel,
+                selected=True,
+                full_path=str(full),
+                ui_status="new",
+            )
+        )
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = rows
+    db.scalar.return_value = SimpleNamespace(content_hash="h")
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(
+        service,
+        "_prepare_track",
+        lambda **_k: SimpleNamespace(
+            normalized_hash=info_hash,
+            torrent_bytes=b"x",
+            archive=None,
+            skipped_reason=None,
+        ),
+    )
+    monkeypatch.setattr(service, "_prior_version_hash", lambda **_k: None)
+    monkeypatch.setattr(service, "_prior_version_hashes", lambda **_k: {})
+    monkeypatch.setattr(
+        service,
+        "_sync_composition",
+        lambda **_k: SimpleNamespace(
+            result=TrackTorrentResult(),
+            events=[],
+            has_prior_version=False,
+            save_path=str(media),
+            content_path=str(media),
+            first_seen_paths={rows[2].relative_path},
+            baseline_had_known=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.hash_paths_parallel",
+        lambda *_a, **_k: {"hashed": 3, "gated": 0, "errors": 0, "stopped": False},
+    )
+    monkeypatch.setattr(service, "_filter_duplicate_changes", lambda **_k: [])
+    monkeypatch.setattr(service, "_persist_events", lambda **_k: [])
+    monkeypatch.setattr("app.services.file_tracker.resolve_orphan_scan_root", lambda **_k: None)
+    monkeypatch.setattr(service, "_maybe_notify_telegram", lambda **_k: None)
+
+    service.track_torrent(info_hash=info_hash, torrent_id=1, release_id=2, notify=False)
+    assert all(r.ui_status == UI_STATUS_OK for r in rows)
 
 
 def test_prepare_track_prefers_exact_info_hash() -> None:

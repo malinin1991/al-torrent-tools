@@ -253,9 +253,8 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
             for row in db.scalars(select(TorrentFile).where(TorrentFile.info_hash == info_hash)).all()
         }
         # Начальный ui_status: «новый» только если есть prior и файла там не было.
-        # Первый торрент (без prior): complete → ok;
-        # .!qB + хэш в БД по пути без суффикса → ok (известный/изменённый);
-        # .!qB без хэша → new (первая закачка).
+        # Первый торрент (без prior): _baseline_provisional_status —
+        # clean / mixed=уже были ok|changed в составе.
         torrent_id = next((f.torrent_id for f in files if f.torrent_id), None)
         if torrent_id:
             has_prior_version, prior_version_paths = tracker.prior_version_composition(
@@ -264,10 +263,12 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
         else:
             has_prior_version, prior_version_paths = False, set()
         hashed_paths = set()
+        baseline_had_known = False
         if not has_prior_version:
             hashed_paths = tracker._load_hashed_canonical_paths(
                 [f.full_path for f in files if f.full_path]
             )
+            baseline_had_known = tracker._baseline_has_known_among(existing.values())
         seen_paths: set[str] = set()
         for item in files:
             seen_paths.add(item.relative_path)
@@ -282,7 +283,9 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                     initial_status = "new" if first_seen else "ok"
                 else:
                     initial_status = tracker._baseline_provisional_status(
-                        item.full_path, hashed_paths=hashed_paths
+                        item.full_path,
+                        hashed_paths=hashed_paths,
+                        mixed=baseline_had_known,
                     )
                 db.add(
                     TorrentFile(
