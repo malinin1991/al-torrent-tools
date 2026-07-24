@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from app.utils.datetime_fmt import utcnow
@@ -28,7 +30,12 @@ from app.services.file_tracker import (
     resolve_orphan_scan_root,
 )
 from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
-from app.services.torrent_files_meta import resolve_media_root
+from app.services.torrent_files_meta import (
+    QB_INCOMPLETE_SUFFIX,
+    complete_path_for,
+    is_under_media_root,
+    resolve_media_root,
+)
 from app.services.torrent_qb_meta import (
     build_release_torrents_url,
     genres_from_quality_json,
@@ -38,6 +45,7 @@ from app.services.torrent_qb_meta import (
 # События новее этого окна влияют на бейдж в UI.
 _EVENT_WINDOW = timedelta(days=30)
 _REMOVED_KINDS = frozenset({KIND_REMOVED, KIND_ORPHAN})
+_NAT_SPLIT = re.compile(r"(\d+)")
 
 
 @dataclass
@@ -48,6 +56,127 @@ class ReleaseFileRow:
     full_path: str | None
     status: str  # new|changed|removed|checking|ok
     in_torrent: bool = True
+    file_id: int | None = None
+    downloadable: bool = False
+
+
+_DOWNLOADABLE_STATUSES = frozenset({"ok", "new", "changed"})
+
+
+def _natural_name_key(name: str) -> tuple:
+    """Ключ natural sort: ep2 < ep10 (не лексикографически)."""
+    parts = _NAT_SPLIT.split(name.casefold())
+    key: list[tuple[int, int | str]] = []
+    for part in parts:
+        if not part:
+            continue
+        if part.isdigit():
+            key.append((0, int(part)))
+        else:
+            key.append((1, part))
+    return tuple(key)
+
+
+def _sort_file_rows_desc(rows: list[ReleaseFileRow]) -> list[ReleaseFileRow]:
+    """Имя файла по убыванию (natural: ep10 выше ep2)."""
+    return sorted(
+        rows,
+        key=lambda r: _natural_name_key(Path(r.relative_path).name),
+        reverse=True,
+    )
+
+
+def _existing_resolved_files(
+    full_paths: list[str], *, media_root: Path
+) -> set[str]:
+    """Какие пути — обычные файлы под media root.
+
+    Один scandir на уникальный parent вместо N×Path.is_file() на странице.
+    """
+    wanted_by_parent: dict[Path, set[str]] = {}
+    for raw in full_paths:
+        if not raw:
+            continue
+        path = Path(raw)
+        if path.name.endswith(QB_INCOMPLETE_SUFFIX):
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if not is_under_media_root(resolved, media_root=media_root):
+            continue
+        wanted_by_parent.setdefault(resolved.parent, set()).add(str(resolved))
+
+    found: set[str] = set()
+    for parent, wanted in wanted_by_parent.items():
+        try:
+            with os.scandir(parent) as entries:
+                for entry in entries:
+                    try:
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        key = str(Path(entry.path).resolve())
+                    except OSError:
+                        continue
+                    if key in wanted:
+                        found.add(key)
+        except OSError:
+            for key in wanted:
+                try:
+                    if Path(key).is_file():
+                        found.add(key)
+                except OSError:
+                    continue
+    return found
+
+
+def _file_is_downloadable(
+    *,
+    status: str,
+    full_path: str | None,
+    media_root: Path | None = None,
+    existing_resolved: set[str] | None = None,
+) -> bool:
+    """Скачивание: финальный статус + complete-файл на диске под media root.
+
+    existing_resolved — заранее посчитанный набор (батч на рендере страницы).
+    Без него — одиночный is_file (endpoint скачивания).
+    """
+    if status not in _DOWNLOADABLE_STATUSES or not full_path:
+        return False
+    path = Path(full_path)
+    # Только сам .!qB запрещён; соседний .!qB при уже complete-файле не блокирует.
+    if path.name.endswith(QB_INCOMPLETE_SUFFIX):
+        return False
+    root = (media_root or resolve_media_root()).resolve()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    if not is_under_media_root(resolved, media_root=root):
+        return False
+    key = str(resolved)
+    if existing_resolved is not None:
+        return key in existing_resolved
+    try:
+        return resolved.is_file()
+    except OSError:
+        return False
+
+
+def resolve_media_file_for_download(row: TorrentFile) -> Path | None:
+    """Путь к media-файлу для отдачи, либо None если скачивать нельзя."""
+    status = (getattr(row, "ui_status", None) or "").strip().lower() or "ok"
+    full_path = row.full_path
+    if not full_path:
+        return None
+    if not _file_is_downloadable(status=status, full_path=full_path):
+        return None
+    try:
+        return Path(full_path).resolve()
+    except OSError:
+        return None
 
 
 @dataclass
@@ -414,22 +543,28 @@ def _build_file_rows(
     for item in files:
         latest_kind = events_by_path.get(item.relative_path)
         disk_hash = hash_map.get(item.full_path) if item.full_path else None
+        # Диск не трогаем на SSR: .!qB→проверка и кнопки — фоновый /downloadable-files.
+        status = file_status_for_ui(
+            relative_path=item.relative_path,
+            full_path=item.full_path,
+            latest_kind=latest_kind,
+            disk_hash=disk_hash,
+            hash_job_active=hash_job_active,
+            in_torrent=True,
+            ui_status=getattr(item, "ui_status", None),
+            incomplete=False,
+        )
+        full_path = item.full_path
         rows.append(
             ReleaseFileRow(
                 relative_path=item.relative_path,
                 size=int(item.size or 0),
                 selected=bool(item.selected),
-                full_path=item.full_path,
+                full_path=full_path,
                 in_torrent=True,
-                status=file_status_for_ui(
-                    relative_path=item.relative_path,
-                    full_path=item.full_path,
-                    latest_kind=latest_kind,
-                    disk_hash=disk_hash,
-                    hash_job_active=hash_job_active,
-                    in_torrent=True,
-                    ui_status=getattr(item, "ui_status", None),
-                ),
+                status=status,
+                file_id=getattr(item, "id", None),
+                downloadable=False,
             )
         )
         seen_keys.add(item.relative_path)
@@ -444,6 +579,16 @@ def _build_file_rows(
             continue
         # Sticky «удалён»: показываем по событию, даже если файла уже нет на диске.
         disk_hash = hash_map.get(full_path) if full_path else None
+        status = file_status_for_ui(
+            relative_path=display_path or (Path(full_path).name if full_path else "?"),
+            full_path=full_path,
+            latest_kind=KIND_REMOVED,
+            disk_hash=disk_hash,
+            hash_job_active=False,
+            in_torrent=False,
+            ui_status=UI_STATUS_REMOVED,
+            incomplete=False,
+        )
         rows.append(
             ReleaseFileRow(
                 relative_path=display_path or (Path(full_path).name if full_path else "?"),
@@ -451,21 +596,156 @@ def _build_file_rows(
                 selected=False,
                 full_path=full_path,
                 in_torrent=False,
-                status=file_status_for_ui(
-                    relative_path=display_path or (Path(full_path).name if full_path else "?"),
-                    full_path=full_path,
-                    latest_kind=KIND_REMOVED,
-                    disk_hash=disk_hash,
-                    hash_job_active=False,
-                    in_torrent=False,
-                    ui_status=UI_STATUS_REMOVED,
-                ),
+                status=status,
+                file_id=None,
+                downloadable=False,
             )
         )
         seen_keys.add(key)
         if full_path:
             seen_keys.add(full_path)
-    return rows
+    return _sort_file_rows_desc(rows)
+
+
+def torrent_allows_media_download(db: Session, info_hash: str) -> bool:
+    """Актуальный торрент (api_present, не superseded) — можно отдавать media."""
+    archive = _active_archive_for_hash(db, info_hash)
+    return archive is not None
+
+
+def _active_archive_for_hash(db: Session, info_hash: str) -> TorrentArchive | None:
+    normalized = (info_hash or "").strip().lower()
+    if not normalized or len(normalized) < 16:
+        return None
+    archive = db.scalar(
+        select(TorrentArchive)
+        .where(TorrentArchive.info_hash == normalized)
+        .order_by(TorrentArchive.superseded.asc(), TorrentArchive.id.desc())
+        .limit(1)
+    )
+    if archive is None:
+        return None
+    if bool(getattr(archive, "superseded", False)):
+        return None
+    if not bool(getattr(archive, "api_present", True)):
+        return None
+    return archive
+
+
+@dataclass
+class TorrentMediaProbe:
+    """Результат фонового опроса диска для одного торрента."""
+
+    downloadable_ids: list[int] = field(default_factory=list)
+    checking_ids: list[int] = field(default_factory=list)
+
+
+def probe_torrent_media_files(db: Session, info_hash: str) -> TorrentMediaProbe:
+    """Один проход по диску: кого можно скачать и кого показать как «проверка».
+
+    Только api_present и не superseded. SSR диск не трогает.
+    """
+    if _active_archive_for_hash(db, info_hash) is None:
+        return TorrentMediaProbe()
+
+    normalized = (info_hash or "").strip().lower()
+    rows = list(
+        db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all()
+    )
+    candidates: list[tuple[TorrentFile, str]] = []
+    for row in rows:
+        status = (row.ui_status or "").strip().lower() or "ok"
+        if status not in _DOWNLOADABLE_STATUSES:
+            continue
+        if not row.full_path or row.id is None:
+            continue
+        candidates.append((row, status))
+    if not candidates:
+        return TorrentMediaProbe()
+
+    paths = [row.full_path for row, _ in candidates if row.full_path]
+    media_root = resolve_media_root().resolve()
+    existing, partial = _scan_media_presence(paths, media_root=media_root)
+
+    downloadable: list[int] = []
+    checking: list[int] = []
+    for row, status in candidates:
+        full = row.full_path or ""
+        canon = str(complete_path_for(full))
+        if canon in partial and status in {"ok", "changed"}:
+            checking.append(int(row.id))
+            continue
+        if _file_is_downloadable(
+            status=status,
+            full_path=full,
+            media_root=media_root,
+            existing_resolved=existing,
+        ):
+            downloadable.append(int(row.id))
+    return TorrentMediaProbe(downloadable_ids=downloadable, checking_ids=checking)
+
+
+def list_downloadable_file_ids(db: Session, info_hash: str) -> list[int]:
+    """file_id актуального торрента, которые можно скачать с диска."""
+    return probe_torrent_media_files(db, info_hash).downloadable_ids
+
+
+def _scan_media_presence(
+    full_paths: list[str], *, media_root: Path
+) -> tuple[set[str], set[str]]:
+    """Один scandir на parent → (complete resolved under root, partial-only canonical)."""
+    # parent → список (canonical_str, basename, resolved_or_none)
+    by_parent: dict[str, list[tuple[str, str, str | None]]] = {}
+    for raw in full_paths:
+        if not raw:
+            continue
+        path = Path(raw)
+        if path.name.endswith(QB_INCOMPLETE_SUFFIX):
+            continue
+        canon = complete_path_for(path)
+        resolved_key: str | None = None
+        try:
+            resolved = canon.resolve()
+            if is_under_media_root(resolved, media_root=media_root):
+                resolved_key = str(resolved)
+        except OSError:
+            resolved_key = None
+        by_parent.setdefault(str(canon.parent), []).append(
+            (str(canon), canon.name, resolved_key)
+        )
+
+    existing: set[str] = set()
+    partial: set[str] = set()
+    for parent, items in by_parent.items():
+        try:
+            names: set[str] = set()
+            with os.scandir(parent) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_file(follow_symlinks=False):
+                            names.add(entry.name)
+                    except OSError:
+                        continue
+        except OSError:
+            for canon_str, base, resolved_key in items:
+                try:
+                    if Path(canon_str).is_file():
+                        if resolved_key:
+                            existing.add(resolved_key)
+                        continue
+                    if Path(canon_str + QB_INCOMPLETE_SUFFIX).is_file():
+                        partial.add(canon_str)
+                except OSError:
+                    continue
+            continue
+        for canon_str, base, resolved_key in items:
+            if base in names:
+                if resolved_key:
+                    existing.add(resolved_key)
+                continue
+            if (base + QB_INCOMPLETE_SUFFIX) in names:
+                partial.add(canon_str)
+    return existing, partial
 
 
 def _disk_hashes_by_path(db: Session, paths: list[str]) -> dict[str, DiskFileHash]:

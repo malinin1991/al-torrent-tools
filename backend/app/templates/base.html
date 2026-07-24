@@ -203,6 +203,15 @@
       list-style: disc;
     }
     .file-list li { margin: 2px 0; }
+    .file-list .file-download {
+      display: inline-flex;
+      vertical-align: middle;
+      margin-left: 4px;
+      color: #9ad1ff;
+      text-decoration: none;
+    }
+    .file-list .file-download:hover { color: #c5e4ff; }
+    .file-list .file-download svg { width: 14px; height: 14px; fill: currentColor; }
   </style>
 </head>
 <body>
@@ -240,9 +249,67 @@
       el.title = date.toString();
     });
   }
-  document.addEventListener("DOMContentLoaded", () => formatLocalTimes());
+  const _downloadCheckQueue = [];
+  let _downloadCheckBusy = false;
+  const _DOWNLOAD_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg>';
+
+  function enqueueDownloadableChecks(root) {
+    const scope = root || document;
+    scope.querySelectorAll(".torrent-files[data-download-check]:not([data-download-queued])").forEach((el) => {
+      el.setAttribute("data-download-queued", "1");
+      _downloadCheckQueue.push(el);
+    });
+    pumpDownloadableQueue();
+  }
+
+  async function pumpDownloadableQueue() {
+    if (_downloadCheckBusy) return;
+    _downloadCheckBusy = true;
+    while (_downloadCheckQueue.length) {
+      const block = _downloadCheckQueue.shift();
+      const hash = block.getAttribute("data-download-check");
+      if (!hash) continue;
+      try {
+        const resp = await fetch(`/api/torrents/${encodeURIComponent(hash)}/downloadable-files`);
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const ids = new Set((data.file_ids || []).map(String));
+        const checking = new Set((data.checking_ids || []).map(String));
+        block.querySelectorAll("li[data-file-id]").forEach((li) => {
+          const id = li.getAttribute("data-file-id");
+          if (!id || !checking.has(id)) return;
+          const badge = li.querySelector(".file-ui-badge");
+          if (!badge) return;
+          badge.className = "badge badge-warn file-ui-badge";
+          badge.title = "Файл снова качается (.!qB) — после complete будет проверка хеша";
+          badge.textContent = "проверка";
+        });
+        block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
+          const id = slot.getAttribute("data-file-id");
+          if (!id || !ids.has(id) || slot.querySelector("a")) return;
+          const link = document.createElement("a");
+          link.className = "btn-icon file-download";
+          link.href = `/api/torrent-files/${id}/download`;
+          link.title = "Скачать файл";
+          link.setAttribute("download", "");
+          link.innerHTML = _DOWNLOAD_ICON;
+          slot.appendChild(link);
+        });
+      } catch (_) {
+        /* сеть/сервер — слот остаётся пустым */
+      }
+    }
+    _downloadCheckBusy = false;
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    formatLocalTimes();
+    enqueueDownloadableChecks();
+  });
   document.body.addEventListener("htmx:afterSwap", (event) => {
     formatLocalTimes(event.detail.target);
+    enqueueDownloadableChecks(event.detail.target);
   });
   </script>
 </body>

@@ -48,7 +48,8 @@
       {% if row.files %}
       <tr class="torrent-files-row">
         <td colspan="10">
-          {% with files=row.files %}
+          {% set allow_dl = row.api_present and not row.superseded %}
+          {% with files=row.files, allow_file_downloads=allow_dl, info_hash=row.info_hash %}
           {% include "partials/torrent_file_list.html" %}
           {% endwith %}
         </td>

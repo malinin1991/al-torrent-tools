@@ -318,6 +318,20 @@ def is_incomplete_path(path: Path) -> bool:
     return path.name.endswith(QB_INCOMPLETE_SUFFIX) or Path(str(path) + QB_INCOMPLETE_SUFFIX).is_file()
 
 
+def is_partial_only(path: Path | str) -> bool:
+    """Качается: есть .!qB и нет complete-файла (не путать с соседним .!qB при уже готовом файле)."""
+    canonical = complete_path_for(path)
+    try:
+        if canonical.is_file():
+            return False
+    except OSError:
+        pass
+    try:
+        return Path(str(canonical) + QB_INCOMPLETE_SUFFIX).is_file()
+    except OSError:
+        return False
+
+
 def complete_path_for(path: Path | str) -> Path:
     """Канонический путь без суффикса .!qB (как в torrent_files / disk_file_hashes)."""
     p = Path(path)

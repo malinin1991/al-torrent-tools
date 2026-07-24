@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import CleanupRule, ExtraUrl, Job, JobLog, QbClient, Setting
+from app.db.models import CleanupRule, ExtraUrl, Job, JobLog, QbClient, Setting, TorrentFile
 from app.db.session import get_db
 from app.jobs.cleanup import run_cleanup
 from app.jobs.cleanup_logs import run_cleanup_logs
@@ -22,6 +22,11 @@ from app.services.file_hasher import normalize_file_hash_workers_setting
 from app.services.job_runner import JobAlreadyRunningError, JobRunner, UnknownJobTypeError
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import qb_client_wait_message, sanitize_info_hash, should_wait_for_qb, test_qb_connection
+from app.services.releases_view import (
+    probe_torrent_media_files,
+    resolve_media_file_for_download,
+    torrent_allows_media_download,
+)
 from app.services.runtime_settings import SECRET_SETTING_KEYS, get_setting_value, mask_settings_dict
 from app.services.system_status import collect_system_status
 from app.services.torrent_archive import TorrentArchiveService
@@ -433,6 +438,32 @@ def download_archive_file(archive_id: int, db: Session = Depends(get_db)) -> Fil
         raise HTTPException(status_code=404, detail="Файл торрента не найден")
 
     return FileResponse(path=file_path, media_type="application/x-bittorrent", filename=file_path.name)
+
+
+@router.get("/torrent-files/{file_id}/download")
+def download_torrent_media_file(file_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    """Скачать media-файл с диска (только актуальный торрент + файл на диске)."""
+    row = db.get(TorrentFile, file_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    if not torrent_allows_media_download(db, row.info_hash or ""):
+        raise HTTPException(status_code=404, detail="Файл недоступен для скачивания")
+    path = resolve_media_file_for_download(row)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Файл недоступен для скачивания")
+    return FileResponse(path=path, filename=path.name, media_type="application/octet-stream")
+
+
+@router.get("/torrents/{info_hash}/downloadable-files")
+def list_torrent_downloadable_files(info_hash: str, db: Session = Depends(get_db)) -> dict:
+    """Фоновая подгрузка: кнопки скачивания + оверлей «проверка» для .!qB."""
+    normalized = sanitize_info_hash(info_hash) or (info_hash or "").strip().lower()
+    probe = probe_torrent_media_files(db, normalized)
+    return {
+        "info_hash": normalized,
+        "file_ids": probe.downloadable_ids,
+        "checking_ids": probe.checking_ids,
+    }
 
 
 @router.api_route("/webhooks/qb/complete", methods=["GET", "POST"])

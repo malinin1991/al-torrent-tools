@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import timedelta
 from app.utils.datetime_fmt import utcnow
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from app.services.torrent_files_meta import (
     extract_qb_file_priorities,
     extract_qb_save_path,
     is_incomplete_path,
+    is_partial_only,
     is_under_media_root,
     normalize_rel_path,
     parse_torrent_file_list,
@@ -42,6 +44,9 @@ from app.services.qbittorrent import ensure_announce_passkey
 from app.services.runtime_settings import get_setting_value
 
 logger = logging.getLogger(__name__)
+
+# Догон TG только для свежих unnotified (не архивная история лет).
+_UNNOTIFIED_EVENT_WINDOW = timedelta(days=30)
 
 KIND_ADDED = "added"
 KIND_REMOVED = "removed"
@@ -122,18 +127,22 @@ class FileTrackerService:
         torrent_bytes: bytes | None = None,
         notify: bool = True,
     ) -> TrackTorrentResult:
-        """Только состав: upsert torrent_files + сразу persist added/removed (без BLAKE3).
+        """Только состав: upsert torrent_files (без BLAKE3).
 
-        Нужен на master_added, чтобы UI успел показать «новый» пока идёт закачка.
+        На master_added вызывается с notify=False: UI видит «новый», но
+        file_change_events НЕ пишем — иначе hash_torrent не найдёт новых
+        added и Telegram молчит. Events + TG — в track_torrent / hash_torrent.
         """
         prepared = self._prepare_track(info_hash=info_hash, torrent_id=torrent_id, torrent_bytes=torrent_bytes)
         if prepared.skipped_reason:
             return TrackTorrentResult(skipped_reason=prepared.skipped_reason)
+        # notify=False (early sync) → только строки torrent_files, без events.
         synced = self._sync_composition(
             normalized_hash=prepared.normalized_hash,
             torrent_id=torrent_id,
             release_id=release_id,
             torrent_bytes=prepared.torrent_bytes,
+            persist_events=notify,
         )
         if synced.events and notify:
             self._maybe_notify_telegram(
@@ -141,7 +150,7 @@ class FileTrackerService:
                 torrent_id=torrent_id,
                 events=synced.events,
                 archive=prepared.archive,
-                baseline=not synced.has_prior_version,
+                baseline=not synced.has_prior_version and not synced.baseline_had_known,
             )
         return synced.result
 
@@ -341,16 +350,28 @@ class FileTrackerService:
             info_hash=prepared.normalized_hash,
             changes=filtered_changes,
         )
-        # Одно уведомление на прогон: baseline (нет прошлой версии) → сводка added,
-        # иначе — реальные изменения (added/removed/modified/missing).
+        # Одно уведомление на прогон:
+        # - чистый baseline (нет prior и не mixed) → сводка «файлы в базе»
+        # - prior или mixed (уже были ok/changed) → «изменения файлов» (➕ новый эпизод)
         all_events = list(synced.events) + list(hash_events)
+        # Early sync мог уже записать added без TG — подтянем notified_at IS NULL.
+        pending = self._unnotified_events(
+            torrent_id=torrent_id,
+            info_hash=prepared.normalized_hash,
+            kinds={KIND_ADDED, KIND_REMOVED},
+        )
+        seen_ids = {ev.id for ev in all_events if getattr(ev, "id", None) is not None}
+        for ev in pending:
+            if ev.id not in seen_ids:
+                all_events.append(ev)
+                seen_ids.add(ev.id)
         if notify and all_events:
             self._maybe_notify_telegram(
                 release_id=release_id,
                 torrent_id=torrent_id,
                 events=all_events,
                 archive=prepared.archive,
-                baseline=not has_prior_version,
+                baseline=not has_prior_version and not synced.baseline_had_known,
             )
         return result
 
@@ -647,8 +668,9 @@ class FileTrackerService:
         torrent_id: int,
         release_id: int,
         torrent_bytes: bytes,
+        persist_events: bool = True,
     ) -> _CompositionSync:
-        """Upsert torrent_files и сразу пишет added/removed (heal, если events потеряны)."""
+        """Upsert torrent_files; опционально пишет added/removed (heal, если events потеряны)."""
         result = TrackTorrentResult()
         file_metas = parse_torrent_file_list(torrent_bytes)
         save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
@@ -830,12 +852,14 @@ class FileTrackerService:
 
         self._db.commit()
         result.changes.extend(composition_changes)
-        events = self._persist_events(
-            release_id=release_id,
-            torrent_id=torrent_id,
-            info_hash=normalized_hash,
-            changes=composition_changes,
-        )
+        events: list[FileChangeEvent] = []
+        if persist_events:
+            events = self._persist_events(
+                release_id=release_id,
+                torrent_id=torrent_id,
+                info_hash=normalized_hash,
+                changes=composition_changes,
+            )
         return _CompositionSync(
             result=result,
             events=events,
@@ -935,6 +959,32 @@ class FileTrackerService:
         else:
             return False
         return self._db.scalar(stmt.order_by(FileChangeEvent.id.desc()).limit(1)) is not None
+
+    def _unnotified_events(
+        self,
+        *,
+        torrent_id: int,
+        info_hash: str,
+        kinds: set[str],
+    ) -> list[FileChangeEvent]:
+        """Свежие события этой версии торрента, ещё не уходившие в Telegram."""
+        normalized = (info_hash or "").strip().lower()
+        if not normalized or not kinds:
+            return []
+        since = utcnow() - _UNNOTIFIED_EVENT_WINDOW
+        return list(
+            self._db.scalars(
+                select(FileChangeEvent)
+                .where(
+                    FileChangeEvent.torrent_id == torrent_id,
+                    FileChangeEvent.info_hash == normalized,
+                    FileChangeEvent.kind.in_(sorted(kinds)),
+                    FileChangeEvent.notified_at.is_(None),
+                    FileChangeEvent.created_at >= since,
+                )
+                .order_by(FileChangeEvent.id.asc())
+            ).all()
+        )
 
     def _persist_events(
         self,
@@ -1211,6 +1261,7 @@ def file_status_for_ui(
     hash_job_active: bool = False,
     in_torrent: bool = True,
     ui_status: str | None = None,
+    incomplete: bool | None = None,
 ) -> str:
     """Бейдж для UI: sticky-статус торрента + временный «проверка».
 
@@ -1221,9 +1272,10 @@ def file_status_for_ui(
     - ok — хеш совпал с предыдущей версией / baseline (первый торрент) после settle
 
     Временный:
-    - checking — идёт hash_torrent (оверлей поверх ok/changed/new с известным hash)
+    - checking — идёт hash_torrent, либо известный файл снова в .!qB
+      (кусок не сошёлся / докачка) — после complete + hash снова ok/changed
     """
-    del relative_path, full_path  # статус не от живого FS
+    del relative_path  # только для сигнатуры/логов вызывающего
     if not in_torrent or latest_kind == KIND_REMOVED:
         return UI_STATUS_REMOVED
 
@@ -1235,6 +1287,16 @@ def file_status_for_ui(
             stored = UI_STATUS_CHANGED
         else:
             stored = UI_STATUS_OK
+
+    is_inc = incomplete
+    if is_inc is None and full_path:
+        try:
+            is_inc = is_partial_only(full_path)
+        except OSError:
+            is_inc = False
+    # Известный контент временно снова .!qB → «проверка», не ok (sticky в БД не трогаем).
+    if is_inc and stored in {UI_STATUS_OK, UI_STATUS_CHANGED}:
+        return UI_STATUS_CHECKING
 
     if hash_job_active and stored != UI_STATUS_NEW:
         return UI_STATUS_CHECKING

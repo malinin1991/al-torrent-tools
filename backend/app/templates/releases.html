@@ -91,7 +91,7 @@
         {% if t.files %}
         <tr class="torrent-files-row">
           <td colspan="7">
-            {% with files=t.files %}
+            {% with files=t.files, allow_file_downloads=true, info_hash=t.info_hash %}
             {% include "partials/torrent_file_list.html" %}
             {% endwith %}
           </td>
@@ -142,7 +142,7 @@
           {% if t.files %}
           <tr class="torrent-files-row">
             <td colspan="7">
-              {% with files=t.files %}
+              {% with files=t.files, allow_file_downloads=false %}
               {% include "partials/torrent_file_list.html" %}
               {% endwith %}
             </td>

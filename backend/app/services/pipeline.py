@@ -127,7 +127,7 @@ class TorrentPipelineService:
                 torrent_id=pipeline.torrent_id,
                 release_id=pipeline.release_id,
                 torrent_bytes=torrent_bytes,
-                # TG baseline — после hash_torrent, не во время закачки.
+                # TG: events + уведомление — после hash_torrent, не во время закачки.
                 notify=False,
             )
             if result.skipped_reason:

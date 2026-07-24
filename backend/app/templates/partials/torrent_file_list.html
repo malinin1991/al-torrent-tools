@@ -1,14 +1,17 @@
-<details class="torrent-files">
+<details class="torrent-files"{% if allow_file_downloads and info_hash %} data-download-check="{{ info_hash }}"{% endif %}>
   <summary class="muted">{{ files|length }} файл.</summary>
   <ul class="file-list">
     {% for f in files %}
-    <li>
-      {% if f.status == 'new' %}<span class="badge badge-ok" title="Добавлен в состав этого торрента">новый</span>
-      {% elif f.status == 'changed' %}<span class="badge badge-warn" title="Хеш не совпал с предыдущей версией">изменён</span>
-      {% elif f.status == 'checking' %}<span class="badge badge-warn" title="Идёт проверка хеша">проверка</span>
-      {% elif f.status == 'removed' %}<span class="badge badge-danger" title="Убран из состава этого торрента">удалён</span>
-      {% else %}<span class="badge badge-muted" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
+    <li{% if f.file_id %} data-file-id="{{ f.file_id }}"{% endif %}>
+      {% if f.status == 'new' %}<span class="badge badge-ok file-ui-badge" title="Добавлен в состав этого торрента">новый</span>
+      {% elif f.status == 'changed' %}<span class="badge badge-warn file-ui-badge" title="Хеш не совпал с предыдущей версией">изменён</span>
+      {% elif f.status == 'checking' %}<span class="badge badge-warn file-ui-badge" title="Идёт проверка хеша">проверка</span>
+      {% elif f.status == 'removed' %}<span class="badge badge-danger file-ui-badge" title="Убран из состава этого торрента">удалён</span>
+      {% else %}<span class="badge badge-muted file-ui-badge" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
       <code>{{ f.relative_path }}</code>
+      {% if allow_file_downloads and f.file_id %}
+      <span class="file-download-slot" data-file-id="{{ f.file_id }}"></span>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>

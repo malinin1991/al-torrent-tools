@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -218,6 +219,7 @@ def test_build_file_rows_checking_only_with_active_hash_job(monkeypatch) -> None
     monkeypatch.setattr("app.services.releases_view.file_status_for_ui", _status)
     files = [
         SimpleNamespace(
+            id=1,
             relative_path="ep.mkv",
             size=10,
             selected=True,
@@ -241,9 +243,331 @@ def test_build_file_rows_checking_only_with_active_hash_job(monkeypatch) -> None
     )
     # Sticky removed: оба кандидата, даже без файла на диске
     assert len(rows) == 3
-    assert {r.relative_path for r in rows[1:]} == {"gone.mkv", "absent.mkv"}
-    assert all(r.status == "removed" for r in rows[1:])
-    assert all(r.in_torrent is False for r in rows[1:])
+    by_path = {r.relative_path: r for r in rows}
+    assert by_path["gone.mkv"].status == "removed"
+    assert by_path["absent.mkv"].status == "removed"
+    assert by_path["gone.mkv"].in_torrent is False
+    assert by_path["absent.mkv"].in_torrent is False
+
+
+def test_build_file_rows_sorted_by_filename_desc(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "app.services.releases_view.file_status_for_ui",
+        lambda **_k: "ok",
+    )
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    media = tmp_path / "Show"
+    media.mkdir()
+    for name in ("ep1.mkv", "ep2.mkv", "ep10.mkv", "ep03.mkv"):
+        (media / name).write_bytes(b"x")
+
+    files = [
+        SimpleNamespace(
+            id=1,
+            relative_path="Show/ep1.mkv",
+            size=1,
+            selected=True,
+            full_path=str(media / "ep1.mkv"),
+            ui_status="ok",
+        ),
+        SimpleNamespace(
+            id=2,
+            relative_path="Show/ep10.mkv",
+            size=1,
+            selected=True,
+            full_path=str(media / "ep10.mkv"),
+            ui_status="new",
+        ),
+        SimpleNamespace(
+            id=3,
+            relative_path="Show/ep2.mkv",
+            size=1,
+            selected=True,
+            full_path=str(media / "ep2.mkv"),
+            ui_status="ok",
+        ),
+        SimpleNamespace(
+            id=4,
+            relative_path="Show/ep03.mkv",
+            size=1,
+            selected=True,
+            full_path=str(media / "ep03.mkv"),
+            ui_status="ok",
+        ),
+    ]
+    rows = _build_file_rows(files, {})
+    # natural desc: 10 > 3 > 2 > 1 (не лексикографически ep2 > ep10)
+    assert [Path(r.relative_path).name for r in rows] == [
+        "ep10.mkv",
+        "ep03.mkv",
+        "ep2.mkv",
+        "ep1.mkv",
+    ]
+    # SSR не трогает диск — кнопки подгружает JS.
+    assert rows[0].downloadable is False
+    assert rows[0].file_id == 2
+
+
+def test_list_downloadable_file_ids_only_active(tmp_path: Path, monkeypatch) -> None:
+    from app.services.releases_view import list_downloadable_file_ids, probe_torrent_media_files
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"data")
+    info_hash = "ab" * 20
+
+    archive = SimpleNamespace(info_hash=info_hash, superseded=False, api_present=True)
+    tf = SimpleNamespace(
+        id=7,
+        info_hash=info_hash,
+        ui_status="ok",
+        full_path=str(media),
+    )
+    db = MagicMock()
+    db.scalar.return_value = archive
+    db.scalars.return_value.all.return_value = [tf]
+    assert list_downloadable_file_ids(db, info_hash) == [7]
+
+    archive.superseded = True
+    assert list_downloadable_file_ids(db, info_hash) == []
+
+    archive.superseded = False
+    archive.api_present = False
+    assert list_downloadable_file_ids(db, info_hash) == []
+
+
+def test_probe_torrent_media_files_checking_and_downloadable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from app.services.releases_view import probe_torrent_media_files
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    show = tmp_path / "Show"
+    show.mkdir()
+    ok_file = show / "ep02.mkv"
+    ok_file.write_bytes(b"ok")
+    partial = show / "ep01.mkv"
+    Path(str(partial) + ".!qB").write_bytes(b"part")
+    new_partial = show / "ep03.mkv"
+    Path(str(new_partial) + ".!qB").write_bytes(b"new")
+    info_hash = "cd" * 20
+
+    db = MagicMock()
+    db.scalar.return_value = SimpleNamespace(
+        info_hash=info_hash, superseded=False, api_present=True
+    )
+    db.scalars.return_value.all.return_value = [
+        SimpleNamespace(id=1, ui_status="ok", full_path=str(partial)),
+        SimpleNamespace(id=2, ui_status="ok", full_path=str(ok_file)),
+        SimpleNamespace(id=3, ui_status="new", full_path=str(new_partial)),
+    ]
+    probe = probe_torrent_media_files(db, info_hash)
+    assert probe.downloadable_ids == [2]
+    assert probe.checking_ids == [1]
+
+
+def test_natural_name_key_orders_unpadded() -> None:
+    from app.services.releases_view import _natural_name_key
+
+    names = ["ep10.mkv", "ep2.mkv", "ep1.mkv", "ep03.mkv"]
+    assert sorted(names, key=_natural_name_key) == [
+        "ep1.mkv",
+        "ep2.mkv",
+        "ep03.mkv",
+        "ep10.mkv",
+    ]
+
+
+def test_build_file_rows_ssr_skips_disk_partial_overlay(tmp_path: Path) -> None:
+    """SSR не смотрит .!qB — sticky ok остаётся ok (оверлей в фоне)."""
+    from app.services.releases_view import _build_file_rows
+
+    show = tmp_path / "Show"
+    show.mkdir()
+    partial = show / "ep01.mkv"
+    Path(str(partial) + ".!qB").write_bytes(b"part")
+
+    files = [
+        SimpleNamespace(
+            id=1,
+            relative_path="Show/ep01.mkv",
+            size=1,
+            selected=True,
+            full_path=str(partial),
+            ui_status="ok",
+        ),
+    ]
+    rows = _build_file_rows(files, {})
+    assert rows[0].status == "ok"
+
+
+def test_file_is_downloadable_rules(tmp_path: Path, monkeypatch) -> None:
+    from app.services.releases_view import _file_is_downloadable
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    media = tmp_path / "a.mkv"
+    media.write_bytes(b"ok")
+    incomplete = Path(str(media) + ".!qB")
+    incomplete.write_bytes(b"part")
+
+    assert _file_is_downloadable(status="ok", full_path=str(media)) is True
+    assert _file_is_downloadable(status="new", full_path=str(media)) is True
+    assert _file_is_downloadable(status="changed", full_path=str(media)) is True
+    assert _file_is_downloadable(status="checking", full_path=str(media)) is False
+    assert _file_is_downloadable(status="removed", full_path=str(media)) is False
+    assert _file_is_downloadable(status="ok", full_path=str(incomplete)) is False
+    assert _file_is_downloadable(status="ok", full_path=None) is False
+    assert _file_is_downloadable(status="ok", full_path=str(tmp_path / "missing.mkv")) is False
+    assert _file_is_downloadable(status="ok", full_path="/etc/passwd") is False
+    # батч: только то, что в existing_resolved
+    existing = {str(media.resolve())}
+    assert (
+        _file_is_downloadable(
+            status="ok", full_path=str(media), existing_resolved=existing
+        )
+        is True
+    )
+    assert (
+        _file_is_downloadable(
+            status="ok",
+            full_path=str(media),
+            existing_resolved=set(),
+        )
+        is False
+    )
+
+
+def test_existing_resolved_files_batches_by_parent(tmp_path: Path, monkeypatch) -> None:
+    from app.services.releases_view import _existing_resolved_files
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    show = tmp_path / "Show"
+    show.mkdir()
+    a = show / "a.mkv"
+    b = show / "b.mkv"
+    a.write_bytes(b"a")
+    b.write_bytes(b"b")
+    missing = show / "c.mkv"
+    found = _existing_resolved_files(
+        [str(a), str(b), str(missing), "/etc/passwd"],
+        media_root=tmp_path.resolve(),
+    )
+    assert str(a.resolve()) in found
+    assert str(b.resolve()) in found
+    assert str(missing.resolve()) not in found
+
+
+def test_resolve_media_file_for_download(tmp_path: Path, monkeypatch) -> None:
+    from app.services.releases_view import resolve_media_file_for_download
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"data")
+    row = SimpleNamespace(ui_status="new", full_path=str(media))
+    assert resolve_media_file_for_download(row) == media.resolve()
+
+    row.ui_status = "checking"
+    assert resolve_media_file_for_download(row) is None
+
+    row.ui_status = "ok"
+    row.full_path = None
+    assert resolve_media_file_for_download(row) is None
+
+
+def test_download_torrent_media_file_endpoint(tmp_path: Path, monkeypatch) -> None:
+    """HTTP-хендлер: 200 для ok на диске; 404 вне root / .!qB / checking / removed / missing / архив."""
+    from fastapi import HTTPException
+
+    from app.api.rest import download_torrent_media_file
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"payload")
+    incomplete = Path(str(media) + ".!qB")
+    incomplete.write_bytes(b"part")
+    info_hash = "aa" * 20
+
+    def _call(row, *, allow: bool = True):
+        monkeypatch.setattr(
+            "app.api.rest.torrent_allows_media_download",
+            lambda _db, _h: allow,
+        )
+        db = MagicMock()
+        db.get.return_value = row
+        return download_torrent_media_file(1, db=db)
+
+    ok_row = SimpleNamespace(ui_status="ok", full_path=str(media), info_hash=info_hash)
+    resp = _call(ok_row)
+    assert Path(resp.path) == media.resolve()
+    assert resp.filename == "ep.mkv"
+
+    db_miss = MagicMock()
+    db_miss.get.return_value = None
+    try:
+        download_torrent_media_file(99, db=db_miss)
+        assert False, "expected 404"
+    except HTTPException as exc:
+        assert exc.status_code == 404
+
+    # Неактуальный / superseded: gate закрыт
+    try:
+        _call(ok_row, allow=False)
+        assert False, "expected 404 when archive not active"
+    except HTTPException as exc:
+        assert exc.status_code == 404
+
+    for bad in (
+        SimpleNamespace(ui_status="ok", full_path="/etc/passwd", info_hash=info_hash),
+        SimpleNamespace(ui_status="ok", full_path=str(incomplete), info_hash=info_hash),
+        SimpleNamespace(ui_status="checking", full_path=str(media), info_hash=info_hash),
+        SimpleNamespace(ui_status="removed", full_path=str(media), info_hash=info_hash),
+        SimpleNamespace(ui_status="ok", full_path=str(tmp_path / "nope.mkv"), info_hash=info_hash),
+        SimpleNamespace(ui_status="new", full_path=None, info_hash=info_hash),
+    ):
+        try:
+            _call(bad)
+            assert False, f"expected 404 for {bad!r}"
+        except HTTPException as exc:
+            assert exc.status_code == 404
+
+
+def test_download_rejects_superseded_via_archive_gate(tmp_path: Path, monkeypatch) -> None:
+    """End-to-end gate: superseded archive → 404 без мока torrent_allows."""
+    from fastapi import HTTPException
+
+    from app.api.rest import download_torrent_media_file
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"payload")
+    info_hash = "ee" * 20
+    row = SimpleNamespace(id=1, ui_status="ok", full_path=str(media), info_hash=info_hash)
+
+    db = MagicMock()
+    db.get.return_value = row
+    db.scalar.return_value = SimpleNamespace(
+        info_hash=info_hash, superseded=True, api_present=True
+    )
+    try:
+        download_torrent_media_file(1, db=db)
+        assert False, "expected 404"
+    except HTTPException as exc:
+        assert exc.status_code == 404
+
+
+def test_list_torrent_downloadable_files_endpoint(tmp_path: Path, monkeypatch) -> None:
+    from app.api.rest import list_torrent_downloadable_files
+    from app.services.releases_view import TorrentMediaProbe
+
+    monkeypatch.setattr(
+        "app.api.rest.probe_torrent_media_files",
+        lambda _db, h: TorrentMediaProbe(downloadable_ids=[2, 5], checking_ids=[1]),
+    )
+    db = MagicMock()
+    out = list_torrent_downloadable_files("ab" * 20, db=db)
+    assert out["file_ids"] == [2, 5]
+    assert out["checking_ids"] == [1]
+    assert out["info_hash"] == "ab" * 20
 
 
 def test_filter_removed_candidates_drops_foreign_titles(tmp_path, monkeypatch) -> None:
