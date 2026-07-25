@@ -19,7 +19,7 @@
     {% set row = item.row %}
     {% set ms = master_states.get(row.info_hash.lower() if row.info_hash else '', {}) %}
     <tr>
-      <td>{{ row.id }}</td>
+      <td><a href="/pipeline/{{ row.id }}">{{ row.id }}</a></td>
       <td>{{ row.info_hash }}</td>
       <td title="{{ item.ids_title }}">{{ item.release_name }}</td>
       <td title="{{ item.ids_title }}">{{ item.torrent_label }}</td>

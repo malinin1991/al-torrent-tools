@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from app.db.models import CleanupRule
-from app.jobs.cleanup_logs import KEEP_RUNS_PER_TYPE, prune_old_jobs
+from app.db.models import CleanupRule, PipelineEvent
+from app.jobs.cleanup_logs import RETAIN_DAYS, prune_old_jobs, prune_pipeline_events
 from app.services.job_runner import STATUS_RUNNING, STATUS_SUCCESS
 from app.services.torrent_cleanup import TorrentCleanupService
+from app.utils.datetime_fmt import utcnow
 
 
 def _rule(*, target_client: str, rule_id: int = 1) -> CleanupRule:
@@ -65,55 +67,51 @@ def test_cleanup_slave_warns_when_only_master_rules() -> None:
     assert any("нет применимых правил" in msg and "slave" in msg for msg in logs)
 
 
-def test_prune_old_jobs_keeps_last_n_per_type() -> None:
-    assert KEEP_RUNS_PER_TYPE == 100
-
-    keep = 2
-    # ids 1..5 for ongoing; keep last 2 → delete 1,2,3
-    ongoing = [
-        SimpleNamespace(id=i, type="ongoing", status=STATUS_SUCCESS) for i in (1, 2, 3, 4, 5)
-    ]
-    # active job must not be deleted even if outside keep window
-    active = SimpleNamespace(id=6, type="ongoing", status=STATUS_RUNNING)
-    other = [
-        SimpleNamespace(id=i, type="full_sync", status=STATUS_SUCCESS) for i in (10, 11, 12)
-    ]
-
-    by_type_all = {
-        "ongoing": ongoing + [active],
-        "full_sync": other,
-    }
-
-    def scalars_side_effect(stmt):
-        mock = MagicMock()
-        # We don't parse SQLAlchemy stmt; drive via call sequence stored on db.
-        idx = db._call_i
-        db._call_i += 1
-        if idx == 0:
-            mock.all.return_value = ["full_sync", "ongoing"]
-        elif idx == 1:
-            # keep ids full_sync (desc): 12, 11
-            mock.all.return_value = [12, 11]
-        elif idx == 2:
-            # stale full_sync: id 10
-            mock.all.return_value = [other[0]]
-        elif idx == 3:
-            mock.all.return_value = [6, 5]  # keep includes active + newest success
-        elif idx == 4:
-            # stale ongoing outside keep and not active: 1,2,3,4 but 4 not in keep (keep=6,5)
-            # keep ids are 6 and 5; stale = those not in keep and not active → 1,2,3,4
-            # but filter status notin active → 1,2,3,4 all success
-            mock.all.return_value = [ongoing[0], ongoing[1], ongoing[2], ongoing[3]]
-        else:
-            mock.all.return_value = []
-        return mock
-
+def test_prune_old_jobs_retains_by_age() -> None:
+    assert RETAIN_DAYS == 30
+    now = utcnow()
+    old = SimpleNamespace(
+        id=1,
+        type="ongoing",
+        status=STATUS_SUCCESS,
+        finished_at=now - timedelta(days=40),
+        created_at=now - timedelta(days=41),
+    )
+    recent = SimpleNamespace(
+        id=2,
+        type="ongoing",
+        status=STATUS_SUCCESS,
+        finished_at=now - timedelta(days=5),
+        created_at=now - timedelta(days=6),
+    )
+    active = SimpleNamespace(
+        id=3,
+        type="ongoing",
+        status=STATUS_RUNNING,
+        finished_at=None,
+        created_at=now - timedelta(days=50),
+    )
+    # SQLAlchemy filter not executed on MagicMock — emulate filtered stale list.
     db = MagicMock()
-    db._call_i = 0
-    db.scalars.side_effect = scalars_side_effect
+    db.scalars.return_value.all.return_value = [old]
 
-    stats = prune_old_jobs(db, keep_per_type=keep, protect_job_id=999)
-    assert stats["deleted_jobs"] == 5  # full_sync:1 + ongoing:4
-    assert db.delete.call_count == 5
+    stats = prune_old_jobs(db, retain_days=30, protect_job_id=999)
+    assert stats["deleted_jobs"] == 1
+    assert stats["retain_days"] == 30
+    db.delete.assert_called_once_with(old)
     db.commit.assert_called_once()
-    _ = by_type_all  # documented fixture map
+    _ = (recent, active)
+
+
+def test_prune_pipeline_events_by_age() -> None:
+    db = MagicMock()
+    result = MagicMock()
+    result.rowcount = 7
+    db.execute.return_value = result
+
+    stats = prune_pipeline_events(db, retain_days=30)
+    assert stats["deleted_events"] == 7
+    assert stats["retain_days"] == 30
+    db.execute.assert_called_once()
+    db.commit.assert_called_once()
+    assert PipelineEvent.__tablename__ == "pipeline_events"

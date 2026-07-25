@@ -55,7 +55,7 @@ async def _poll_master_pipeline() -> None:
     """Частый fallback: aged master_added → slave; missing → cancelled."""
     with SessionLocal() as db:
         age_minutes = _setting_int("pipeline_master_min_age_min", settings.pipeline_master_min_age_min)
-        pipeline_service = TorrentPipelineService(db)
+        pipeline_service = TorrentPipelineService(db, actor="poll")
         candidates = pipeline_service.get_master_added_older_than(age_minutes)
         for pipeline in candidates:
             try:

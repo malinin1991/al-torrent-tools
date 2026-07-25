@@ -114,6 +114,7 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
         port=8080,
         username="u",
         password_encrypted="p",
+        name="slave-qb-label",
     )
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
     service._resolve_qb_meta = MagicMock(  # type: ignore[method-assign]
@@ -136,11 +137,11 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("app.services.pipeline.ensure_announce_passkey", lambda data, pk: data)
     monkeypatch.setattr("app.services.qbittorrent.time.sleep", lambda *_: None)
 
-    def mark_slave(p: SimpleNamespace) -> SimpleNamespace:
+    def mark_slave(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
         return p
 
-    def mark_done(p: SimpleNamespace) -> SimpleNamespace:
+    def mark_done(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_DONE
         return p
 
@@ -154,7 +155,10 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     qb.torrents_add.assert_called_once()
     assert qb.torrents_add.call_args.kwargs.get("rename") == "Name / Orig (1-2) [HEVC]"
     assert qb.torrents_set_comment.called
-
+    service.mark_slave_added.assert_called_once()
+    slave_details = service.mark_slave_added.call_args.kwargs.get("details") or {}
+    assert slave_details.get("qb_name") == "Name / Orig (1-2) [HEVC]"
+    assert slave_details.get("qb_name") != "slave-qb-label"
 
 def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
@@ -171,11 +175,11 @@ def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr("app.services.pipeline.ensure_announce_passkey", lambda data, pk: data)
     monkeypatch.setattr("app.services.pipeline.qb_add_torrent", MagicMock(return_value=(True, True, True)))
 
-    def mark_slave(p: SimpleNamespace) -> SimpleNamespace:
+    def mark_slave(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
         return p
 
-    def mark_done(p: SimpleNamespace) -> SimpleNamespace:
+    def mark_done(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_DONE
         return p
 
@@ -385,11 +389,11 @@ def test_process_completion_conflict_on_slave_is_success(monkeypatch: pytest.Mon
     monkeypatch.setattr("app.services.pipeline.get_setting_value", lambda *a, **k: "")
     monkeypatch.setattr("app.services.pipeline.ensure_announce_passkey", lambda data, pk: data)
 
-    def mark_slave(p: SimpleNamespace) -> SimpleNamespace:
+    def mark_slave(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
         return p
 
-    def mark_done(p: SimpleNamespace) -> SimpleNamespace:
+    def mark_done(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_DONE
         return p
 

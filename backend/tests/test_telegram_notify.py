@@ -210,11 +210,24 @@ def test_enqueue_creates_outbox_when_tracked_and_enabled() -> None:
 
     assert result.tg_status == TG_STATUS_QUEUED
     assert db.add.called
-    outbox = db.add.call_args[0][0]
+    from app.db.models import PipelineEvent, TelegramOutbox
+
+    outboxes = [
+        c.args[0]
+        for c in db.add.call_args_list
+        if isinstance(c.args[0], TelegramOutbox)
+    ]
+    assert len(outboxes) == 1
+    outbox = outboxes[0]
     assert outbox.pipeline_id == 7
     assert outbox.chat_id == "-100123"
     assert outbox.status == OUTBOX_PENDING
     assert "Title" in (outbox.payload_json.get("text") or "").replace("\\", "")
+    events = [
+        c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], PipelineEvent)
+    ]
+    assert len(events) == 1
+    assert events[0].event_type == "tg_queued"
 
 
 def test_enqueue_tracking_toggle_notification_add_and_del() -> None:

@@ -68,7 +68,7 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
     JobTypeDef(
         type="cleanup_logs",
         title="Cleanup logs",
-        description="Удаление старых записей jobs/job_logs: оставляет последние 100 запусков на каждый тип.",
+        description="Удаление завершённых jobs/job_logs и pipeline_events старше 30 дней.",
         interval_default_sec=86_400,
     ),
     JobTypeDef(

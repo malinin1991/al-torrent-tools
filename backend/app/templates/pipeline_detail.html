@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="muted" style="margin-bottom:8px;"><a href="/pipeline">← Пайплайн</a></p>
+<h1>Пайплайн #{{ pipeline.id }}</h1>
+
+<div class="card" style="margin-bottom:12px;">
+  <table class="info-table">
+    <tr><th>Статус</th><td><span class="job-status job-status-{{ pipeline.status }}">{{ pipeline.status }}</span></td></tr>
+    <tr><th>TG</th><td><span class="tg-status tg-status-{{ pipeline.tg_status or 'skipped' }}">{{ pipeline.tg_status or 'skipped' }}</span></td></tr>
+    <tr><th>Релиз</th><td>{{ release_name }} <span class="muted">(id={{ pipeline.release_id }})</span></td></tr>
+    <tr><th>Торрент</th><td>{{ torrent_label }} <span class="muted">(id={{ pipeline.torrent_id }})</span></td></tr>
+    <tr><th>Hash</th><td><code>{{ pipeline.info_hash }}</code></td></tr>
+    <tr>
+      <th>На master</th>
+      <td>
+        {% if master_state %}
+        <span class="master-state master-state-{{ master_state.key }}"{% if master_state.raw_state %} title="{{ master_state.raw_state }}"{% endif %}>
+          {{ master_state.label }}
+          {% if master_state.key == 'downloading' and master_state.progress is not none %}
+          {{ (master_state.progress * 100)|round(0)|int }}%
+          {% endif %}
+        </span>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Добавлен в master</th>
+      <td>{% if pipeline.master_added_at %}<time class="local-time" datetime="{{ pipeline.master_added_at|as_utc_iso }}">{{ pipeline.master_added_at }}</time>{% else %}—{% endif %}</td>
+    </tr>
+    <tr>
+      <th>Добавлен в slave</th>
+      <td>{% if pipeline.slave_added_at %}<time class="local-time" datetime="{{ pipeline.slave_added_at|as_utc_iso }}">{{ pipeline.slave_added_at }}</time>{% else %}—{% endif %}</td>
+    </tr>
+    <tr>
+      <th>Создан</th>
+      <td>{% if pipeline.created_at %}<time class="local-time" datetime="{{ pipeline.created_at|as_utc_iso }}">{{ pipeline.created_at }}</time>{% else %}—{% endif %}</td>
+    </tr>
+    {% if pipeline.error %}
+    <tr><th>Ошибка</th><td class="job-status-failed">{{ pipeline.error }}</td></tr>
+    {% endif %}
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="margin:0 0 12px; font-size:1.1rem;">Жизненный путь</h2>
+  {% if timeline %}
+  <ol class="pipeline-timeline">
+    {% for item in timeline %}
+    {% set event = item.event %}
+    <li class="pipeline-timeline-item">
+      <div class="pipeline-timeline-meta">
+        <time class="local-time" datetime="{{ event.created_at|as_utc_iso }}">{{ event.created_at }}</time>
+        <span class="badge badge-muted">{{ event.event_type }}</span>
+        {% if item.actor %}<span class="muted">actor={{ item.actor }}</span>{% endif %}
+        {% if event.from_status or event.to_status %}
+        <span class="muted">
+          {% if event.from_status %}<span class="job-status job-status-{{ event.from_status }}">{{ event.from_status }}</span>{% else %}—{% endif %}
+          →
+          {% if event.to_status %}<span class="job-status job-status-{{ event.to_status }}">{{ event.to_status }}</span>{% else %}—{% endif %}
+        </span>
+        {% endif %}
+      </div>
+      <div class="pipeline-timeline-message">{{ event.message }}</div>
+      <div class="pipeline-timeline-links muted">
+        {% if event.job_id %}
+          {% if item.job_link %}
+          <a href="{{ item.job_link }}">job #{{ event.job_id }}</a>
+          {% else %}
+          job #{{ event.job_id }} (удалён)
+          {% endif %}
+        {% endif %}
+        {% if item.details_pretty %}
+        <details class="pipeline-event-details">
+          <summary>детали</summary>
+          <pre>{{ item.details_pretty }}</pre>
+        </details>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="muted">Событий пока нет (timeline пишется с момента деплоя audit trail).</p>
+  {% endif %}
+</div>
+{% endblock %}

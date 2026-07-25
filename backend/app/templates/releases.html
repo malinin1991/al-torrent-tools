@@ -8,6 +8,14 @@
       <input type="checkbox" name="tracked_only" value="on" {% if tracked_only %}checked{% endif %} />
       Отображать только отслеживаемое
     </label>
+    <label class="row" style="gap:6px; margin:0;">
+      HEVC
+      <select class="input" name="hevc_filter" style="max-width:160px;">
+        <option value="" {% if not hevc_filter %}selected{% endif %}>Все</option>
+        <option value="missing" {% if hevc_filter == "missing" %}selected{% endif %}>Нет HEVC</option>
+        <option value="overdue" {% if hevc_filter == "overdue" %}selected{% endif %}>Просрочка</option>
+      </select>
+    </label>
     <button class="btn" type="submit">Найти</button>
   </form>
   <p class="muted" style="margin:10px 0 0;">Релизов: {{ total }}. Страница {{ page }} из {{ total_pages }}. Сортировка — по последнему торренту.</p>
@@ -69,12 +77,21 @@
       <tbody>
         {% for t in group.torrents %}
         <tr>
-          <td>{{ t.torrent_type or "-" }}</td>
+          <td>
+            {{ t.torrent_type or "-" }}
+            {% if t.hevc_pair_status == "overdue" %}
+            <span class="badge badge-danger" title="AVC без точного HEVC-аналога дольше 24 ч">просрочка {{ (t.hevc_pair_age_hours or 0)|int }}ч</span>
+            {% elif t.hevc_pair_status == "missing" %}
+            <span class="badge badge-warn" title="AVC без HEVC с тем же стартом батча">нет HEVC</span>
+            {% endif %}
+          </td>
           <td>{{ t.torrent_description or "-" }}</td>
           <td>{{ t.file_size_label }}</td>
           <td>
             {% if t.pipeline_status %}
+            {% if t.pipeline_id %}<a href="/pipeline/{{ t.pipeline_id }}">{% endif %}
             <span class="job-status job-status-{{ t.pipeline_status }}">{{ t.pipeline_status }}</span>
+            {% if t.pipeline_id %}</a>{% endif %}
             {% if t.pipeline_error %}<div class="muted">{{ t.pipeline_error }}</div>{% endif %}
             {% else %}
             <span class="muted">—</span>
@@ -126,7 +143,9 @@
             <td>{{ t.file_size_label }}</td>
             <td>
               {% if t.pipeline_status %}
+              {% if t.pipeline_id %}<a href="/pipeline/{{ t.pipeline_id }}">{% endif %}
               <span class="job-status job-status-{{ t.pipeline_status }}">{{ t.pipeline_status }}</span>
+              {% if t.pipeline_id %}</a>{% endif %}
               {% else %}
               <span class="muted">—</span>
               {% endif %}
@@ -160,12 +179,13 @@
 {% endfor %}
 
 {% set tracked_qs = '&tracked_only=on' if tracked_only else '' %}
+{% set hevc_qs = ('&hevc_filter=' ~ hevc_filter) if hevc_filter else '' %}
 <div class="row" style="margin-top:12px;">
   {% if page > 1 %}
-  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}&page={{ page - 1 }}">Назад</a>
+  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}{{ hevc_qs }}&page={{ page - 1 }}">Назад</a>
   {% endif %}
   {% if page < total_pages %}
-  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}&page={{ page + 1 }}">Вперёд</a>
+  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}{{ hevc_qs }}&page={{ page + 1 }}">Вперёд</a>
   {% endif %}
 </div>
 {% endblock %}

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -113,6 +113,36 @@ class TorrentPipeline(Base):
     slave_added_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    events: Mapped[list["PipelineEvent"]] = relationship(
+        back_populates="pipeline",
+        cascade="all, delete-orphan",
+        order_by="PipelineEvent.id",
+    )
+
+
+class PipelineEvent(Base):
+    """Audit trail жизненного пути пайплайна (независимо от job_logs)."""
+
+    __tablename__ = "pipeline_events"
+    __table_args__ = (
+        Index("ix_pipeline_events_pipeline_id_id", "pipeline_id", "id"),
+        Index("ix_pipeline_events_created_at", "created_at"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pipeline_id: Mapped[int] = mapped_column(
+        ForeignKey("torrent_pipeline.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Без жёсткого FK: job может быть удалён cleanup’ом, в UI — «job удалён».
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    details_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    pipeline: Mapped["TorrentPipeline"] = relationship(back_populates="events")
 
 
 class TorrentArchive(Base):

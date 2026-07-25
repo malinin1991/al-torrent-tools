@@ -873,7 +873,14 @@ class TorrentProcessor:
                         "debug",
                     )
 
-                self._pipeline.mark_master_added(pipeline)
+                self._pipeline.mark_master_added(
+                    pipeline,
+                    details={
+                        "added_new": added_new,
+                        "qb_role": "master",
+                        "display_name": display_name,
+                    },
+                )
                 enqueue_pipeline_telegram_notification(
                     self._db,
                     pipeline,

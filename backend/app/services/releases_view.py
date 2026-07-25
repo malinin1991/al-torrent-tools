@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from app.utils.datetime_fmt import utcnow
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -28,6 +28,11 @@ from app.services.file_tracker import (
     UI_STATUS_REMOVED,
     file_status_for_ui,
     resolve_orphan_scan_root,
+)
+from app.services.hevc_pairing import (
+    HevcFilter,
+    unpaired_by_archive_id,
+    release_ids_matching_hevc_filter,
 )
 from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
 from app.services.torrent_files_meta import (
@@ -200,7 +205,10 @@ class ReleaseTorrentRow:
     created_at: datetime | None
     pipeline_status: str | None
     pipeline_error: str | None
+    pipeline_id: int | None = None
     api_present: bool = True
+    hevc_pair_status: Literal["missing", "overdue"] | None = None
+    hevc_pair_age_hours: float | None = None
     files: list[ReleaseFileRow] = field(default_factory=list)
 
 
@@ -315,11 +323,41 @@ def build_archive_page_rows(db: Session, archives: list[TorrentArchive]) -> list
     return result
 
 
+def _normalize_hevc_filter(value: str | None) -> HevcFilter:
+    text = (value or "").strip().lower()
+    if text in ("missing", "overdue"):
+        return text  # type: ignore[return-value]
+    return ""
+
+
+def _active_archives_for_hevc_pairing(db: Session) -> list[Any]:
+    """Лёгкий SELECT актуальных архивов для фильтров HEVC (до пагинации)."""
+    return list(
+        db.execute(
+            select(
+                TorrentArchive.id,
+                TorrentArchive.release_id,
+                TorrentArchive.torrent_id,
+                TorrentArchive.torrent_type,
+                TorrentArchive.torrent_description,
+                TorrentArchive.quality_json,
+                TorrentArchive.created_at,
+                TorrentArchive.api_present,
+                TorrentArchive.superseded,
+            ).where(
+                TorrentArchive.api_present.is_(True),
+                TorrentArchive.superseded.is_(False),
+            )
+        ).all()
+    )
+
+
 def list_release_groups(
     db: Session,
     *,
     search: str | None = None,
     tracked_only: bool = False,
+    hevc_filter: str | None = None,
     page: int = 1,
     per_page: int = 30,
 ) -> dict[str, Any]:
@@ -328,6 +366,7 @@ def list_release_groups(
     per_page = max(1, min(per_page, 100))
     search_text = (search or "").strip()
     only_tracked = bool(tracked_only)
+    hevc = _normalize_hevc_filter(hevc_filter)
 
     stats_query = (
         select(
@@ -352,6 +391,23 @@ def list_release_groups(
     if only_tracked:
         tracked_ids = select(TrackedRelease.release_id).where(TrackedRelease.enabled.is_(True))
         stats_query = stats_query.where(TorrentArchive.release_id.in_(tracked_ids))
+    if hevc:
+        hevc_release_ids = release_ids_matching_hevc_filter(
+            _active_archives_for_hevc_pairing(db),
+            hevc_filter=hevc,
+        )
+        if not hevc_release_ids:
+            return {
+                "groups": [],
+                "search": search_text,
+                "tracked_only": only_tracked,
+                "hevc_filter": hevc,
+                "page": page,
+                "per_page": per_page,
+                "total": 0,
+                "total_pages": 1,
+            }
+        stats_query = stats_query.where(TorrentArchive.release_id.in_(hevc_release_ids))
 
     total = db.scalar(select(func.count()).select_from(stats_query.subquery())) or 0
     total_pages = max(1, (total + per_page - 1) // per_page)
@@ -369,6 +425,7 @@ def list_release_groups(
             "groups": [],
             "search": search_text,
             "tracked_only": only_tracked,
+            "hevc_filter": hevc,
             "page": page,
             "per_page": per_page,
             "total": total,
@@ -422,10 +479,13 @@ def list_release_groups(
             )
             if genres:
                 break
+        hevc_unpaired = unpaired_by_archive_id(items)
         active: list[ReleaseTorrentRow] = []
         archived: list[ReleaseTorrentRow] = []
         for item in items:
-            status, error = pipeline_by_hash.get(item.info_hash.lower(), (None, None))
+            status, error, pipeline_id = pipeline_by_hash.get(
+                item.info_hash.lower(), (None, None, None)
+            )
             info_hash_key = item.info_hash.lower()
             torrent_events = events_by_hash.get(info_hash_key) or _TorrentEvents()
             torrent_files = files_by_hash.get(info_hash_key, [])
@@ -439,6 +499,7 @@ def list_release_groups(
                     torrent_files,
                 ),
             )
+            unpaired = hevc_unpaired.get(item.id)
             row = ReleaseTorrentRow(
                 archive_id=item.id,
                 torrent_id=item.torrent_id,
@@ -450,7 +511,10 @@ def list_release_groups(
                 created_at=item.created_at,
                 pipeline_status=status,
                 pipeline_error=error,
+                pipeline_id=pipeline_id,
                 api_present=bool(getattr(item, "api_present", True)),
+                hevc_pair_status=unpaired.status if unpaired else None,
+                hevc_pair_age_hours=unpaired.age_hours if unpaired else None,
                 files=file_rows,
             )
             if row.api_present:
@@ -482,6 +546,7 @@ def list_release_groups(
         "groups": groups,
         "search": search_text,
         "tracked_only": only_tracked,
+        "hevc_filter": hevc,
         "page": page,
         "per_page": per_page,
         "total": total,
@@ -874,7 +939,11 @@ def _info_hashes_with_active_hash_job(db: Session, info_hashes: list[str]) -> se
 def _latest_pipeline_by_hash(
     db: Session,
     hashes: list[str],
-) -> dict[str, tuple[str | None, str | None]]:
+) -> dict[str, tuple[str | None, str | None, int | None]]:
+    """Как get_latest_by_hash: предпочитаем не failed/cancelled."""
+    from app.services.pipeline import TorrentPipelineService
+
+    excluded = TorrentPipelineService._EXCLUDED_FROM_LATEST
     normalized = sorted({(h or "").strip().lower() for h in hashes if h})
     if not normalized:
         return {}
@@ -883,11 +952,20 @@ def _latest_pipeline_by_hash(
         .where(TorrentPipeline.info_hash.in_(normalized))
         .order_by(TorrentPipeline.id.desc())
     ).all()
-    result: dict[str, tuple[str | None, str | None]] = {}
+    result: dict[str, tuple[str | None, str | None, int | None]] = {}
+    fallback: dict[str, tuple[str | None, str | None, int | None]] = {}
     for row in rows:
         key = row.info_hash.lower()
+        payload = (row.status, row.error, row.id)
+        if row.status in excluded:
+            if key not in fallback:
+                fallback[key] = payload
+            continue
         if key not in result:
-            result[key] = (row.status, row.error)
+            result[key] = payload
+    for key, payload in fallback.items():
+        if key not in result:
+            result[key] = payload
     return result
 
 

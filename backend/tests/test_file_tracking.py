@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.db.models import PipelineEvent
 from app.services.file_hasher import upsert_disk_hash
 from app.services.file_tracker import FileChange, FileTrackerService, mark_missing_api_present_false, update_api_present_for_release
 from app.services.pipeline import TorrentPipelineService
@@ -268,8 +269,8 @@ def test_enqueue_hash_marks_failed_when_schedule_raises(monkeypatch: pytest.Monk
     assert job.error
     assert job.finished_at is not None
     db.commit.assert_called()
-    service._add_log.assert_called()
-    assert any("не удалось поставить" in str(c) for c in service._add_log.call_args_list)
+    events = [c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], PipelineEvent)]
+    assert any("не удалось поставить" in (e.message or "") for e in events)
     # После пометки failed повторный enqueue не блокируется.
     assert service._hash_torrent_already_done_or_queued("abc123") is False
 

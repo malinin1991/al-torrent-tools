@@ -495,7 +495,7 @@ async def qb_complete_webhook(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    pipeline_service = TorrentPipelineService(db)
+    pipeline_service = TorrentPipelineService(db, actor="webhook")
     pipeline = pipeline_service.get_latest_by_hash(info_hash)
     if pipeline is None:
         raise HTTPException(

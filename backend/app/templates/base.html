@@ -184,6 +184,39 @@
     .info-table td { border-bottom: 1px solid #2a2a2a; }
     .info-table tr:last-child th,
     .info-table tr:last-child td { border-bottom: 0; }
+    .pipeline-timeline {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .pipeline-timeline-item {
+      border-left: 2px solid #354a66;
+      padding: 0 0 2px 12px;
+    }
+    .pipeline-timeline-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+      margin-bottom: 4px;
+      font-size: 0.9rem;
+    }
+    .pipeline-timeline-message { margin-bottom: 4px; }
+    .pipeline-timeline-links { font-size: 0.85rem; }
+    .pipeline-event-details { margin-top: 4px; }
+    .pipeline-event-details pre {
+      margin: 6px 0 0;
+      padding: 8px;
+      background: #101010;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      white-space: pre-wrap;
+    }
     tr.torrent-files-row td {
       padding-top: 0;
       border-bottom: 1px solid #343434;

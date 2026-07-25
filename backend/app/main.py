@@ -1,9 +1,10 @@
 from pathlib import Path
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Form, Query
+from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -13,7 +14,17 @@ from starlette.requests import Request
 
 from app.api.rest import job_runner, router as api_router
 from app.core.config import settings
-from app.db.models import ExtraUrl, Job, JobLog, QbClient, Setting, TorrentArchive, TorrentPipeline, TrackedRelease
+from app.db.models import (
+    ExtraUrl,
+    Job,
+    JobLog,
+    PipelineEvent,
+    QbClient,
+    Setting,
+    TorrentArchive,
+    TorrentPipeline,
+    TrackedRelease,
+)
 from app.db.session import SessionLocal, get_db
 from app.services.job_catalog import load_job_catalog
 from app.services.job_runner import (
@@ -574,6 +585,91 @@ async def pipeline_reconcile_action(
     return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
 
 
+@app.get("/pipeline/{pipeline_id}", response_class=HTMLResponse)
+async def pipeline_detail_page(
+    request: Request,
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    pipeline = db.get(TorrentPipeline, pipeline_id)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} не найден")
+
+    events = list(
+        db.scalars(
+            select(PipelineEvent)
+            .where(PipelineEvent.pipeline_id == pipeline_id)
+            .order_by(PipelineEvent.id.asc())
+        ).all()
+    )
+    job_ids = sorted({int(e.job_id) for e in events if e.job_id is not None})
+    existing_jobs: set[int] = set()
+    if job_ids:
+        existing_jobs = set(
+            db.scalars(select(Job.id).where(Job.id.in_(job_ids))).all()
+        )
+
+    # Сначала точный info_hash пайплайна; torrent_id — только fallback.
+    archive = db.scalar(
+        select(TorrentArchive)
+        .where(TorrentArchive.info_hash == pipeline.info_hash)
+        .order_by(TorrentArchive.id.desc())
+        .limit(1)
+    )
+    if archive is None:
+        archive = db.scalar(
+            select(TorrentArchive)
+            .where(TorrentArchive.torrent_id == pipeline.torrent_id)
+            .order_by(TorrentArchive.id.desc())
+            .limit(1)
+        )
+    release_name = None
+    torrent_label = None
+    if archive is not None:
+        release_name = archive.anime_name or archive.release_alias
+        parts = [p for p in (archive.torrent_type, archive.torrent_description) if p]
+        torrent_label = " · ".join(parts) if parts else None
+
+    timeline = []
+    for event in events:
+        job_exists = event.job_id is not None and event.job_id in existing_jobs
+        details = event.details_json if isinstance(event.details_json, dict) else {}
+        details_pretty = ""
+        if details:
+            details_pretty = json.dumps(details, ensure_ascii=False, indent=2, sort_keys=True)
+        timeline.append(
+            {
+                "event": event,
+                "job_exists": job_exists,
+                "job_link": (
+                    f"/jobs?job_id={event.job_id}" if job_exists else None
+                ),
+                "actor": details.get("actor"),
+                "details_pretty": details_pretty,
+            }
+        )
+
+    master_states: dict = {}
+    try:
+        master_states = await asyncio.to_thread(
+            _load_master_ui_states, [pipeline.info_hash]
+        )
+    except Exception:
+        master_states = {}
+
+    return templates.TemplateResponse(
+        request,
+        "pipeline_detail.html",
+        {
+            "pipeline": pipeline,
+            "timeline": timeline,
+            "release_name": release_name or f"Release #{pipeline.release_id}",
+            "torrent_label": torrent_label or f"Torrent #{pipeline.torrent_id}",
+            "master_state": master_states.get((pipeline.info_hash or "").lower(), {}),
+        },
+    )
+
+
 def _load_master_ui_states(info_hashes: list[str]) -> dict:
     """Опрос master в отдельном потоке (своя DB-сессия)."""
     with SessionLocal() as thread_db:
@@ -659,12 +755,18 @@ def releases_page(
     request: Request,
     search: str | None = Query(default=None),
     tracked_only: str | None = Query(default=None),
+    hevc_filter: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     only_tracked = tracked_only == "on"
     context = list_release_groups(
-        db, search=search, tracked_only=only_tracked, page=page, per_page=30
+        db,
+        search=search,
+        tracked_only=only_tracked,
+        hevc_filter=hevc_filter,
+        page=page,
+        per_page=30,
     )
     return templates.TemplateResponse(request, "releases.html", context)
 

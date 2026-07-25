@@ -93,8 +93,10 @@ def test_list_release_groups_exposes_genres() -> None:
     assert result["groups"][0].tracked is False
     assert result["groups"][0].track_source is None
     assert result["groups"][0].torrents[0].api_present is True
+    assert result["groups"][0].torrents[0].hevc_pair_status is None
     assert result["groups"][0].archived_torrents == []
     assert result["tracked_only"] is False
+    assert result["hevc_filter"] == ""
 
 
 def test_list_release_groups_tracked_only_flag() -> None:
@@ -105,6 +107,7 @@ def test_list_release_groups_tracked_only_flag() -> None:
     result = list_release_groups(db, tracked_only=True, page=1, per_page=30)
 
     assert result["tracked_only"] is True
+    assert result["hevc_filter"] == ""
     assert result["groups"] == []
     assert result["total"] == 0
     # count-запрос должен ограничивать enabled tracked_releases
@@ -112,6 +115,182 @@ def test_list_release_groups_tracked_only_flag() -> None:
     sql = str(count_stmt.compile(compile_kwargs={"literal_binds": False})).lower()
     assert "tracked_releases" in sql
     assert "enabled" in sql
+
+
+def test_list_release_groups_hevc_filter_missing_marks_unpaired() -> None:
+    from datetime import datetime, timezone
+
+    db = MagicMock()
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    quality_avc = {
+        "type": {"value": "BDRip"},
+        "quality": {"value": "1080p"},
+        "codec": {"label": "AVC", "value": "x264/AVC"},
+    }
+    quality_hevc = {
+        "type": {"value": "BDRip"},
+        "quality": {"value": "1080p"},
+        "codec": {"label": "HEVC", "value": "x265/HEVC"},
+    }
+    avc_missing = SimpleNamespace(
+        id=1,
+        release_id=10,
+        release_alias="show",
+        anime_name="Show",
+        category="AniLibria/2024",
+        torrent_id=100,
+        info_hash="a" * 40,
+        torrent_type="BDRip 1080p AVC",
+        torrent_description="347-350",
+        file_size=1024,
+        created_at=now,
+        quality_json=quality_avc,
+        api_present=True,
+        superseded=False,
+    )
+    avc_paired = SimpleNamespace(
+        id=2,
+        release_id=10,
+        release_alias="show",
+        anime_name="Show",
+        category="AniLibria/2024",
+        torrent_id=101,
+        info_hash="b" * 40,
+        torrent_type="BDRip 1080p AVC",
+        torrent_description="300-346",
+        file_size=1024,
+        created_at=now,
+        quality_json=quality_avc,
+        api_present=True,
+        superseded=False,
+    )
+    hevc_pair = SimpleNamespace(
+        id=3,
+        release_id=10,
+        release_alias="show",
+        anime_name="Show",
+        category="AniLibria/2024",
+        torrent_id=102,
+        info_hash="c" * 40,
+        torrent_type="BDRip 1080p HEVC",
+        torrent_description="300-346",
+        file_size=1024,
+        created_at=now,
+        quality_json=quality_hevc,
+        api_present=True,
+        superseded=False,
+    )
+    pairing_rows = [avc_missing, avc_paired, hevc_pair]
+    stats_row = SimpleNamespace(release_id=10, last_updated=now, torrent_count=3)
+
+    execute_calls = {"n": 0}
+
+    def _execute(stmt):  # noqa: ANN001
+        execute_calls["n"] += 1
+        result = MagicMock()
+        if execute_calls["n"] == 1:
+            # лёгкий SELECT для hevc_filter
+            result.all.return_value = pairing_rows
+        else:
+            result.all.return_value = [stats_row]
+        return result
+
+    db.execute.side_effect = _execute
+    db.scalar.return_value = 1
+    db.scalars.side_effect = [
+        MagicMock(all=lambda: pairing_rows),  # archives
+        MagicMock(all=lambda: []),  # pipelines
+        MagicMock(all=lambda: []),  # tracked
+        MagicMock(all=lambda: []),  # torrent_files
+        MagicMock(all=lambda: []),  # events
+        MagicMock(all=lambda: pairing_rows),  # archives for events legacy
+    ]
+
+    result = list_release_groups(db, hevc_filter="missing", page=1, per_page=30)
+
+    assert result["hevc_filter"] == "missing"
+    assert len(result["groups"]) == 1
+    by_id = {t.archive_id: t for t in result["groups"][0].torrents}
+    assert by_id[1].hevc_pair_status == "missing"
+    assert by_id[1].torrent_description == "347-350"
+    assert by_id[2].hevc_pair_status is None  # AVC с HEVC-парой
+    assert by_id[3].hevc_pair_status is None  # сам HEVC
+
+
+def test_list_release_groups_hevc_filter_empty_when_no_matches() -> None:
+    db = MagicMock()
+    db.execute.return_value.all.return_value = []
+
+    result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+
+    assert result["hevc_filter"] == "overdue"
+    assert result["groups"] == []
+    assert result["total"] == 0
+    assert result["total_pages"] == 1
+    # без совпадений не ходим в count/stats
+    db.scalar.assert_not_called()
+
+
+def test_list_release_groups_hevc_filter_overdue_marks_status() -> None:
+    from datetime import timedelta
+
+    from app.services.hevc_pairing import HEVC_SLA_HOURS
+    from app.utils.datetime_fmt import utcnow
+
+    db = MagicMock()
+    now = utcnow()
+    quality_avc = {
+        "type": {"value": "BDRip"},
+        "quality": {"value": "1080p"},
+        "codec": {"label": "AVC", "value": "x264/AVC"},
+    }
+    overdue_row = SimpleNamespace(
+        id=1,
+        release_id=10,
+        release_alias="show",
+        anime_name="Show",
+        category="AniLibria/2024",
+        torrent_id=100,
+        info_hash="a" * 40,
+        torrent_type="BDRip 1080p AVC",
+        torrent_description="1-2",
+        file_size=1024,
+        created_at=now - timedelta(hours=HEVC_SLA_HOURS + 2),
+        quality_json=quality_avc,
+        api_present=True,
+        superseded=False,
+    )
+    stats_row = SimpleNamespace(
+        release_id=10, last_updated=overdue_row.created_at, torrent_count=1
+    )
+    execute_calls = {"n": 0}
+
+    def _execute(stmt):  # noqa: ANN001
+        execute_calls["n"] += 1
+        result = MagicMock()
+        if execute_calls["n"] == 1:
+            result.all.return_value = [overdue_row]
+        else:
+            result.all.return_value = [stats_row]
+        return result
+
+    db.execute.side_effect = _execute
+    db.scalar.return_value = 1
+    db.scalars.side_effect = [
+        MagicMock(all=lambda: [overdue_row]),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: [overdue_row]),
+    ]
+
+    result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+    assert result["hevc_filter"] == "overdue"
+    assert len(result["groups"]) == 1
+    t = result["groups"][0].torrents[0]
+    assert t.hevc_pair_status == "overdue"
+    assert t.hevc_pair_age_hours is not None and t.hevc_pair_age_hours > HEVC_SLA_HOURS
 
 
 def _events_db(rows: list) -> MagicMock:
@@ -643,3 +822,30 @@ def test_info_hashes_with_active_hash_job() -> None:
     ]
     active = _info_hashes_with_active_hash_job(db, [wanted])
     assert active == {wanted}
+
+
+def test_latest_pipeline_by_hash_prefers_non_failed() -> None:
+    from app.services.releases_view import _latest_pipeline_by_hash
+
+    h = "ab" * 20
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [
+        SimpleNamespace(info_hash=h, status="failed", error="boom", id=30),
+        SimpleNamespace(info_hash=h, status="done", error=None, id=20),
+        SimpleNamespace(info_hash=h, status="cancelled", error="x", id=10),
+    ]
+    result = _latest_pipeline_by_hash(db, [h])
+    assert result[h] == ("done", None, 20)
+
+
+def test_latest_pipeline_by_hash_falls_back_to_failed() -> None:
+    from app.services.releases_view import _latest_pipeline_by_hash
+
+    h = "cd" * 20
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [
+        SimpleNamespace(info_hash=h, status="failed", error="boom", id=5),
+        SimpleNamespace(info_hash=h, status="cancelled", error="x", id=4),
+    ]
+    result = _latest_pipeline_by_hash(db, [h])
+    assert result[h] == ("failed", "boom", 5)

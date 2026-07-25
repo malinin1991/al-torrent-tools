@@ -6,7 +6,7 @@ import qbittorrentapi
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.db.models import ExtraUrl, JobLog, QbClient, TorrentArchive, TorrentPipeline
+from app.db.models import ExtraUrl, JobLog, PipelineEvent, QbClient, TorrentArchive, TorrentPipeline
 from app.services.qbittorrent import (
     MASTER_UI_LABELS,
     ensure_announce_passkey,
@@ -27,6 +27,41 @@ from app.services.torrent_qb_meta import (
 
 MasterTorrentState = Literal["complete", "in_progress", "missing"]
 
+# created | status_change | master_add | slave_add | hash_enqueued | hash_progress |
+# hash_done | hash_fail | tg_queued | tg_sent | cancelled | failed
+PipelineActor = Literal["job", "webhook", "poll", "manual"]
+
+
+def record_pipeline_event(
+    db: Session,
+    pipeline_id: int,
+    *,
+    event_type: str,
+    message: str,
+    job_id: int | None = None,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    details: dict[str, Any] | None = None,
+    commit: bool = True,
+) -> PipelineEvent:
+    """Записать событие audit trail (можно вызывать вне TorrentPipelineService)."""
+    event = PipelineEvent(
+        pipeline_id=pipeline_id,
+        job_id=job_id,
+        event_type=event_type,
+        from_status=from_status,
+        to_status=to_status,
+        message=message,
+        details_json=dict(details or {}),
+    )
+    db.add(event)
+    if commit:
+        db.commit()
+        db.refresh(event)
+    else:
+        db.flush()
+    return event
+
 
 class TorrentPipelineService:
     STATUS_DISCOVERED = "discovered"
@@ -43,15 +78,58 @@ class TorrentPipelineService:
     _AWAITING_SLAVE = frozenset({STATUS_MASTER_ADDED, STATUS_MASTER_COMPLETE})
     _EXCLUDED_FROM_LATEST = frozenset({STATUS_FAILED, STATUS_CANCELLED})
 
-    def __init__(self, db: Session, job_id: int | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        job_id: int | None = None,
+        *,
+        actor: str | None = None,
+    ) -> None:
         self._db = db
         self._job_id = job_id
+        # job | webhook | poll | manual — пишется в details_json.actor
+        if actor:
+            self._actor = actor
+        elif job_id is not None:
+            self._actor = "job"
+        else:
+            self._actor = None
         self._master_client: qbittorrentapi.Client | None = None
 
     def _add_log(self, message: str, level: str = "info") -> None:
         if self._job_id is None:
             return
         self._db.add(JobLog(job_id=self._job_id, level=level, message=message))
+        self._db.commit()
+
+    def _record_event(
+        self,
+        pipeline: TorrentPipeline,
+        *,
+        event_type: str,
+        message: str,
+        from_status: str | None = None,
+        to_status: str | None = None,
+        details: dict[str, Any] | None = None,
+        log_level: str = "info",
+    ) -> None:
+        """Всегда пишет pipeline_events; job_logs — только если есть job_id."""
+        details_json = dict(details or {})
+        if "actor" not in details_json and self._actor:
+            details_json["actor"] = self._actor
+        record_pipeline_event(
+            self._db,
+            pipeline.id,
+            event_type=event_type,
+            message=message,
+            job_id=self._job_id,
+            from_status=from_status,
+            to_status=to_status,
+            details=details_json,
+            commit=False,
+        )
+        if self._job_id is not None:
+            self._db.add(JobLog(job_id=self._job_id, level=log_level, message=message))
         self._db.commit()
 
     def create_discovered(self, info_hash: str, release_id: int, torrent_id: int) -> TorrentPipeline:
@@ -64,9 +142,17 @@ class TorrentPipelineService:
         self._db.add(pipeline)
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(
-            f"Pipeline {pipeline.id} создан: release_id={release_id}, torrent_id={torrent_id}, status={pipeline.status}",
-            "debug",
+        message = (
+            f"Pipeline {pipeline.id} создан: release_id={release_id}, "
+            f"torrent_id={torrent_id}, status={pipeline.status}"
+        )
+        self._record_event(
+            pipeline,
+            event_type="created",
+            message=message,
+            to_status=self.STATUS_DISCOVERED,
+            details={"release_id": release_id, "torrent_id": torrent_id, "info_hash": pipeline.info_hash},
+            log_level="debug",
         )
         return pipeline
 
@@ -91,22 +177,61 @@ class TorrentPipelineService:
             .limit(1)
         )
 
-    def mark_waiting_master(self, pipeline: TorrentPipeline, reason: str | None = None) -> TorrentPipeline:
+    def mark_waiting_master(
+        self,
+        pipeline: TorrentPipeline,
+        reason: str | None = None,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> TorrentPipeline:
+        # Уже waiting_master: не спамим PipelineEvent на каждом retry.
+        if pipeline.status == self.STATUS_WAITING_MASTER:
+            if reason is not None and reason != pipeline.error:
+                pipeline.error = reason
+                self._db.commit()
+                self._db.refresh(pipeline)
+            return pipeline
+        from_status = pipeline.status
         pipeline.status = self.STATUS_WAITING_MASTER
         pipeline.error = reason
         self._db.commit()
         self._db.refresh(pipeline)
         suffix = f": {reason}" if reason else ""
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}{suffix}", "warning")
+        event_details = dict(details or {})
+        if reason:
+            event_details["reason"] = reason
+        self._record_event(
+            pipeline,
+            event_type="status_change",
+            message=f"Pipeline {pipeline.id} переведен в status={pipeline.status}{suffix}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details=event_details,
+            log_level="warning",
+        )
         return pipeline
 
-    def mark_master_added(self, pipeline: TorrentPipeline) -> TorrentPipeline:
+    def mark_master_added(
+        self,
+        pipeline: TorrentPipeline,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> TorrentPipeline:
+        from_status = pipeline.status
         pipeline.status = self.STATUS_MASTER_ADDED
         pipeline.master_added_at = utcnow()
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
+        self._record_event(
+            pipeline,
+            event_type="master_add",
+            message=f"Pipeline {pipeline.id} переведен в status={pipeline.status}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details=details,
+            log_level="debug",
+        )
         self._sync_composition_best_effort(pipeline)
         return pipeline
 
@@ -150,54 +275,139 @@ class TorrentPipelineService:
                 "warning",
             )
 
-    def mark_master_complete(self, pipeline: TorrentPipeline) -> TorrentPipeline:
+    def mark_master_complete(
+        self,
+        pipeline: TorrentPipeline,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> TorrentPipeline:
+        from_status = pipeline.status
         pipeline.status = self.STATUS_MASTER_COMPLETE
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
+        self._record_event(
+            pipeline,
+            event_type="status_change",
+            message=f"Pipeline {pipeline.id} переведен в status={pipeline.status}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details=details,
+            log_level="debug",
+        )
         return pipeline
 
-    def mark_waiting_slave(self, pipeline: TorrentPipeline, reason: str | None = None) -> TorrentPipeline:
+    def mark_waiting_slave(
+        self,
+        pipeline: TorrentPipeline,
+        reason: str | None = None,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> TorrentPipeline:
+        # Уже waiting_slave: не спамим PipelineEvent на каждом retry.
+        if pipeline.status == self.STATUS_WAITING_SLAVE:
+            if reason is not None and reason != pipeline.error:
+                pipeline.error = reason
+                self._db.commit()
+                self._db.refresh(pipeline)
+            return pipeline
+        from_status = pipeline.status
         pipeline.status = self.STATUS_WAITING_SLAVE
         pipeline.error = reason
         self._db.commit()
         self._db.refresh(pipeline)
         suffix = f": {reason}" if reason else ""
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}{suffix}", "warning")
+        event_details = dict(details or {})
+        if reason:
+            event_details["reason"] = reason
+        self._record_event(
+            pipeline,
+            event_type="status_change",
+            message=f"Pipeline {pipeline.id} переведен в status={pipeline.status}{suffix}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details=event_details,
+            log_level="warning",
+        )
         return pipeline
 
-    def mark_slave_added(self, pipeline: TorrentPipeline) -> TorrentPipeline:
+    def mark_slave_added(
+        self,
+        pipeline: TorrentPipeline,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> TorrentPipeline:
+        from_status = pipeline.status
         pipeline.status = self.STATUS_SLAVE_ADDED
         pipeline.slave_added_at = utcnow()
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
+        self._record_event(
+            pipeline,
+            event_type="slave_add",
+            message=f"Pipeline {pipeline.id} переведен в status={pipeline.status}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details=details,
+            log_level="debug",
+        )
         return pipeline
 
-    def mark_done(self, pipeline: TorrentPipeline) -> TorrentPipeline:
+    def mark_done(
+        self,
+        pipeline: TorrentPipeline,
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> TorrentPipeline:
+        from_status = pipeline.status
         pipeline.status = self.STATUS_DONE
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
+        self._record_event(
+            pipeline,
+            event_type="status_change",
+            message=f"Pipeline {pipeline.id} переведен в status={pipeline.status}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details=details,
+            log_level="debug",
+        )
         return pipeline
 
     def mark_failed(self, pipeline: TorrentPipeline, error: str) -> TorrentPipeline:
+        from_status = pipeline.status
         pipeline.status = self.STATUS_FAILED
         pipeline.error = error
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} завершился ошибкой: {error}", "error")
+        self._record_event(
+            pipeline,
+            event_type="failed",
+            message=f"Pipeline {pipeline.id} завершился ошибкой: {error}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details={"error": error},
+            log_level="error",
+        )
         return pipeline
 
     def mark_cancelled(self, pipeline: TorrentPipeline, reason: str) -> TorrentPipeline:
+        from_status = pipeline.status
         pipeline.status = self.STATUS_CANCELLED
         pipeline.error = reason
         self._db.commit()
         self._db.refresh(pipeline)
-        self._add_log(f"Pipeline {pipeline.id} отменён: {reason}", "warning")
+        self._record_event(
+            pipeline,
+            event_type="cancelled",
+            message=f"Pipeline {pipeline.id} отменён: {reason}",
+            from_status=from_status,
+            to_status=pipeline.status,
+            details={"reason": reason},
+            log_level="warning",
+        )
         return pipeline
 
     def get_waiting_slave_pipelines(self) -> list[TorrentPipeline]:
@@ -257,15 +467,29 @@ class TorrentPipelineService:
             .returning(TorrentPipeline)
         )
         self._db.commit()
+        if claimed is not None:
+            self._record_event(
+                claimed,
+                event_type="status_change",
+                message=f"Pipeline {claimed.id} переведен в status={claimed.status}",
+                from_status=self.STATUS_MASTER_ADDED,
+                to_status=self.STATUS_MASTER_COMPLETE,
+                log_level="debug",
+            )
         return claimed
 
     def process_completion(self, pipeline: TorrentPipeline, torrent_bytes: bytes) -> TorrentPipeline:
         """Идемпотентное завершение: master_added → slave; waiting_slave / master_complete — досылка."""
         self._db.refresh(pipeline)
         if pipeline.status in self._TERMINAL_OK:
-            self._add_log(
-                f"Pipeline {pipeline.id}: process_completion no-op, status={pipeline.status}",
-                "debug",
+            self._record_event(
+                pipeline,
+                event_type="status_change",
+                message=f"Pipeline {pipeline.id}: process_completion no-op, status={pipeline.status}",
+                from_status=pipeline.status,
+                to_status=pipeline.status,
+                details={"noop": True},
+                log_level="debug",
             )
             return pipeline
         if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
@@ -283,9 +507,14 @@ class TorrentPipelineService:
         if claimed is None:
             self._db.refresh(pipeline)
             if pipeline.status in self._TERMINAL_OK:
-                self._add_log(
-                    f"Pipeline {pipeline.id}: пропуск race/повтор, status={pipeline.status}",
-                    "debug",
+                self._record_event(
+                    pipeline,
+                    event_type="status_change",
+                    message=f"Pipeline {pipeline.id}: пропуск race/повтор, status={pipeline.status}",
+                    from_status=pipeline.status,
+                    to_status=pipeline.status,
+                    details={"race": True},
+                    log_level="debug",
                 )
                 # Даже на race: убедимся, что hash_torrent поставлен.
                 self._enqueue_hash_torrent(pipeline)
@@ -299,7 +528,6 @@ class TorrentPipelineService:
             )
 
         pipeline = claimed
-        self._add_log(f"Pipeline {pipeline.id} переведен в status={pipeline.status}", "debug")
         result = self._add_to_slave(pipeline, torrent_bytes)
         self._enqueue_hash_torrent(result)
         return result
@@ -345,15 +573,21 @@ class TorrentPipelineService:
             .limit(1)
         )
         if archive is not None and not archive.api_present:
-            self._add_log(
-                f"Pipeline {pipeline.id}: hash_torrent пропуск (api_present=false)",
-                "debug",
+            self._record_event(
+                pipeline,
+                event_type="hash_enqueued",
+                message=f"Pipeline {pipeline.id}: hash_torrent пропуск (api_present=false)",
+                details={"skipped": True, "reason": "api_present=false"},
+                log_level="debug",
             )
             return
         if self._hash_torrent_already_done_or_queued(pipeline.info_hash):
-            self._add_log(
-                f"Pipeline {pipeline.id}: hash_torrent уже был/в очереди — пропуск",
-                "debug",
+            self._record_event(
+                pipeline,
+                event_type="hash_enqueued",
+                message=f"Pipeline {pipeline.id}: hash_torrent уже был/в очереди — пропуск",
+                details={"skipped": True, "reason": "already_done_or_queued"},
+                log_level="debug",
             )
             return
         job = None
@@ -373,24 +607,39 @@ class TorrentPipelineService:
                 # Иначе pending навсегда блокирует повторный enqueue для info_hash.
                 self._mark_hash_job_schedule_failed(job.id, schedule_exc)
                 raise
-            self._add_log(
-                f"Pipeline {pipeline.id}: поставлен hash_torrent job_id={job.id}",
-                "debug",
+            self._record_event(
+                pipeline,
+                event_type="hash_enqueued",
+                message=f"Pipeline {pipeline.id}: поставлен hash_torrent job_id={job.id}",
+                details={"hash_job_id": job.id},
+                log_level="debug",
             )
         except JobAlreadyRunningError as exc:
-            self._add_log(
-                f"Pipeline {pipeline.id}: hash_torrent уже в очереди (job_id={exc.running_job_id})",
-                "debug",
+            self._record_event(
+                pipeline,
+                event_type="hash_enqueued",
+                message=(
+                    f"Pipeline {pipeline.id}: hash_torrent уже в очереди "
+                    f"(job_id={exc.running_job_id})"
+                ),
+                details={"skipped": True, "hash_job_id": exc.running_job_id},
+                log_level="debug",
             )
         except UnknownJobTypeError:
-            self._add_log(
-                f"Pipeline {pipeline.id}: hash_torrent не зарегистрирован",
-                "warning",
+            self._record_event(
+                pipeline,
+                event_type="hash_enqueued",
+                message=f"Pipeline {pipeline.id}: hash_torrent не зарегистрирован",
+                details={"error": "unknown_job_type"},
+                log_level="warning",
             )
         except Exception as exc:
-            self._add_log(
-                f"Pipeline {pipeline.id}: не удалось поставить hash_torrent: {exc}",
-                "warning",
+            self._record_event(
+                pipeline,
+                event_type="hash_enqueued",
+                message=f"Pipeline {pipeline.id}: не удалось поставить hash_torrent: {exc}",
+                details={"error": str(exc)},
+                log_level="warning",
             )
 
     def _mark_hash_job_schedule_failed(self, job_id: int, schedule_exc: Exception) -> None:
@@ -479,7 +728,11 @@ class TorrentPipelineService:
                     f"Pipeline {pipeline.id}: torrent_id={pipeline.torrent_id} уже есть в slave (Conflict)",
                     "debug",
                 )
-            self.mark_slave_added(pipeline)
+            slave_details = {"added_new": added_new, "qb_role": "slave"}
+            # Имя раздачи (meta), не метка QbClient.
+            if rename:
+                slave_details["qb_name"] = rename
+            self.mark_slave_added(pipeline, details=slave_details)
             return self.mark_done(pipeline)
         except Exception as exc:
             if should_wait_for_qb(exc):

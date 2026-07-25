@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import TelegramOutbox, TorrentPipeline, TrackedRelease
+from app.services.pipeline import record_pipeline_event
 from app.services.runtime_settings import get_setting_value
 
 TG_STATUS_SKIPPED = "skipped"
@@ -525,6 +526,13 @@ def enqueue_pipeline_telegram_notification(
     pipeline.tg_status = TG_STATUS_QUEUED
     db.commit()
     db.refresh(pipeline)
+    record_pipeline_event(
+        db,
+        pipeline.id,
+        event_type="tg_queued",
+        message=f"Pipeline {pipeline.id}: Telegram уведомление в очереди (chat_id={chat_id})",
+        details={"actor": "job", "chat_id": chat_id, "tg_status": TG_STATUS_QUEUED},
+    )
     return pipeline
 
 
@@ -537,6 +545,19 @@ def mark_outbox_sent(db: Session, outbox: TelegramOutbox) -> None:
         if pipeline is not None:
             pipeline.tg_status = TG_STATUS_SENT
     db.commit()
+    if outbox.pipeline_id is not None:
+        record_pipeline_event(
+            db,
+            outbox.pipeline_id,
+            event_type="tg_sent",
+            message=f"Pipeline {outbox.pipeline_id}: Telegram уведомление отправлено",
+            details={
+                "actor": "job",
+                "outbox_id": outbox.id,
+                "chat_id": outbox.chat_id,
+                "tg_status": TG_STATUS_SENT,
+            },
+        )
 
 
 def mark_outbox_attempt_failed(db: Session, outbox: TelegramOutbox, error: str) -> None:
