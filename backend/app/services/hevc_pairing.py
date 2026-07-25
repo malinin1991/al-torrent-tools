@@ -28,7 +28,16 @@ _CODEC_TOKEN_RE = re.compile(
 _WS_RE = re.compile(r"\s+")
 
 # Эпизодный старт батча: regular / ova / film.
-_FILM_RE = re.compile(r"^(?:фильм|film)$", re.IGNORECASE)
+# Все film-like ярлыки → один ключ ("film",) для missing-пар внутри rip_family.
+# overdue по-прежнему требует точный torrent_description (exact_pair_key).
+_FILM_RE = re.compile(
+    r"^(?:"
+    r"фильм|film|"
+    r"п\s*/\s*ф(?:\s+фильм)?|"
+    r"полнометражный(?:\s+фильм)?"
+    r")$",
+    re.IGNORECASE,
+)
 _OVA_ALONE_RE = re.compile(r"^ova$", re.IGNORECASE)
 _OVA_RANGE_RE = re.compile(r"^ova\s+(\d+)(?:\s*-\s*\d+)?$", re.IGNORECASE)
 _REGULAR_RE = re.compile(r"^(\d+)(?:\s*-\s*\d+)?$")

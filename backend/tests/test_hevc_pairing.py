@@ -60,8 +60,47 @@ def test_batch_start_key_regular_ova_film() -> None:
     assert batch_start_key("OVA") == ("ova", 1)
     assert batch_start_key("Фильм") == ("film",)
     assert batch_start_key("Film") == ("film",)
+    assert batch_start_key("П/ф фильм") == ("film",)
+    assert batch_start_key("п/ф") == ("film",)
+    assert batch_start_key("п / ф фильм") == ("film",)
+    assert batch_start_key("полнометражный фильм") == ("film",)
+    assert batch_start_key("Полнометражный") == ("film",)
     assert batch_start_key("") is None
     assert batch_start_key("Specials") is None
+
+
+def test_pf_film_avc_hevc_not_missing() -> None:
+    """AVC+HEVC оба «П/ф фильм» в одном rip_family — не missing."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(archive_id=1, episodes="П/ф фильм", codec="AVC", created_at=now),
+        _row(archive_id=2, episodes="П/ф фильм", codec="HEVC", created_at=now),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert unpaired == []
+
+
+def test_pf_film_pairs_with_film_label() -> None:
+    """«П/ф фильм» и «Фильм» — один film start-key внутри rip_family."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(archive_id=1, episodes="П/ф фильм", codec="AVC", created_at=now),
+        _row(archive_id=2, episodes="Фильм", codec="HEVC", created_at=now),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert unpaired == []
+    # overdue: exact description всё ещё разный — не трогаем exact-логику;
+    # при age ≤ SLA overdue нет; при age > SLA AVC станет overdue, но не missing.
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 1)
+    overdue_rows = [
+        _row(archive_id=10, episodes="П/ф фильм", codec="AVC", created_at=old),
+        _row(archive_id=11, episodes="Фильм", codec="HEVC", created_at=old),
+    ]
+    overdue_unpaired = find_unpaired_avc(overdue_rows, now=now)
+    assert len(overdue_unpaired) == 1
+    assert overdue_unpaired[0].archive_id == 10
+    assert overdue_unpaired[0].missing is False
+    assert overdue_unpaired[0].overdue is True
 
 
 def test_rip_family_from_quality_json() -> None:

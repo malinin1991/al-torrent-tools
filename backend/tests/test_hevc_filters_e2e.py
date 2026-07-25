@@ -275,6 +275,79 @@ def test_ova_film_pairing_e2e() -> None:
     assert by_id[2].hevc_pair_status is None
     assert by_id[3].hevc_pair_status == "missing"
 
+
+def test_pf_film_pair_not_missing_e2e() -> None:
+    """release_id=8112-style: оба «П/ф фильм» BDRip 1080p — не в фильтре «Нет HEVC»."""
+    now = utcnow()
+    avc = _archive(
+        archive_id=1,
+        release_id=8112,
+        torrent_id=9001,
+        episodes="П/ф фильм",
+        codec="AVC",
+        created_at=now,
+        anime_name="PF Movie",
+        release_alias="pf-movie",
+    )
+    hevc = _archive(
+        archive_id=2,
+        release_id=8112,
+        torrent_id=9002,
+        episodes="П/ф фильм",
+        codec="HEVC",
+        created_at=now,
+        anime_name="PF Movie",
+        release_alias="pf-movie",
+    )
+    pairing = [avc, hevc]
+    stats = [SimpleNamespace(release_id=8112, last_updated=now, torrent_count=2)]
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pairing,
+        stats_rows=stats,
+        total=1,
+    )
+    missing = list_release_groups(db, hevc_filter="missing", page=1, per_page=30)
+    assert missing["groups"] == []
+    assert missing["total"] == 0
+
+
+def test_pf_film_pairs_with_film_label_e2e() -> None:
+    """«П/ф фильм» AVC + «Фильм» HEVC — не missing (один film start-key)."""
+    now = utcnow()
+    avc = _archive(
+        archive_id=1,
+        release_id=8113,
+        torrent_id=9101,
+        episodes="П/ф фильм",
+        codec="AVC",
+        created_at=now,
+        anime_name="Mixed Film Labels",
+        release_alias="mixed-film",
+    )
+    hevc = _archive(
+        archive_id=2,
+        release_id=8113,
+        torrent_id=9102,
+        episodes="Фильм",
+        codec="HEVC",
+        created_at=now,
+        anime_name="Mixed Film Labels",
+        release_alias="mixed-film",
+    )
+    pairing = [avc, hevc]
+    stats = [SimpleNamespace(release_id=8113, last_updated=now, torrent_count=2)]
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pairing,
+        stats_rows=stats,
+        total=1,
+    )
+    missing = list_release_groups(db, hevc_filter="missing", page=1, per_page=30)
+    assert missing["groups"] == []
+    assert missing["total"] == 0
+
+
 def test_age_boundary_missing_vs_overdue() -> None:
     # list_release_groups считает age через utcnow() — якорим created_at к нему.
     now = utcnow()
