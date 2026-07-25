@@ -122,6 +122,17 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
     )
     _add_log(db, job_id, done_msg)
     if pipeline is not None:
+        transitions = [
+            {
+                "relative_path": t.relative_path,
+                "from": t.from_status,
+                "to": t.to_status,
+                "phase": t.phase,
+                "reason": t.reason,
+                "content_hash": t.content_hash_short,
+            }
+            for t in (getattr(result, "hash_ui_transitions", None) or [])[:40]
+        ]
         record_pipeline_event(
             db,
             pipeline.id,
@@ -136,5 +147,10 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
                 "errors": result.errors,
                 "change_kinds": kinds,
                 "ui_status": ui_counts,
+                "has_prior": bool(getattr(result, "has_prior_version", False)),
+                "prior_info_hash": getattr(result, "prior_info_hash", None),
+                "prior_archive_id": getattr(result, "prior_archive_id", None),
+                "ui_transitions": transitions,
+                "ui_transitions_total": len(getattr(result, "hash_ui_transitions", None) or []),
             },
         )

@@ -277,6 +277,158 @@ def test_upsert_inventory_initial_status_by_prior_version(
     assert rows["Show/new.mkv"].ui_status == "new"
 
 
+def test_upsert_inventory_heals_false_new_when_prior_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Повторный inventory с prior лечит ложный sticky new → ok для путей из prior."""
+    from app.db.models import TorrentFile
+    from app.services.file_tracker import FileTrackerService
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    existing_old = SimpleNamespace(
+        relative_path="Show/old.mkv",
+        torrent_id=5,
+        release_id=10,
+        size=1,
+        file_index=0,
+        selected=True,
+        full_path="/m/Show/old.mkv",
+        ui_status="new",
+        updated_at=None,
+    )
+    existing_new = SimpleNamespace(
+        relative_path="Show/new.mkv",
+        torrent_id=5,
+        release_id=10,
+        size=1,
+        file_index=1,
+        selected=True,
+        full_path="/m/Show/new.mkv",
+        ui_status="new",
+        updated_at=None,
+    )
+    db = MagicMock()
+    db.scalars.return_value = FakeScalars([existing_old, existing_new])
+    monkeypatch.setattr(
+        FileTrackerService,
+        "prior_version_composition",
+        lambda self, *, torrent_id, info_hash: (True, {"Show/old.mkv"}),
+    )
+    monkeypatch.setattr(
+        FileTrackerService,
+        "_prior_version_hash",
+        lambda self, **_k: "b" * 40,
+    )
+    emitted: list = []
+    monkeypatch.setattr(
+        FileTrackerService,
+        "_emit_ui_status_pipeline_event",
+        lambda self, **kwargs: emitted.append(kwargs),
+    )
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/old.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path="/m/Show/old.mkv",
+                folder_key="/m/Show",
+            ),
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/new.mkv",
+                size=1,
+                file_index=1,
+                selected=True,
+                full_path="/m/Show/new.mkv",
+                folder_key="/m/Show",
+            ),
+        ],
+    )
+    upsert_torrent_files_inventory(db, inventory)
+    assert existing_old.ui_status == "ok"
+    assert existing_new.ui_status == "new"
+    assert len(emitted) == 1
+    assert emitted[0]["phase"] == "inventory_heal"
+    assert any(
+        t.relative_path == "Show/old.mkv" and t.to_status == "ok"
+        for t in emitted[0]["transitions"]
+    )
+
+
+def test_upsert_inventory_empty_prior_does_not_heal_new(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """has_prior + пустой состав prior → inventory не лечит sticky new → ok."""
+    from app.services.file_tracker import FileTrackerService
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    existing = SimpleNamespace(
+        relative_path="Show/ep01.mkv",
+        torrent_id=5,
+        release_id=10,
+        size=1,
+        file_index=0,
+        selected=True,
+        full_path="/m/Show/ep01.mkv",
+        ui_status="new",
+        updated_at=None,
+    )
+    db = MagicMock()
+    db.scalars.return_value = FakeScalars([existing])
+    monkeypatch.setattr(
+        FileTrackerService,
+        "prior_version_composition",
+        lambda self, *, torrent_id, info_hash: (True, set()),
+    )
+    emitted: list = []
+    monkeypatch.setattr(
+        FileTrackerService,
+        "_emit_ui_status_pipeline_event",
+        lambda self, **kwargs: emitted.append(kwargs),
+    )
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/ep01.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path="/m/Show/ep01.mkv",
+                folder_key="/m/Show",
+            ),
+        ],
+    )
+    upsert_torrent_files_inventory(db, inventory)
+    assert existing.ui_status == "new"
+    assert emitted == []
+
+
 def test_upsert_inventory_first_release_all_new(tmp_path: Path) -> None:
     """Нет прошлой версии + готовый файл на диске → inventory new (добавление версии)."""
     from app.db.models import TorrentFile

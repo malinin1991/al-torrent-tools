@@ -272,6 +272,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                 existing.values(), hashed_paths=hashed_paths
             )
         seen_paths: set[str] = set()
+        heal_transitions: list = []
         for item in files:
             seen_paths.add(item.relative_path)
             row = existing.get(item.relative_path)
@@ -312,11 +313,48 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                 row.selected = item.selected
                 row.full_path = item.full_path
                 row.updated_at = now
-                # Не трогаем sticky ui_status — его выставляет file_tracker.
+                # Лечим ложный sticky new: inventory мог создать строки до появления prior.
+                # Пустой состав prior — не лечим (first_seen=True).
+                if has_prior_version:
+                    first_seen = tracker.first_seen_for_path(
+                        has_prior_version=True,
+                        prior_version_paths=prior_version_paths,
+                        relative_path=item.relative_path,
+                    )
+                    before = (row.ui_status or "").strip().lower()
+                    if first_seen:
+                        if before not in {"new", "changed"}:
+                            row.ui_status = "new"
+                    elif prior_version_paths and before != "changed" and before != "ok":
+                        row.ui_status = "ok"
+                    after = (row.ui_status or "").strip().lower()
+                    if before and after and before != after:
+                        tr = tracker._note_ui_transition(
+                            relative_path=item.relative_path,
+                            from_status=before,
+                            to_status=after,
+                            phase="inventory_heal",
+                            reason="heal_prior_path" if after == "ok" else "first_seen",
+                        )
+                        if tr is not None:
+                            heal_transitions.append(tr)
             upserted += 1
         for rel, row in existing.items():
             if rel not in seen_paths:
                 db.delete(row)
+        if heal_transitions and torrent_id:
+            prior_hash = tracker._prior_version_hash(
+                torrent_id=torrent_id, current_hash=info_hash
+            )
+            tracker._emit_ui_status_pipeline_event(
+                info_hash=info_hash,
+                torrent_id=torrent_id,
+                phase="inventory_heal",
+                transitions=heal_transitions,
+                has_prior_version=has_prior_version,
+                prior_info_hash=prior_hash,
+                prior_archive_id=None,
+            )
     db.commit()
     return upserted
 

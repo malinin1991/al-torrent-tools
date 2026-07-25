@@ -28,7 +28,7 @@ from app.services.torrent_qb_meta import (
 MasterTorrentState = Literal["complete", "in_progress", "missing"]
 
 # created | status_change | master_add | slave_add | hash_enqueued | hash_progress |
-# hash_done | hash_fail | tg_queued | tg_sent | cancelled | failed
+# hash_done | hash_fail | tg_queued | tg_sent | cancelled | failed | ui_status
 PipelineActor = Literal["job", "webhook", "poll", "manual"]
 
 

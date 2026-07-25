@@ -76,6 +76,18 @@ class FileChange:
 
 
 @dataclass
+class UiStatusTransition:
+    """Один переход sticky ui_status (для audit trail /pipeline/{id})."""
+
+    relative_path: str
+    from_status: str
+    to_status: str
+    phase: str  # sync_composition | hash_settle
+    reason: str = ""
+    content_hash_short: str | None = None
+
+
+@dataclass
 class TrackTorrentResult:
     files_upserted: int = 0
     hashed: int = 0
@@ -83,6 +95,12 @@ class TrackTorrentResult:
     errors: int = 0
     changes: list[FileChange] = field(default_factory=list)
     skipped_reason: str | None = None
+    ui_transitions: list[UiStatusTransition] = field(default_factory=list)
+    # Только hash_settle (для hash_done); sync уже в отдельных ui_status events.
+    hash_ui_transitions: list[UiStatusTransition] = field(default_factory=list)
+    has_prior_version: bool = False
+    prior_info_hash: str | None = None
+    prior_archive_id: int | None = None
 
 
 @dataclass
@@ -105,6 +123,9 @@ class _CompositionSync:
     first_seen_paths: set[str] = field(default_factory=set)
     # До sync в составе уже были ok/changed — mixed baseline (не partial backfill).
     baseline_had_known: bool = False
+    prior_info_hash: str | None = None
+    prior_archive_id: int | None = None
+    ui_transitions: list[UiStatusTransition] = field(default_factory=list)
 
 
 class FileTrackerService:
@@ -145,15 +166,30 @@ class FileTrackerService:
             torrent_bytes=prepared.torrent_bytes,
             persist_events=notify,
         )
+        result = synced.result
+        result.has_prior_version = bool(getattr(synced, "has_prior_version", False))
+        result.prior_info_hash = getattr(synced, "prior_info_hash", None)
+        result.prior_archive_id = getattr(synced, "prior_archive_id", None)
+        result.ui_transitions = list(getattr(synced, "ui_transitions", None) or [])
+        self._emit_ui_status_pipeline_event(
+            info_hash=prepared.normalized_hash,
+            torrent_id=torrent_id,
+            phase="sync_composition",
+            transitions=result.ui_transitions,
+            has_prior_version=result.has_prior_version,
+            prior_info_hash=result.prior_info_hash,
+            prior_archive_id=result.prior_archive_id,
+        )
         if synced.events and notify:
             self._maybe_notify_telegram(
                 release_id=release_id,
                 torrent_id=torrent_id,
                 events=synced.events,
                 archive=prepared.archive,
-                baseline=not synced.has_prior_version and not synced.baseline_had_known,
+                baseline=not result.has_prior_version
+                and not bool(getattr(synced, "baseline_had_known", False)),
             )
-        return synced.result
+        return result
 
     def track_torrent(
         self,
@@ -177,13 +213,27 @@ class FileTrackerService:
             torrent_bytes=prepared.torrent_bytes,
         )
         result = synced.result
+        result.has_prior_version = bool(getattr(synced, "has_prior_version", False))
+        result.prior_info_hash = getattr(synced, "prior_info_hash", None)
+        result.prior_archive_id = getattr(synced, "prior_archive_id", None)
+        result.ui_transitions = list(getattr(synced, "ui_transitions", None) or [])
+        self._emit_ui_status_pipeline_event(
+            info_hash=prepared.normalized_hash,
+            torrent_id=torrent_id,
+            phase="sync_composition",
+            transitions=result.ui_transitions,
+            has_prior_version=result.has_prior_version,
+            prior_info_hash=result.prior_info_hash,
+            prior_archive_id=result.prior_archive_id,
+        )
         save_path = synced.save_path
         content_path = synced.content_path
-        first_seen_paths = set(synced.first_seen_paths)
-        has_prior_version = synced.has_prior_version
+        first_seen_paths = set(getattr(synced, "first_seen_paths", None) or set())
+        has_prior_version = result.has_prior_version
 
         media_root = resolve_media_root()
         hash_phase_changes: list[FileChange] = []
+        hash_transitions: list[UiStatusTransition] = []
 
         # Diff B/C: хеш и missing для выбранных
         rows = list(
@@ -194,7 +244,7 @@ class FileTrackerService:
         rows_by_rel = {row.relative_path: row for row in rows}
 
         # Хеши предыдущей версии этого torrent_id (rel → content_hash) до перезаписи диска.
-        prior_hash = self._prior_version_hash(
+        prior_hash = result.prior_info_hash or self._prior_version_hash(
             torrent_id=torrent_id, current_hash=prepared.normalized_hash
         )
         prior_hash_by_rel = self._prior_version_hashes(prior_hash=prior_hash or "")
@@ -273,9 +323,15 @@ class FileTrackerService:
                 file_row = rows_by_rel.get(rel)
                 if file_row is None:
                     continue
-                # Сравниваем с хешем этого файла в предыдущей версии торрента.
-                prior_content = prior_hash_by_rel.get(rel) or old_hashes.get(full) or ""
+                # С prior: только хеш прошлой версии того же torrent_id (не disk old_hashes).
+                # Без prior (baseline): old_hashes — граница кусков на том же диске.
+                if has_prior_version:
+                    prior_content = prior_hash_by_rel.get(rel) or ""
+                else:
+                    prior_content = old_hashes.get(full) or ""
                 first_seen = rel in first_seen_paths
+                # Путь достоверно был в prior только при непустом составе и не first_seen.
+                path_in_prior = has_prior_version and not first_seen
                 mismatch = bool(prior_content and new_content and new_content != prior_content)
                 matched = bool(prior_content and new_content and new_content == prior_content)
                 if mismatch:
@@ -287,13 +343,35 @@ class FileTrackerService:
                             details={"old_hash": prior_content, "new_hash": new_content},
                         )
                     )
+                before = (file_row.ui_status or "").strip().lower()
                 self._settle_ui_status(
                     file_row,
                     first_seen=first_seen,
                     mismatch=mismatch,
                     matched=matched,
                     is_baseline=is_baseline,
+                    path_in_prior=path_in_prior,
                 )
+                after = (file_row.ui_status or "").strip().lower()
+                reason = (
+                    "hash_mismatch"
+                    if mismatch
+                    else "hash_match"
+                    if matched
+                    else "first_seen"
+                    if first_seen
+                    else "hash_settle"
+                )
+                tr = self._note_ui_transition(
+                    relative_path=rel,
+                    from_status=before,
+                    to_status=after,
+                    phase="hash_settle",
+                    reason=reason,
+                    content_hash=new_content,
+                )
+                if tr is not None:
+                    hash_transitions.append(tr)
                 settled_rels.add(rel)
 
         # Первый торрент: после hash-settle добавления остаются new (финальный статус версии).
@@ -305,6 +383,7 @@ class FileTrackerService:
                     continue
                 if row.full_path and is_incomplete_path(Path(row.full_path)):
                     continue
+                before = (row.ui_status or "").strip().lower()
                 self._settle_ui_status(
                     row,
                     first_seen=False,
@@ -312,9 +391,31 @@ class FileTrackerService:
                     matched=False,
                     is_baseline=True,
                 )
+                after = (row.ui_status or "").strip().lower()
+                tr = self._note_ui_transition(
+                    relative_path=row.relative_path or "",
+                    from_status=before,
+                    to_status=after,
+                    phase="hash_settle",
+                    reason="baseline_settle",
+                )
+                if tr is not None:
+                    hash_transitions.append(tr)
             self._db.commit()
         elif to_hash:
             self._db.commit()
+
+        result.hash_ui_transitions = list(hash_transitions)
+        if hash_transitions:
+            self._emit_ui_status_pipeline_event(
+                info_hash=prepared.normalized_hash,
+                torrent_id=torrent_id,
+                phase="hash_settle",
+                transitions=hash_transitions,
+                has_prior_version=has_prior_version,
+                prior_info_hash=result.prior_info_hash,
+                prior_archive_id=result.prior_archive_id,
+            )
 
         # Orphan только под корнем контента торрента (не общий save_path года).
         known_paths = {r.full_path for r in rows if r.full_path}
@@ -366,7 +467,8 @@ class FileTrackerService:
                 torrent_id=torrent_id,
                 events=all_events,
                 archive=prepared.archive,
-                baseline=not has_prior_version and not synced.baseline_had_known,
+                baseline=not has_prior_version
+                and not bool(getattr(synced, "baseline_had_known", False)),
             )
         return result
 
@@ -378,6 +480,7 @@ class FileTrackerService:
         mismatch: bool,
         matched: bool,
         is_baseline: bool = False,
+        path_in_prior: bool | None = None,
     ) -> None:
         """Sticky ui_status относительно ПРЕДЫДУЩЕЙ версии торрента.
 
@@ -385,8 +488,14 @@ class FileTrackerService:
         - changed — хеш разошёлся с прошлой версией → финальный
         - ok — файл был в прошлой версии и хеш совпал
         - первый торрент (нет prior): все — new; после hash остаются new
+
+        Ложный sticky new (путь был в непустом prior) можно исправить в ok/changed.
+        Пустой/неизвестный состав prior → не лечим new (path_in_prior=False).
         """
         current = (row.ui_status or "").strip().lower()
+        # path_in_prior: путь достоверно был в непустом составе prior.
+        # None → выводим из first_seen=False (legacy callers / тесты с известным prior).
+        in_prior = (not first_seen) if path_in_prior is None else bool(path_in_prior)
         if is_baseline:
             if mismatch:
                 row.ui_status = UI_STATUS_CHANGED
@@ -397,32 +506,39 @@ class FileTrackerService:
             if current != UI_STATUS_CHANGED:
                 row.ui_status = UI_STATUS_OK
             return
-        if current in _STICKY_FINAL:
-            # new/changed относительно prior — финальные, не понижаем.
+        # changed относительно prior — финальный, не понижаем.
+        if current == UI_STATUS_CHANGED:
+            return
+        # Подлинный new (файла не было в prior / состав prior неизвестен) — финальный.
+        if current == UI_STATUS_NEW and first_seen:
             return
         if first_seen:
             row.ui_status = UI_STATUS_NEW
             return
-        if mismatch:
+        if mismatch and in_prior:
             row.ui_status = UI_STATUS_CHANGED
             return
-        if matched:
+        if matched and in_prior:
             row.ui_status = UI_STATUS_OK
             return
-        # Нет данных для сравнения → оставляем текущий статус как есть.
+        # Нет hash-данных: ложный sticky new только если путь реально был в prior.
+        if current == UI_STATUS_NEW and in_prior:
+            row.ui_status = UI_STATUS_OK
+            return
+        # Иначе оставляем текущий статус как есть (в т.ч. new при пустом prior).
 
-    def _prior_version_hash(self, *, torrent_id: int, current_hash: str) -> str | None:
-        """info_hash самой свежей предыдущей версии этого torrent_id (или None).
+    def _prior_version_archive(self, *, torrent_id: int, current_hash: str) -> TorrentArchive | None:
+        """Самая свежая предыдущая версия этого torrent_id (строка архива) или None.
 
         Предпочитаем prior, у которого уже есть состав в torrent_files — иначе
-        first_seen_for_path при пустом составе считает всё «не новым», а UI
-        теряет реальные added; пустой prior пропускаем в пользу более старого
-        с файлами.
+        при пустом составе first_seen_for_path держит всё как new (не лечим),
+        а UI теряет реальные ok/changed до появления состава; пустой prior
+        пропускаем в пользу более старого с файлами.
         """
         normalized = (current_hash or "").strip().lower()
         candidates = list(
             self._db.scalars(
-                select(TorrentArchive.info_hash)
+                select(TorrentArchive)
                 .where(
                     TorrentArchive.torrent_id == torrent_id,
                     TorrentArchive.info_hash != normalized,
@@ -432,26 +548,137 @@ class FileTrackerService:
         )
         if not candidates:
             return None
-        normalized_candidates = [
-            h.strip().lower() for h in candidates if isinstance(h, str) and h.strip()
-        ]
-        if not normalized_candidates:
+        normalized_by_hash: dict[str, TorrentArchive] = {}
+        ordered_hashes: list[str] = []
+        for row in candidates:
+            h = getattr(row, "info_hash", None)
+            if not isinstance(h, str):
+                continue
+            h = h.strip().lower()
+            if not h or h in normalized_by_hash:
+                continue
+            normalized_by_hash[h] = row
+            ordered_hashes.append(h)
+        if not ordered_hashes:
             return None
-        # Есть ли состав у кандидатов (один запрос).
         with_files = {
             (row or "").strip().lower()
             for row in self._db.scalars(
                 select(TorrentFile.info_hash)
-                .where(TorrentFile.info_hash.in_(normalized_candidates))
+                .where(TorrentFile.info_hash.in_(ordered_hashes))
                 .distinct()
             ).all()
             if isinstance(row, str) and row
         }
-        for prior in normalized_candidates:
-            if prior in with_files:
-                return prior
-        # Состава ни у кого нет — всё равно вернём самый свежий (has_prior=True, paths пустые).
-        return normalized_candidates[0]
+        for prior_hash in ordered_hashes:
+            if prior_hash in with_files:
+                return normalized_by_hash[prior_hash]
+        # Состава ни у кого нет — всё равно вернём самый свежий
+        # (has_prior=True, paths пустые → не лечим sticky new).
+        return normalized_by_hash[ordered_hashes[0]]
+
+    def _prior_version_hash(self, *, torrent_id: int, current_hash: str) -> str | None:
+        """info_hash самой свежей предыдущей версии этого torrent_id (или None)."""
+        prior = self._prior_version_archive(torrent_id=torrent_id, current_hash=current_hash)
+        if prior is None:
+            return None
+        return (prior.info_hash or "").strip().lower() or None
+
+    @staticmethod
+    def _note_ui_transition(
+        *,
+        relative_path: str,
+        from_status: str,
+        to_status: str,
+        phase: str,
+        reason: str = "",
+        content_hash: str | None = None,
+    ) -> UiStatusTransition | None:
+        fr = (from_status or "").strip().lower()
+        to = (to_status or "").strip().lower()
+        if not relative_path or fr == to:
+            return None
+        # Create-шум: начальное присвоение статуса не audit-переход.
+        if fr in {"(create)", "create"}:
+            return None
+        short = None
+        if content_hash:
+            short = (content_hash or "").strip().lower()[:12] or None
+        return UiStatusTransition(
+            relative_path=relative_path,
+            from_status=fr or "(empty)",
+            to_status=to or "(empty)",
+            phase=phase,
+            reason=reason,
+            content_hash_short=short,
+        )
+
+    def _emit_ui_status_pipeline_event(
+        self,
+        *,
+        info_hash: str,
+        torrent_id: int,
+        phase: str,
+        transitions: list[UiStatusTransition],
+        has_prior_version: bool,
+        prior_info_hash: str | None,
+        prior_archive_id: int | None,
+    ) -> None:
+        """Пишет audit trail ui_status на /pipeline/{id} (если пайплайн найден)."""
+        if not transitions:
+            return
+        normalized = (info_hash or "").strip().lower()
+        if not normalized:
+            return
+        try:
+            from app.services.pipeline import TorrentPipelineService, record_pipeline_event
+
+            # Как get_latest_by_hash / _latest_pipeline_by_hash: не failed/cancelled.
+            pipeline = TorrentPipelineService(self._db, job_id=self._job_id).get_latest_by_hash(
+                normalized
+            )
+            pipeline_id = getattr(pipeline, "id", None) if pipeline is not None else None
+            if not isinstance(pipeline_id, int):
+                return
+            counts: dict[str, int] = {}
+            for tr in transitions:
+                key = f"{tr.from_status}->{tr.to_status}"
+                counts[key] = counts.get(key, 0) + 1
+            sample = [
+                {
+                    "relative_path": tr.relative_path,
+                    "from": tr.from_status,
+                    "to": tr.to_status,
+                    "reason": tr.reason,
+                    "content_hash": tr.content_hash_short,
+                }
+                for tr in transitions[:40]
+            ]
+            msg = (
+                f"ui_status {phase}: transitions={len(transitions)}, "
+                f"prior={'yes:' + (prior_info_hash or '')[:12] + '…' if has_prior_version else 'no'}"
+            )
+            record_pipeline_event(
+                self._db,
+                pipeline_id,
+                event_type="ui_status",
+                message=msg,
+                job_id=self._job_id,
+                details={
+                    "actor": "job" if self._job_id is not None else "pipeline",
+                    "phase": phase,
+                    "info_hash": normalized,
+                    "torrent_id": torrent_id,
+                    "has_prior": has_prior_version,
+                    "prior_info_hash": prior_info_hash,
+                    "prior_archive_id": prior_archive_id,
+                    "transition_counts": counts,
+                    "transitions": sample,
+                    "transitions_total": len(transitions),
+                },
+            )
+        except Exception as exc:
+            self._log(f"ui_status pipeline event: {exc}", "warning")
 
     def _prior_version_paths(self, *, prior_hash: str) -> set[str]:
         """relative_path состава предыдущей версии (для определения «новый»)."""
@@ -483,16 +710,17 @@ class FileTrackerService:
     def first_seen_for_path(
         *, has_prior_version: bool, prior_version_paths: set[str], relative_path: str
     ) -> bool:
-        """«Новый» = достоверный состав прошлой версии есть и файла там не было.
+        """«Новый» = состава prior нет или файла там не было.
 
         Нет прошлой версии вовсе → не first_seen по составу: provisional статус
         считает _baseline_provisional_status (диск + хэш в БД без .!qB).
-        Прошлая версия есть, но состав неизвестен → считаем, что файл был (не «новый»).
+        Прошлая версия есть, но состав неизвестен (пустой) → держим new,
+        не лечим в ok, пока состав prior не появится.
         """
         if not has_prior_version:
             return False
         if not prior_version_paths:
-            return False
+            return True
         return normalize_rel_path(relative_path) not in prior_version_paths
 
     @staticmethod
@@ -677,6 +905,20 @@ class FileTrackerService:
         previous_paths = set(previous.keys())
         # Предыдущая версия этого torrent_id (факт наличия — по архиву, не по составу).
         prior_hash = self._prior_version_hash(torrent_id=torrent_id, current_hash=normalized_hash)
+        prior_archive_id: int | None = None
+        if prior_hash:
+            prior_row = self._db.scalar(
+                select(TorrentArchive)
+                .where(
+                    TorrentArchive.torrent_id == torrent_id,
+                    TorrentArchive.info_hash == prior_hash,
+                )
+                .order_by(TorrentArchive.id.desc())
+                .limit(1)
+            )
+            raw_id = getattr(prior_row, "id", None) if prior_row is not None else None
+            if isinstance(raw_id, int):
+                prior_archive_id = raw_id
         has_prior_version = prior_hash is not None
         prior_files = self._prior_version_files(prior_hash=prior_hash) if prior_hash else {}
         prior_version_paths = set(prior_files.keys())
@@ -685,6 +927,7 @@ class FileTrackerService:
         media_root = resolve_media_root()
         composition_changes: list[FileChange] = []
         first_seen_paths: set[str] = set()
+        ui_transitions: list[UiStatusTransition] = []
         status_new = 0
         status_ok = 0
 
@@ -763,6 +1006,17 @@ class FileTrackerService:
                     updated_at=now,
                 )
                 self._db.add(row)
+                tr = self._note_ui_transition(
+                    relative_path=rel_norm,
+                    from_status="(create)",
+                    to_status=initial_status,
+                    phase="sync_composition",
+                    reason="first_seen" if first_seen else (
+                        "prior_path" if has_prior_version else "baseline"
+                    ),
+                )
+                if tr is not None:
+                    ui_transitions.append(tr)
                 if first_seen:
                     first_seen_paths.add(rel_norm)
                     composition_changes.append(
@@ -779,9 +1033,10 @@ class FileTrackerService:
                 row.full_path = full_path
                 row.relative_path = rel_norm
                 row.updated_at = now
+                before = (row.ui_status or "").strip().lower()
                 if first_seen:
                     first_seen_paths.add(rel_norm)
-                    cur = (row.ui_status or "").strip().lower()
+                    cur = before
                     if has_prior_version:
                         # Incremental: файла не было в prior → sticky new.
                         if cur not in _STICKY_FINAL:
@@ -815,18 +1070,45 @@ class FileTrackerService:
                                 full_path=full_path,
                             )
                         )
+                elif has_prior_version and prior_version_paths:
+                    # Путь был в непустом prior: provisional ok. Лечим ложный sticky new
+                    # от inventory/early-sync без prior (иначе hash settle не понижает new).
+                    # Пустой состав prior — не лечим (first_seen=True, ветка выше).
+                    cur = before
+                    if cur != UI_STATUS_CHANGED and cur != UI_STATUS_OK:
+                        row.ui_status = UI_STATUS_OK
                 elif not has_prior_version:
                     # Re-sync baseline: sticky new/changed; provisional только если пусто.
-                    cur = (row.ui_status or "").strip().lower()
+                    cur = before
                     if cur not in _STICKY_FINAL:
                         row.ui_status = initial_status
+                after = (row.ui_status or "").strip().lower()
+                reason = (
+                    "first_seen"
+                    if first_seen
+                    else "heal_prior_path"
+                    if has_prior_version and prior_version_paths and before != after
+                    else "prior_path"
+                    if has_prior_version
+                    else "baseline_resync"
+                )
+                tr = self._note_ui_transition(
+                    relative_path=rel_norm,
+                    from_status=before or "(empty)",
+                    to_status=after,
+                    phase="sync_composition",
+                    reason=reason,
+                )
+                if tr is not None:
+                    ui_transitions.append(tr)
             result.files_upserted += 1
 
         self._log(
             f"sync_composition hash={normalized_hash[:12]}… torrent_id={torrent_id}: "
             f"prior={'yes:' + (prior_hash or '')[:12] + '…' if has_prior_version else 'no'} "
-            f"prior_paths={len(prior_version_paths)} files={len(file_metas)} "
-            f"ui_new={status_new} ui_ok={status_ok} first_seen={len(first_seen_paths)} "
+            f"prior_archive_id={prior_archive_id} prior_paths={len(prior_version_paths)} "
+            f"files={len(file_metas)} ui_new={status_new} ui_ok={status_ok} "
+            f"first_seen={len(first_seen_paths)} transitions={len(ui_transitions)} "
             f"hashed_known={len(hashed_paths)} baseline_had_known={baseline_had_known} "
             f"sample_prior={sorted(prior_version_paths)[:3]!r} "
             f"sample_cur={sorted(current_paths)[:3]!r}",
@@ -868,6 +1150,10 @@ class FileTrackerService:
 
         self._db.commit()
         result.changes.extend(composition_changes)
+        result.has_prior_version = has_prior_version
+        result.prior_info_hash = prior_hash
+        result.prior_archive_id = prior_archive_id
+        result.ui_transitions = list(ui_transitions)
         events: list[FileChangeEvent] = []
         if persist_events:
             events = self._persist_events(
@@ -884,6 +1170,9 @@ class FileTrackerService:
             content_path=content_path,
             first_seen_paths=first_seen_paths,
             baseline_had_known=baseline_had_known,
+            prior_info_hash=prior_hash,
+            prior_archive_id=prior_archive_id,
+            ui_transitions=ui_transitions,
         )
 
     def _find_orphans_under_root(
