@@ -240,7 +240,7 @@ def test_upsert_inventory_initial_status_by_prior_version(
     monkeypatch.setattr(
         FileTrackerService,
         "prior_version_composition",
-        lambda self, *, torrent_id, info_hash: (True, {"Show/old.mkv"}),
+        lambda self, *, torrent_id, info_hash, **_k: (True, {"Show/old.mkv"}),
     )
 
     inventory = InventoryResult(
@@ -318,7 +318,7 @@ def test_upsert_inventory_heals_false_new_when_prior_exists(
     monkeypatch.setattr(
         FileTrackerService,
         "prior_version_composition",
-        lambda self, *, torrent_id, info_hash: (True, {"Show/old.mkv"}),
+        lambda self, *, torrent_id, info_hash, **_k: (True, {"Show/old.mkv"}),
     )
     monkeypatch.setattr(
         FileTrackerService,
@@ -399,7 +399,7 @@ def test_upsert_inventory_empty_prior_does_not_heal_new(
     monkeypatch.setattr(
         FileTrackerService,
         "prior_version_composition",
-        lambda self, *, torrent_id, info_hash: (True, set()),
+        lambda self, *, torrent_id, info_hash, **_k: (True, set()),
     )
     emitted: list = []
     monkeypatch.setattr(

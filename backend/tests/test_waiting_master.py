@@ -66,7 +66,7 @@ def test_poll_master_pipeline_connection_error_does_not_mark_failed(monkeypatch)
     session_cm.__enter__.return_value = db
     session_cm.__exit__.return_value = False
     monkeypatch.setattr("worker.SessionLocal", lambda: session_cm)
-    monkeypatch.setattr("worker.TorrentPipelineService", lambda db: service)
+    monkeypatch.setattr("worker.TorrentPipelineService", lambda db, **_k: service)
     monkeypatch.setattr("worker._setting_int", lambda *a, **k: 5)
 
     asyncio.run(_poll_master_pipeline())

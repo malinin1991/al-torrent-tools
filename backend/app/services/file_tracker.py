@@ -245,12 +245,13 @@ class FileTrackerService:
 
         # Хеши предыдущей версии этого torrent_id (rel → content_hash) до перезаписи диска.
         prior_hash = result.prior_info_hash or self._prior_version_hash(
-            torrent_id=torrent_id, current_hash=prepared.normalized_hash
+            torrent_id=torrent_id,
+            current_hash=prepared.normalized_hash,
+            release_id=release_id,
         )
         prior_hash_by_rel = self._prior_version_hashes(prior_hash=prior_hash or "")
         to_hash: list[Path] = []
         path_to_rel: dict[str, str] = {}
-        old_hashes: dict[str, str] = {}
         for row in rows:
             if hash_selected_only and not row.selected:
                 continue
@@ -279,11 +280,6 @@ class FileTrackerService:
                 self._log(f"хеш пропуск `{path}`: {exc}", "warning")
                 result.errors += 1
                 continue
-            prev_hash = self._db.scalar(
-                select(DiskFileHash).where(DiskFileHash.full_path == full).limit(1)
-            )
-            if prev_hash and prev_hash.content_hash:
-                old_hashes[full] = prev_hash.content_hash
             to_hash.append(path)
             path_to_rel[full] = row.relative_path
 
@@ -323,12 +319,10 @@ class FileTrackerService:
                 file_row = rows_by_rel.get(rel)
                 if file_row is None:
                     continue
-                # С prior: только хеш прошлой версии того же torrent_id (не disk old_hashes).
-                # Без prior (baseline): old_hashes — граница кусков на том же диске.
-                if has_prior_version:
-                    prior_content = prior_hash_by_rel.get(rel) or ""
-                else:
-                    prior_content = old_hashes.get(full) or ""
+                # ok/changed только vs хеш prior-версии. Без prior — не сравниваем с диском.
+                prior_content = (
+                    (prior_hash_by_rel.get(rel) or "") if has_prior_version else ""
+                )
                 first_seen = rel in first_seen_paths
                 # Путь достоверно был в prior только при непустом составе и не first_seen.
                 path_in_prior = has_prior_version and not first_seen
@@ -497,10 +491,7 @@ class FileTrackerService:
         # None → выводим из first_seen=False (legacy callers / тесты с известным prior).
         in_prior = (not first_seen) if path_in_prior is None else bool(path_in_prior)
         if is_baseline:
-            if mismatch:
-                row.ui_status = UI_STATUS_CHANGED
-                return
-            # Добавления первого торрента — финальный new, не сбрасываем в ok.
+            # Нет prior: все добавления этой версии — new. Disk≠prior → не «changed».
             if current == UI_STATUS_NEW:
                 return
             if current != UI_STATUS_CHANGED:
@@ -527,27 +518,64 @@ class FileTrackerService:
             return
         # Иначе оставляем текущий статус как есть (в т.ч. new при пустом prior).
 
-    def _prior_version_archive(self, *, torrent_id: int, current_hash: str) -> TorrentArchive | None:
-        """Самая свежая предыдущая версия этого torrent_id (строка архива) или None.
+    def _prior_version_archive(
+        self,
+        *,
+        torrent_id: int,
+        current_hash: str,
+        release_id: int | None = None,
+        current_paths: set[str] | None = None,
+    ) -> TorrentArchive | None:
+        """Предыдущая версия для sticky: сначала тот же torrent_id, иначе release.
 
-        Предпочитаем prior, у которого уже есть состав в torrent_files — иначе
-        при пустом составе first_seen_for_path держит всё как new (не лечим),
-        а UI теряет реальные ok/changed до появления состава; пустой prior
-        пропускаем в пользу более старого с файлами.
+        1) Самая свежая другая версия того же torrent_id с непустым составом.
+        2) Если AniLibria выдал новый torrent_id на republish — ищем на том же
+           release_id архив с максимальным пересечением exact relative_path.
         """
         normalized = (current_hash or "").strip().lower()
+        by_torrent = self._prior_archive_same_torrent_id(
+            torrent_id=torrent_id, normalized_current=normalized
+        )
+        if by_torrent is not None:
+            return by_torrent
+        if release_id is None or not current_paths:
+            return None
+        return self._prior_archive_same_release(
+            release_id=release_id,
+            normalized_current=normalized,
+            current_paths={normalize_rel_path(p) for p in current_paths if p},
+        )
+
+    def _prior_archive_same_torrent_id(
+        self, *, torrent_id: int, normalized_current: str
+    ) -> TorrentArchive | None:
         candidates = list(
             self._db.scalars(
                 select(TorrentArchive)
-                .where(
-                    TorrentArchive.torrent_id == torrent_id,
-                    TorrentArchive.info_hash != normalized,
-                )
+                .where(TorrentArchive.torrent_id == torrent_id)
                 .order_by(TorrentArchive.id.desc())
             ).all()
         )
-        if not candidates:
+        return self._pick_prior_archive_with_files(
+            candidates, normalized_current=normalized_current
+        )
+
+    def _prior_archive_same_release(
+        self,
+        *,
+        release_id: int,
+        normalized_current: str,
+        current_paths: set[str],
+    ) -> TorrentArchive | None:
+        if not current_paths:
             return None
+        candidates = list(
+            self._db.scalars(
+                select(TorrentArchive)
+                .where(TorrentArchive.release_id == release_id)
+                .order_by(TorrentArchive.id.desc())
+            ).all()
+        )
         normalized_by_hash: dict[str, TorrentArchive] = {}
         ordered_hashes: list[str] = []
         for row in candidates:
@@ -555,7 +583,48 @@ class FileTrackerService:
             if not isinstance(h, str):
                 continue
             h = h.strip().lower()
-            if not h or h in normalized_by_hash:
+            if not h or h == normalized_current or h in normalized_by_hash:
+                continue
+            normalized_by_hash[h] = row
+            ordered_hashes.append(h)
+        if not ordered_hashes:
+            return None
+        files_by_hash: dict[str, set[str]] = {h: set() for h in ordered_hashes}
+        for row in self._db.scalars(
+            select(TorrentFile).where(TorrentFile.info_hash.in_(ordered_hashes))
+        ).all():
+            h = (getattr(row, "info_hash", None) or "").strip().lower()
+            rel = getattr(row, "relative_path", None)
+            if h in files_by_hash and rel:
+                files_by_hash[h].add(normalize_rel_path(rel))
+        best: TorrentArchive | None = None
+        best_overlap = 0
+        for prior_hash in ordered_hashes:
+            paths = files_by_hash.get(prior_hash) or set()
+            if not paths:
+                continue
+            overlap = len(paths & current_paths)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best = normalized_by_hash[prior_hash]
+        # Нужно реальное пересечение путей — иначе это другой рип/папка.
+        return best if best_overlap > 0 else None
+
+    def _pick_prior_archive_with_files(
+        self,
+        candidates: list[TorrentArchive],
+        *,
+        normalized_current: str,
+    ) -> TorrentArchive | None:
+        """Свежий prior с составом; пустой состав пропускаем; иначе самый свежий."""
+        normalized_by_hash: dict[str, TorrentArchive] = {}
+        ordered_hashes: list[str] = []
+        for row in candidates:
+            h = getattr(row, "info_hash", None)
+            if not isinstance(h, str):
+                continue
+            h = h.strip().lower()
+            if not h or h == normalized_current or h in normalized_by_hash:
                 continue
             normalized_by_hash[h] = row
             ordered_hashes.append(h)
@@ -577,9 +646,21 @@ class FileTrackerService:
         # (has_prior=True, paths пустые → не лечим sticky new).
         return normalized_by_hash[ordered_hashes[0]]
 
-    def _prior_version_hash(self, *, torrent_id: int, current_hash: str) -> str | None:
-        """info_hash самой свежей предыдущей версии этого torrent_id (или None)."""
-        prior = self._prior_version_archive(torrent_id=torrent_id, current_hash=current_hash)
+    def _prior_version_hash(
+        self,
+        *,
+        torrent_id: int,
+        current_hash: str,
+        release_id: int | None = None,
+        current_paths: set[str] | None = None,
+    ) -> str | None:
+        """info_hash предыдущей версии (тот же torrent_id или release fallback)."""
+        prior = self._prior_version_archive(
+            torrent_id=torrent_id,
+            current_hash=current_hash,
+            release_id=release_id,
+            current_paths=current_paths,
+        )
         if prior is None:
             return None
         return (prior.info_hash or "").strip().lower() or None
@@ -598,9 +679,7 @@ class FileTrackerService:
         to = (to_status or "").strip().lower()
         if not relative_path or fr == to:
             return None
-        # Create-шум: начальное присвоение статуса не audit-переход.
-        if fr in {"(create)", "create"}:
-            return None
+        # (create)→status — нужен audit на /pipeline/{id} (ранний sync / master_add).
         short = None
         if content_hash:
             short = (content_hash or "").strip().lower()[:12] or None
@@ -698,10 +777,20 @@ class FileTrackerService:
         return result
 
     def prior_version_composition(
-        self, *, torrent_id: int, info_hash: str
+        self,
+        *,
+        torrent_id: int,
+        info_hash: str,
+        release_id: int | None = None,
+        current_paths: set[str] | None = None,
     ) -> tuple[bool, set[str]]:
         """(есть_прошлая_версия, состав_прошлой_версии) для расчёта first_seen вне track."""
-        prior_hash = self._prior_version_hash(torrent_id=torrent_id, current_hash=info_hash)
+        prior_hash = self._prior_version_hash(
+            torrent_id=torrent_id,
+            current_hash=info_hash,
+            release_id=release_id,
+            current_paths=current_paths,
+        )
         if prior_hash is None:
             return False, set()
         return True, self._prior_version_paths(prior_hash=prior_hash)
@@ -807,21 +896,32 @@ class FileTrackerService:
         """relative_path → content_hash файлов предыдущей версии торрента (один IN-запрос)."""
         if not prior_hash:
             return {}
-        rel_by_path: dict[str, str] = {
-            row.full_path: normalize_rel_path(row.relative_path)
-            for row in self._db.scalars(
-                select(TorrentFile).where(TorrentFile.info_hash == prior_hash)
-            ).all()
-            if row.full_path and row.relative_path
-        }
-        if not rel_by_path:
+        # Canonical без .!qB — иначе prior full_path с суффиксом не матчится с disk_file_hashes.
+        rel_by_canonical: dict[str, str] = {}
+        for row in self._db.scalars(
+            select(TorrentFile).where(TorrentFile.info_hash == prior_hash)
+        ).all():
+            if not row.full_path or not row.relative_path:
+                continue
+            canonical = self._canonical_full_path(row.full_path)
+            rel_by_canonical[canonical] = normalize_rel_path(row.relative_path)
+            # Также сырой путь на случай, если хеш писали до нормализации.
+            raw = str(row.full_path)
+            if raw not in rel_by_canonical:
+                rel_by_canonical[raw] = normalize_rel_path(row.relative_path)
+        if not rel_by_canonical:
             return {}
         result: dict[str, str] = {}
         for dh in self._db.scalars(
-            select(DiskFileHash).where(DiskFileHash.full_path.in_(list(rel_by_path.keys())))
+            select(DiskFileHash).where(DiskFileHash.full_path.in_(list(rel_by_canonical.keys())))
         ).all():
-            if dh.content_hash:
-                result[rel_by_path[dh.full_path]] = dh.content_hash
+            if not dh.content_hash:
+                continue
+            rel = rel_by_canonical.get(dh.full_path) or rel_by_canonical.get(
+                self._canonical_full_path(dh.full_path)
+            )
+            if rel:
+                result[rel] = dh.content_hash
         return result
 
     def _prepare_track(
@@ -893,8 +993,6 @@ class FileTrackerService:
     ) -> _CompositionSync:
         """Upsert torrent_files; опционально пишет added/removed (heal, если events потеряны)."""
         result = TrackTorrentResult()
-        file_metas = parse_torrent_file_list(torrent_bytes)
-        save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
 
         previous = {
             normalize_rel_path(row.relative_path): row
@@ -903,16 +1001,22 @@ class FileTrackerService:
             ).all()
         }
         previous_paths = set(previous.keys())
-        # Предыдущая версия этого torrent_id (факт наличия — по архиву, не по составу).
-        prior_hash = self._prior_version_hash(torrent_id=torrent_id, current_hash=normalized_hash)
+        file_metas = parse_torrent_file_list(torrent_bytes)
+        current_paths_preview = {
+            normalize_rel_path(m.relative_path) for m in file_metas if m.relative_path
+        }
+        # Prior: тот же torrent_id, иначе release_id + пересечение exact relative_path.
+        prior_hash = self._prior_version_hash(
+            torrent_id=torrent_id,
+            current_hash=normalized_hash,
+            release_id=release_id,
+            current_paths=current_paths_preview,
+        )
         prior_archive_id: int | None = None
         if prior_hash:
             prior_row = self._db.scalar(
                 select(TorrentArchive)
-                .where(
-                    TorrentArchive.torrent_id == torrent_id,
-                    TorrentArchive.info_hash == prior_hash,
-                )
+                .where(TorrentArchive.info_hash == prior_hash)
                 .order_by(TorrentArchive.id.desc())
                 .limit(1)
             )
@@ -934,6 +1038,7 @@ class FileTrackerService:
         # Сначала резолвим пути — для baseline нужен batched lookup хэшей без .!qB.
         prepared_metas: list[tuple[Any, str, bool, str | None, bool]] = []
         resolved_for_hash_lookup: list[str] = []
+        save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
         for meta in file_metas:
             rel_norm = normalize_rel_path(meta.relative_path)
             current_paths.add(rel_norm)

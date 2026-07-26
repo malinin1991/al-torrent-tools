@@ -256,9 +256,14 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
         # Первый торрент (без prior): _baseline_provisional_status —
         # clean / mixed=уже были ok|changed в составе.
         torrent_id = next((f.torrent_id for f in files if f.torrent_id), None)
+        release_id = next((f.release_id for f in files if f.release_id), None)
+        current_paths = {f.relative_path for f in files if f.relative_path}
         if torrent_id:
             has_prior_version, prior_version_paths = tracker.prior_version_composition(
-                torrent_id=torrent_id, info_hash=info_hash
+                torrent_id=torrent_id,
+                info_hash=info_hash,
+                release_id=release_id,
+                current_paths=current_paths,
             )
         else:
             has_prior_version, prior_version_paths = False, set()
@@ -344,7 +349,10 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                 db.delete(row)
         if heal_transitions and torrent_id:
             prior_hash = tracker._prior_version_hash(
-                torrent_id=torrent_id, current_hash=info_hash
+                torrent_id=torrent_id,
+                current_hash=info_hash,
+                release_id=release_id,
+                current_paths=current_paths,
             )
             tracker._emit_ui_status_pipeline_event(
                 info_hash=info_hash,
