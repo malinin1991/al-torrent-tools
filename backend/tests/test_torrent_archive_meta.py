@@ -144,9 +144,24 @@ def test_extract_api_created_at_from_openapi_datetime() -> None:
     assert parsed == datetime(2021, 9, 21, 11, 45, 0)
 
 
+def test_extract_api_created_at_prefers_later_updated_at() -> None:
+    """SLA clock = max(created_at, updated_at): republish не даёт «371ч» от первой заливки."""
+    parsed = TorrentArchiveService._extract_api_created_at(
+        {
+            # mebius-dust-like: created << updated (UI AL показывает updated)
+            "created_at": "2026-07-10T16:52:16+00:00",
+            "updated_at": "2026-07-24T16:07:58+00:00",
+        }
+    )
+    assert parsed == datetime(2026, 7, 24, 16, 7, 58)
+
+
 def test_extract_api_created_at_z_suffix_and_invalid() -> None:
     assert TorrentArchiveService._extract_api_created_at(
         {"created_at": "2021-09-21T11:45:00Z"}
+    ) == datetime(2021, 9, 21, 11, 45, 0)
+    assert TorrentArchiveService._extract_api_created_at(
+        {"updated_at": "2021-09-21T11:45:00Z"}
     ) == datetime(2021, 9, 21, 11, 45, 0)
     assert TorrentArchiveService._extract_api_created_at({"created_at": "not-a-date"}) is None
     assert TorrentArchiveService._extract_api_created_at({}) is None
@@ -325,7 +340,6 @@ def test_fill_missing_api_created_at_only_null_rows() -> None:
     from types import SimpleNamespace
     from unittest.mock import MagicMock
 
-    # SQL-фильтр api_created_at IS NULL — в выборку попадают только пустые.
     null_row = SimpleNamespace(torrent_id=10, api_created_at=None)
     db = MagicMock()
     db.scalars.return_value.all.return_value = [null_row]
@@ -340,6 +354,40 @@ def test_fill_missing_api_created_at_only_null_rows() -> None:
     assert n == 1
     assert null_row.api_created_at == datetime(2021, 9, 21, 11, 45, 0)
     db.commit.assert_called_once()
+
+
+def test_fill_missing_api_created_at_refreshes_stale_created_only() -> None:
+    """Старый api_created_at (только created) обновляется более поздним updated_at."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    stale = SimpleNamespace(
+        torrent_id=10, api_created_at=datetime(2026, 7, 10, 16, 52, 16)
+    )
+    fresh_enough = SimpleNamespace(
+        torrent_id=11, api_created_at=datetime(2026, 7, 26, 12, 0, 0)
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [stale, fresh_enough]
+    svc = TorrentArchiveService(db)
+    n = svc.fill_missing_api_created_at(
+        1,
+        [
+            {
+                "id": 10,
+                "created_at": "2026-07-10T16:52:16Z",
+                "updated_at": "2026-07-24T16:07:58Z",
+            },
+            {
+                "id": 11,
+                "created_at": "2026-07-20T00:00:00Z",
+                "updated_at": "2026-07-25T00:00:00Z",
+            },
+        ],
+    )
+    assert n == 1
+    assert stale.api_created_at == datetime(2026, 7, 24, 16, 7, 58)
+    assert fresh_enough.api_created_at == datetime(2026, 7, 26, 12, 0, 0)
 
 
 def test_processor_torrents_include_has_created_at() -> None:

@@ -12,6 +12,7 @@ from app.services.hevc_pairing import (
     batch_start_key,
     classify_archive_codec,
     find_unpaired_avc,
+    normalize_rip_type,
     overdue_hours_past_sla,
     release_ids_matching_hevc_filter,
     rip_family_key,
@@ -145,6 +146,15 @@ def test_rip_family_strips_codec_from_quality_json_type() -> None:
     )
 
 
+def test_normalize_rip_type_web_variants() -> None:
+    """WEBRip/WEB-DL канон: пробел, дефис, подчёркивание, слитное написание."""
+    for raw in ("WEBRip", "WEB Rip", "WEB_Rip", "web-rip", "WEBRIP"):
+        assert normalize_rip_type(raw) == "WEBRip"
+    for raw in ("WEB-DL", "WEBDL", "WEB DL", "WEB_DL", "web-dl", "Web Dl"):
+        assert normalize_rip_type(raw) == "WEB-DL"
+    assert normalize_rip_type("BDRip") == "BDRip"
+
+
 def test_rip_family_keeps_webrip_and_webdl_distinct() -> None:
     """WEBRip и WEB-DL — разные rip_family (без канона WEB)."""
     assert (
@@ -163,6 +173,10 @@ def test_rip_family_keeps_webrip_and_webdl_distinct() -> None:
     )
     assert (
         rip_family_key(quality_json={}, torrent_type="WEBDL 1080p HEVC")
+        == "WEB-DL 1080p"
+    )
+    assert (
+        rip_family_key(quality_json={}, torrent_type="WEB DL 1080p HEVC")
         == "WEB-DL 1080p"
     )
     assert (
@@ -721,6 +735,51 @@ def test_overdue_badge_hours_past_sla_frozen_system_created_at() -> None:
     assert int(badge_hours or 0) == 36
 
 
+def test_multi_avc_overdue_hours_from_earliest_batch_anchor() -> None:
+    """HEVC 1-2 + AVC 1-3/1-4: age якоря = earliest (1-3), не более новый 1-4."""
+    now = datetime(2026, 7, 27, 12, 0, 0)
+    avc_13_upload = now - timedelta(hours=50)
+    avc_14_upload = now - timedelta(hours=30)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=201,
+            episodes="1-3",
+            codec="AVC",
+            created_at=now - timedelta(hours=1),
+            api_created_at=avc_13_upload,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=202,
+            episodes="1-4",
+            codec="AVC",
+            created_at=now - timedelta(hours=1),
+            api_created_at=avc_14_upload,
+        ),
+        _row(
+            archive_id=3,
+            torrent_id=100,
+            episodes="1-2",
+            codec="HEVC",
+            created_at=now - timedelta(hours=2),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    by_id = {u.archive_id: u for u in unpaired}
+    assert set(by_id) == {1, 2}
+    for u in by_id.values():
+        assert u.missing is False
+        assert u.overdue is True
+        assert u.age_hours == pytest.approx(50.0)
+        assert u.created_at == avc_13_upload
+        badge = overdue_hours_past_sla(u.age_hours)
+        assert badge == pytest.approx(26.0)
+        assert int(badge or 0) == 26
+    # Не от часов 1-4 (30−24=6)
+    assert int(overdue_hours_past_sla(30.0) or 0) == 6
+
+
 def test_different_rip_families_do_not_pair() -> None:
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     rows = [
@@ -1149,3 +1208,159 @@ def test_catchup_tiebreak_uses_system_created_not_api() -> None:
         ),
     ]
     assert find_unpaired_avc(rows_ok, now=now) == []
+
+
+def test_mebius_dust_overdue_hours_past_sla_not_371() -> None:
+    """Bug A: api_created_at = updated_at (24.07), not first created (10.07) → ~36ч past SLA.
+
+    Frozen now 27.07 11:18 UTC+7 = 27.07 04:18 UTC.
+    AVC upload 24.07 16:07 UTC (= 23:07 UTC+7) → age ≈ 60.17h → past SLA ≈ 36.17h.
+    Старый created_at давал бы ~371ч — регрессия.
+    """
+    now = datetime(2026, 7, 27, 4, 18, tzinfo=timezone.utc)
+    avc_upload = datetime(2026, 7, 24, 16, 7, 58)  # naive UTC = AL updated_at
+    stale_first_created = datetime(2026, 7, 10, 16, 52, 16)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=avc_upload + timedelta(minutes=3),
+            api_created_at=avc_upload,
+            torrent_id=100,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-2",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=datetime(2026, 7, 18, 15, 45),
+            api_created_at=datetime(2026, 7, 18, 15, 45),
+            torrent_id=90,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].overdue is True
+    assert unpaired[0].missing is False
+    assert unpaired[0].age_from_api is True
+    past = overdue_hours_past_sla(unpaired[0].age_hours)
+    assert past is not None
+    assert 35.0 < past < 37.0
+    assert past != 371
+    # Контроль: если бы взяли first created — получили бы ~371.
+    stale_age = (now.replace(tzinfo=None) - stale_first_created).total_seconds() / 3600.0
+    assert 370 < overdue_hours_past_sla(stale_age) < 372
+
+
+def test_multi_avc_overdue_anchor_earliest_catchup() -> None:
+    """Feature C: 1-2 exact OK; 1-3+1-4 catch-up → часы от earliest overdue (1-3)."""
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=10,
+            episodes="1-2",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=datetime(2026, 7, 4, 12, 0),
+            api_created_at=datetime(2026, 7, 4, 12, 0),
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=11,
+            episodes="1-2",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=datetime(2026, 7, 4, 13, 0),
+            api_created_at=datetime(2026, 7, 4, 13, 0),
+        ),
+        _row(
+            archive_id=3,
+            torrent_id=20,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=datetime(2026, 7, 11, 12, 0),
+            api_created_at=datetime(2026, 7, 11, 12, 0),
+        ),
+        _row(
+            archive_id=4,
+            torrent_id=30,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=datetime(2026, 7, 18, 12, 0),
+            api_created_at=datetime(2026, 7, 18, 12, 0),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    by_id = {u.archive_id: u for u in unpaired}
+    assert 1 not in by_id  # exact HEVC 1-2
+    assert by_id[3].overdue is True
+    assert by_id[4].overdue is True
+    # Оба от якоря 11.07 12:00 → age = 16d = 384h → past SLA = 360h
+    for aid in (3, 4):
+        past = overdue_hours_past_sla(by_id[aid].age_hours)
+        assert past is not None
+        assert abs(past - 360.0) < 0.01
+        assert by_id[aid].created_at == datetime(2026, 7, 11, 12, 0)
+
+
+def test_same_webdl_pair_not_type_mismatch() -> None:
+    """WEB-DL AVC + WEB-DL HEVC same start → пара OK, не type_mismatch."""
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=now,
+            torrent_id=1,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-3",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=now,
+            torrent_id=2,
+        ),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="type_mismatch", now=now) == set()
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+
+
+def test_webrip_avc_webdl_hevc_type_mismatch_not_missing_filter() -> None:
+    """WEBRip AVC + WEB-DL HEVC same start+quality → type_mismatch, не missing."""
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now - timedelta(hours=2),
+            torrent_id=1,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-3",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=now,
+            torrent_id=2,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].type_mismatch is True
+    assert unpaired[0].missing is False
+    assert unpaired[0].status == "type_mismatch"
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="type_mismatch", now=now
+    ) == {1}

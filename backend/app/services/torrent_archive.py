@@ -108,9 +108,8 @@ class TorrentArchiveService:
         return TorrentArchiveService._clean_text(torrent_payload.get("description"))
 
     @staticmethod
-    def _extract_api_created_at(torrent_payload: dict[str, Any]) -> datetime | None:
-        """AniLibria torrent.created_at (OpenAPI date-time) → naive UTC для БД."""
-        raw = torrent_payload.get("created_at")
+    def _parse_api_datetime(raw: Any) -> datetime | None:
+        """AniLibria OpenAPI date-time → naive UTC; иначе None."""
         if isinstance(raw, datetime):
             if raw.tzinfo is None:
                 return raw
@@ -129,6 +128,23 @@ class TorrentArchiveService:
         if parsed.tzinfo is None:
             return parsed
         return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+    @staticmethod
+    def _extract_api_created_at(torrent_payload: dict[str, Any]) -> datetime | None:
+        """Часы загрузки версии на AL для SLA: max(created_at, updated_at).
+
+        ``created_at`` — первая заливка torrent_id; ``updated_at`` — republish /
+        расширение батча (дата в UI AniLibria). Без updated_at SLA даёт сотни
+        часов от первой заливки (баг «371ч» при актуальном updated ~сутки назад).
+        """
+        candidates = [
+            TorrentArchiveService._parse_api_datetime(torrent_payload.get("created_at")),
+            TorrentArchiveService._parse_api_datetime(torrent_payload.get("updated_at")),
+        ]
+        present = [value for value in candidates if value is not None]
+        if not present:
+            return None
+        return max(present)
 
     @staticmethod
     def _extract_torrent_type(torrent_payload: dict[str, Any]) -> str | None:
@@ -315,9 +331,10 @@ class TorrentArchiveService:
         release_id: int,
         torrents: list[dict[str, Any]],
     ) -> int:
-        """Проставить пустой api_created_at из list payload (full_sync/ongoing backfill).
+        """Синхронизировать api_created_at из list payload (full_sync/ongoing).
 
-        Не перезаписывает уже заполненные значения и игнорирует битый/пустой created_at.
+        Ставит значение, если пусто, или обновляет, если в payload более поздний
+        upload clock (max created_at/updated_at). Игнорирует битый/пустой payload.
         """
         by_tid: dict[int, datetime] = {}
         for torrent in torrents:
@@ -340,7 +357,6 @@ class TorrentArchiveService:
                 select(TorrentArchive).where(
                     TorrentArchive.release_id == release_id,
                     TorrentArchive.torrent_id.in_(list(by_tid.keys())),
-                    TorrentArchive.api_created_at.is_(None),
                 )
             ).all()
         )
@@ -348,6 +364,9 @@ class TorrentArchiveService:
         for row in rows:
             value = by_tid.get(int(row.torrent_id))
             if value is None:
+                continue
+            current = row.api_created_at
+            if current is not None and current >= value:
                 continue
             row.api_created_at = value
             updated += 1

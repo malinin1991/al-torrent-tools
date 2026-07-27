@@ -167,7 +167,7 @@ class TorrentArchive(Base):
     # AVC: не требовать HEVC-пару (фильтры/бейджи missing|overdue|type_mismatch).
     # Сбрасывается при новой версии (supersede → новая строка с default False).
     ignore_hevc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    # Дата загрузки торрента на AniLibria (API created_at); для SLA overdue.
+    # Дата загрузки версии на AniLibria (max API created_at/updated_at); SLA overdue.
     api_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
