@@ -522,6 +522,53 @@ def test_list_release_groups_overdue_age_from_api_created_at() -> None:
     assert by_id[2].hevc_pair_status is None
 
 
+def test_list_release_groups_overdue_badge_hours_past_sla_frozen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """hevc_pair_age_hours = age−24 (≈36), не сырой age (~60) и не 371."""
+    frozen_now = datetime(2026, 7, 27, 11, 18, 0)  # naive UTC
+    avc_upload = datetime(2026, 7, 24, 23, 10, 7)
+    monkeypatch.setattr("app.services.hevc_pairing.utcnow", lambda: frozen_now)
+
+    avc = _archive(
+        archive_id=1,
+        release_id=21,
+        torrent_id=400,
+        episodes="1-12",
+        codec="AVC",
+        created_at=frozen_now - timedelta(hours=2),
+        api_created_at=avc_upload,
+        anime_name="Badge Hours Show",
+        release_alias="badge-hours",
+    )
+    hevc = _archive(
+        archive_id=2,
+        release_id=21,
+        torrent_id=399,
+        episodes="1-11",
+        codec="HEVC",
+        created_at=frozen_now - timedelta(hours=1),
+        anime_name="Badge Hours Show",
+        release_alias="badge-hours",
+    )
+    pairing = [avc, hevc]
+    stats = [SimpleNamespace(release_id=21, last_updated=frozen_now, torrent_count=2)]
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pairing,
+        stats_rows=stats,
+        total=1,
+    )
+    result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+    t = {row.archive_id: row for row in result["groups"][0].torrents}[1]
+    assert t.hevc_pair_status == "overdue"
+    assert t.hevc_overdue_age_from_api is True
+    assert t.hevc_pair_age_hours == pytest.approx(36.131388888888885)
+    assert int(t.hevc_pair_age_hours or 0) == 36
+    assert abs((t.hevc_pair_age_hours or 0) - 60) > 20
+    assert abs((t.hevc_pair_age_hours or 0) - 371) > 100
+
+
 def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
     """WEBRip AVC + WEB-DL HEVC → type_mismatch filter, не missing."""
     now = utcnow()

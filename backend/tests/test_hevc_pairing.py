@@ -8,6 +8,7 @@ import pytest
 
 from app.services.hevc_pairing import (
     HEVC_SLA_HOURS,
+    age_hours,
     batch_start_key,
     classify_archive_codec,
     find_unpaired_avc,
@@ -16,6 +17,12 @@ from app.services.hevc_pairing import (
     rip_family_key,
     sync_hevc_pair_events_for_release,
 )
+
+# Реальный баг бейджа: age≈60ч показывали как 60/371 вместо age−24≈36.
+_BADGE_NOW = datetime(2026, 7, 27, 11, 18, 0)  # naive UTC, как utcnow()
+_BADGE_AVC_UPLOAD = datetime(2026, 7, 24, 23, 10, 7)
+_BADGE_AGE_HOURS = 60.131388888888885
+_BADGE_PAST_SLA_HOURS = 36.131388888888885
 
 
 def _qj(*, rip_type: str, quality: str, codec: str) -> dict:
@@ -639,6 +646,79 @@ def test_overdue_hours_past_sla_for_badge() -> None:
     assert overdue_hours_past_sla(10.0) == 0.0
     assert overdue_hours_past_sla(float(HEVC_SLA_HOURS)) == 0.0
     assert overdue_hours_past_sla(float(HEVC_SLA_HOURS) + 2.5) == 2.5
+    # Регрессия: 60.13ч age → 36.13ч past SLA (не ~60 и не 371).
+    assert age_hours(_BADGE_AVC_UPLOAD, now=_BADGE_NOW) == pytest.approx(_BADGE_AGE_HOURS)
+    assert overdue_hours_past_sla(_BADGE_AGE_HOURS) == pytest.approx(_BADGE_PAST_SLA_HOURS)
+    assert int(overdue_hours_past_sla(_BADGE_AGE_HOURS) or 0) == 36
+    past = overdue_hours_past_sla(_BADGE_AGE_HOURS) or 0.0
+    assert abs(past - 60) > 20
+    assert abs(past - 371) > 100
+
+
+def test_overdue_badge_hours_past_sla_frozen_api_created_at() -> None:
+    """Бейдж hevc_pair_age_hours = age(api)−24, не сырой age (~60) и не 371."""
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=100,
+            episodes="1-12",
+            codec="AVC",
+            # system created свежий — SLA только от api_created_at
+            created_at=_BADGE_NOW - timedelta(hours=2),
+            api_created_at=_BADGE_AVC_UPLOAD,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=99,
+            episodes="1-11",
+            codec="HEVC",
+            created_at=_BADGE_NOW - timedelta(hours=1),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=_BADGE_NOW)
+    assert len(unpaired) == 1
+    u = unpaired[0]
+    assert u.overdue is True
+    assert u.age_from_api is True
+    assert u.age_hours == pytest.approx(_BADGE_AGE_HOURS)
+    # Тот же путь, что releases_view → hevc_pair_age_hours
+    badge_hours = overdue_hours_past_sla(u.age_hours)
+    assert badge_hours == pytest.approx(36.131388888888885)
+    assert badge_hours == _BADGE_PAST_SLA_HOURS
+    assert int(badge_hours or 0) == 36
+    assert badge_hours is not None
+    assert abs(badge_hours - 60) > 20  # не сырой age
+    assert abs(badge_hours - 371) > 100
+
+
+def test_overdue_badge_hours_past_sla_frozen_system_created_at() -> None:
+    """Те же часы через fallback system created_at; age_from_api=False."""
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=100,
+            episodes="1-12",
+            codec="AVC",
+            created_at=_BADGE_AVC_UPLOAD,
+            api_created_at=None,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=99,
+            episodes="1-11",
+            codec="HEVC",
+            created_at=_BADGE_NOW - timedelta(hours=1),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=_BADGE_NOW)
+    assert len(unpaired) == 1
+    u = unpaired[0]
+    assert u.overdue is True
+    assert u.age_from_api is False
+    assert u.age_hours == pytest.approx(_BADGE_AGE_HOURS)
+    badge_hours = overdue_hours_past_sla(u.age_hours)
+    assert badge_hours == pytest.approx(36.131388888888885)
+    assert int(badge_hours or 0) == 36
 
 
 def test_different_rip_families_do_not_pair() -> None:
