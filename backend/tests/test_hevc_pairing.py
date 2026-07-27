@@ -78,14 +78,50 @@ def test_batch_start_key_regular_ova_film() -> None:
     assert batch_start_key("ova 3") == ("ova", 3)
     assert batch_start_key("OVA") == ("ova", 1)
     assert batch_start_key("Фильм") == ("film",)
+    assert batch_start_key("ФИЛЬМ") == ("film",)
+    assert batch_start_key("фильм") == ("film",)
     assert batch_start_key("Film") == ("film",)
+    assert batch_start_key("FILM") == ("film",)
     assert batch_start_key("П/ф фильм") == ("film",)
+    assert batch_start_key("П/Ф ФИЛЬМ") == ("film",)
     assert batch_start_key("п/ф") == ("film",)
     assert batch_start_key("п / ф фильм") == ("film",)
     assert batch_start_key("полнометражный фильм") == ("film",)
     assert batch_start_key("Полнометражный") == ("film",)
     assert batch_start_key("") is None
     assert batch_start_key("Specials") is None
+    # Регистр не создаёт разные start-key.
+    assert batch_start_key("ФИЛЬМ") == batch_start_key("Фильм") == ("film",)
+    assert batch_start_key("OVA") == batch_start_key("ova") == ("ova", 1)
+
+
+def test_film_case_avc_hevc_not_missing() -> None:
+    """AVC «ФИЛЬМ» + HEVC «Фильм» — один film start; не missing и не overdue."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(archive_id=1, episodes="ФИЛЬМ", codec="AVC", created_at=now),
+        _row(archive_id=2, episodes="Фильм", codec="HEVC", created_at=now),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 1)
+    aged = [
+        _row(archive_id=10, episodes="ФИЛЬМ", codec="AVC", created_at=old),
+        _row(archive_id=11, episodes="Фильм", codec="HEVC", created_at=old),
+    ]
+    # exact_pair_key тоже casefold — регистр не держит catch-up/overdue.
+    assert find_unpaired_avc(aged, now=now) == []
+
+
+def test_ova_case_avc_hevc_not_missing() -> None:
+    """AVC «OVA» + HEVC «ova» — тот же ova-start и exact после casefold."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 1)
+    rows = [
+        _row(archive_id=1, episodes="OVA", codec="AVC", created_at=old),
+        _row(archive_id=2, episodes="ova", codec="HEVC", created_at=old),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
 
 
 def test_pf_film_avc_hevc_not_missing() -> None:

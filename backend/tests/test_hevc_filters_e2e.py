@@ -351,6 +351,43 @@ def test_pf_film_pairs_with_film_label_e2e() -> None:
     assert missing["total"] == 0
 
 
+def test_film_case_avc_hevc_not_missing_e2e() -> None:
+    """«ФИЛЬМ» AVC + «Фильм» HEVC — не missing/overdue (один start + exact casefold)."""
+    now = utcnow()
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
+    pairing = [
+        _archive(
+            archive_id=1,
+            release_id=8114,
+            torrent_id=9201,
+            episodes="ФИЛЬМ",
+            codec="AVC",
+            created_at=old,
+            anime_name="Film Case",
+            release_alias="film-case",
+        ),
+        _archive(
+            archive_id=2,
+            release_id=8114,
+            torrent_id=9202,
+            episodes="Фильм",
+            codec="HEVC",
+            created_at=old,
+            anime_name="Film Case",
+            release_alias="film-case",
+        ),
+    ]
+    db = MagicMock()
+    db.execute.return_value.all.return_value = pairing
+    missing = list_release_groups(db, hevc_filter="missing", page=1, per_page=30)
+    overdue = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+    assert missing["groups"] == []
+    assert overdue["groups"] == []
+    assert missing["total"] == 0
+    assert overdue["total"] == 0
+    db.scalar.assert_not_called()
+
+
 def test_age_boundary_missing_vs_overdue() -> None:
     # list_release_groups считает age через utcnow() — якорим created_at к нему.
     now = utcnow()

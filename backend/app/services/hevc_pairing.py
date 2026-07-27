@@ -84,15 +84,18 @@ def _field_text(value: Any) -> str | None:
 
 
 def normalize_episodes(description: str | None) -> str:
-    return (description or "").strip()
+    """Канонический текст эпизодов для exact/presence: strip + casefold.
+
+    ФИЛЬМ/Фильм/фильм и OVA/ova — один ярлык (exact_pair_key и парсинг старта).
+    """
+    return (description or "").strip().casefold()
 
 
 def batch_start_key(description: str | None) -> BatchStartKey | None:
     """Ключ старта батча эпизодов; None — неразобранное / пустое (не пара)."""
-    text = normalize_episodes(description)
-    if not text:
+    folded = normalize_episodes(description)
+    if not folded:
         return None
-    folded = text.casefold()
 
     if _FILM_RE.match(folded):
         return ("film",)
