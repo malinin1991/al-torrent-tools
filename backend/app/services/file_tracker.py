@@ -25,6 +25,7 @@ from app.db.models import (
     TrackedRelease,
 )
 from app.services.file_hasher import clamp_hash_workers, hash_paths_parallel
+from app.services.hevc_pairing import classify_archive_codec, rip_family_key
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.torrent_files_meta import (
     complete_path_for,
@@ -534,8 +535,9 @@ class FileTrackerService:
         """Предыдущая версия для sticky: сначала тот же torrent_id, иначе release.
 
         1) Самая свежая другая версия того же torrent_id с непустым составом.
-        2) Если AniLibria выдал новый torrent_id на republish — ищем на том же
-           release_id архив с максимальным пересечением exact relative_path.
+        2) Если AniLibria выдал новый torrent_id на republish — на том же
+           release_id ищем архив той же codec/rip family с пересечением
+           exact relative_path (не sibling AVC↔HEVC).
         """
         normalized = (current_hash or "").strip().lower()
         by_torrent = self._prior_archive_same_torrent_id(
@@ -565,6 +567,61 @@ class FileTrackerService:
             candidates, normalized_current=normalized_current
         )
 
+    @staticmethod
+    def _sticky_rip_identity(
+        archive: Any,
+    ) -> tuple[str | None, str]:
+        """(codec family, rip_family_key) для фильтра sticky prior."""
+        qj = getattr(archive, "quality_json", None)
+        quality_json = qj if isinstance(qj, dict) else None
+        torrent_type = getattr(archive, "torrent_type", None)
+        if torrent_type is not None and not isinstance(torrent_type, str):
+            torrent_type = None
+        codec = classify_archive_codec(quality_json=quality_json, torrent_type=torrent_type)
+        family = rip_family_key(quality_json=quality_json, torrent_type=torrent_type)
+        return codec, family
+
+    @staticmethod
+    def _same_sticky_rip_family(
+        *,
+        current_codec: str | None,
+        current_family: str,
+        candidate: Any,
+    ) -> bool:
+        """True если кандидат — та же codec/rip family (не opposite-codec sibling)."""
+        cand_codec, cand_family = FileTrackerService._sticky_rip_identity(candidate)
+        if current_codec and cand_codec and current_codec != cand_codec:
+            return False
+        if current_family and cand_family and current_family != cand_family:
+            return False
+        return True
+
+    @staticmethod
+    def _release_prior_rank(
+        archive: Any,
+        *,
+        overlap: int,
+        current_family: str,
+    ) -> tuple[int, int, int, int]:
+        """Ключ сортировки release-prior: больше = лучше.
+
+        1) совпадение rip_family (если известно)
+        2) историческая/superseded версия важнее активного parallel torrent_id
+        3) больше exact path overlap
+        4) более свежий archive.id (уже учтён порядком обхода при tie)
+        """
+        _codec, cand_family = FileTrackerService._sticky_rip_identity(archive)
+        family_match = (
+            1
+            if (not current_family or not cand_family or current_family == cand_family)
+            else 0
+        )
+        superseded = bool(getattr(archive, "superseded", False))
+        api_present = bool(getattr(archive, "api_present", True))
+        # Активный другой torrent_id (не superseded) — хуже, чем история той же линии.
+        historical = 1 if superseded or not api_present else 0
+        return (family_match, historical, overlap, int(getattr(archive, "id", 0) or 0))
+
     def _prior_archive_same_release(
         self,
         *,
@@ -581,6 +638,16 @@ class FileTrackerService:
                 .order_by(TorrentArchive.id.desc())
             ).all()
         )
+        current_codec: str | None = None
+        current_family = ""
+        for row in candidates:
+            h = getattr(row, "info_hash", None)
+            if not isinstance(h, str):
+                continue
+            if h.strip().lower() == normalized_current:
+                current_codec, current_family = self._sticky_rip_identity(row)
+                break
+
         normalized_by_hash: dict[str, TorrentArchive] = {}
         ordered_hashes: list[str] = []
         for row in candidates:
@@ -589,6 +656,12 @@ class FileTrackerService:
                 continue
             h = h.strip().lower()
             if not h or h == normalized_current or h in normalized_by_hash:
+                continue
+            if not self._same_sticky_rip_family(
+                current_codec=current_codec,
+                current_family=current_family,
+                candidate=row,
+            ):
                 continue
             normalized_by_hash[h] = row
             ordered_hashes.append(h)
@@ -603,17 +676,23 @@ class FileTrackerService:
             if h in files_by_hash and rel:
                 files_by_hash[h].add(normalize_rel_path(rel))
         best: TorrentArchive | None = None
-        best_overlap = 0
+        best_rank: tuple[int, int, int, int] | None = None
         for prior_hash in ordered_hashes:
             paths = files_by_hash.get(prior_hash) or set()
             if not paths:
                 continue
             overlap = len(paths & current_paths)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best = normalized_by_hash[prior_hash]
+            if overlap <= 0:
+                continue
+            archive = normalized_by_hash[prior_hash]
+            rank = self._release_prior_rank(
+                archive, overlap=overlap, current_family=current_family
+            )
+            if best_rank is None or rank > best_rank:
+                best_rank = rank
+                best = archive
         # Нужно реальное пересечение путей — иначе это другой рип/папка.
-        return best if best_overlap > 0 else None
+        return best
 
     def _pick_prior_archive_with_files(
         self,
@@ -1044,7 +1123,7 @@ class FileTrackerService:
         current_paths_preview = {
             normalize_rel_path(m.relative_path) for m in file_metas if m.relative_path
         }
-        # Prior: тот же torrent_id, иначе release_id + пересечение exact relative_path.
+        # Prior: тот же torrent_id, иначе same-codec/rip family на release + path overlap.
         prior_hash = self._prior_version_hash(
             torrent_id=torrent_id,
             current_hash=normalized_hash,

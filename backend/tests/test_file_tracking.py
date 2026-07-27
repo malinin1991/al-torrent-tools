@@ -1086,8 +1086,36 @@ def test_prior_fallback_same_release_different_torrent_id() -> None:
     current = "aa" * 20
     prior_h = "bb" * 20
     other_h = "cc" * 20  # другой рип, путей overlap
-    prior_row = SimpleNamespace(id=10, info_hash=prior_h, torrent_id=100, release_id=10272)
-    other_row = SimpleNamespace(id=11, info_hash=other_h, torrent_id=101, release_id=10272)
+    current_row = SimpleNamespace(
+        id=12,
+        info_hash=current,
+        torrent_id=39184,
+        release_id=10272,
+        torrent_type="BDRip 1080p AVC",
+        quality_json={},
+        superseded=False,
+        api_present=True,
+    )
+    prior_row = SimpleNamespace(
+        id=10,
+        info_hash=prior_h,
+        torrent_id=100,
+        release_id=10272,
+        torrent_type="BDRip 1080p AVC",
+        quality_json={},
+        superseded=True,
+        api_present=False,
+    )
+    other_row = SimpleNamespace(
+        id=11,
+        info_hash=other_h,
+        torrent_id=101,
+        release_id=10272,
+        torrent_type="WEBRip 1080p AVC",
+        quality_json={},
+        superseded=False,
+        api_present=True,
+    )
     current_paths = {
         "Uchi/ep_[01].mkv",
         "Uchi/ep_[02].mkv",
@@ -1117,9 +1145,9 @@ def test_prior_fallback_same_release_different_torrent_id() -> None:
         # 1) same torrent_id → empty
         if calls["n"] == 1:
             return FakeScalars([])
-        # 2) same release archives
+        # 2) same release archives (в т.ч. current для codec/rip family)
         if calls["n"] == 2:
-            return FakeScalars([other_row, prior_row])
+            return FakeScalars([current_row, other_row, prior_row])
         # 3) torrent_files for candidates
         return FakeScalars(prior_files + other_files)
 
@@ -1134,6 +1162,153 @@ def test_prior_fallback_same_release_different_torrent_id() -> None:
     assert archive is not None
     assert archive.info_hash == prior_h
     assert archive.torrent_id == 100
+
+
+def test_prior_fallback_ignores_opposite_codec_sibling() -> None:
+    """AVC republish не берёт активный HEVC sibling как sticky prior при похожих путях."""
+    db = MagicMock()
+    current = "aa" * 20
+    avc_prior_h = "bb" * 20
+    hevc_h = "cc" * 20
+    # overlapping episode basenames / paths между AVC и HEVC
+    shared_paths = {
+        "Show/ep_[01].mkv",
+        "Show/ep_[02].mkv",
+        "Show/ep_[03].mkv",
+    }
+    current_row = SimpleNamespace(
+        id=30,
+        info_hash=current,
+        torrent_id=5002,
+        release_id=9001,
+        torrent_type="BDRip 1080p AVC",
+        quality_json={"type": "BDRip", "quality": "1080p", "codec": "AVC"},
+        superseded=False,
+        api_present=True,
+    )
+    # HEVC sibling: больше overlap (все 3 + extra), активный — раньше ложно выигрывал max overlap
+    hevc_row = SimpleNamespace(
+        id=29,
+        info_hash=hevc_h,
+        torrent_id=5001,
+        release_id=9001,
+        torrent_type="BDRip 1080p HEVC",
+        quality_json={"type": "BDRip", "quality": "1080p", "codec": "HEVC"},
+        superseded=False,
+        api_present=True,
+    )
+    avc_prior_row = SimpleNamespace(
+        id=20,
+        info_hash=avc_prior_h,
+        torrent_id=5000,
+        release_id=9001,
+        torrent_type="BDRip 1080p AVC",
+        quality_json={"type": "BDRip", "quality": "1080p", "codec": "AVC"},
+        superseded=True,
+        api_present=False,
+    )
+    avc_prior_files = [
+        SimpleNamespace(info_hash=avc_prior_h, relative_path=p, full_path=f"/m/avc/{i}")
+        for i, p in enumerate(sorted(shared_paths)[:2], start=1)
+    ]
+    hevc_files = [
+        SimpleNamespace(info_hash=hevc_h, relative_path=p, full_path=f"/m/hevc/{i}")
+        for i, p in enumerate(sorted(shared_paths), start=1)
+    ] + [
+        SimpleNamespace(
+            info_hash=hevc_h, relative_path="Show/ep_[04].mkv", full_path="/m/hevc/4"
+        )
+    ]
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    calls = {"n": 0}
+
+    def fake_scalars(_stmt):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return FakeScalars([])  # same torrent_id
+        if calls["n"] == 2:
+            # HEVC первым (новее) — старый max-overlap выбрал бы его
+            return FakeScalars([current_row, hevc_row, avc_prior_row])
+        return FakeScalars(avc_prior_files + hevc_files)
+
+    db.scalars.side_effect = fake_scalars
+    service = FileTrackerService(db)
+    archive = service._prior_version_archive(  # type: ignore[attr-defined]
+        torrent_id=5002,
+        current_hash=current,
+        release_id=9001,
+        current_paths=shared_paths,
+    )
+    assert archive is not None
+    assert archive.info_hash == avc_prior_h
+    assert archive.torrent_id == 5000
+    assert "HEVC" not in (archive.torrent_type or "")
+
+
+def test_prior_fallback_no_same_codec_history_skips_hevc_sibling() -> None:
+    """Первый AVC на релизе с активным HEVC: HEVC не prior → нет sticky prior."""
+    db = MagicMock()
+    current = "aa" * 20
+    hevc_h = "cc" * 20
+    paths = {"Show/ep01.mkv", "Show/ep02.mkv"}
+    current_row = SimpleNamespace(
+        id=2,
+        info_hash=current,
+        torrent_id=7002,
+        release_id=8001,
+        torrent_type="BDRip 1080p AVC",
+        quality_json={},
+        superseded=False,
+        api_present=True,
+    )
+    hevc_row = SimpleNamespace(
+        id=1,
+        info_hash=hevc_h,
+        torrent_id=7001,
+        release_id=8001,
+        torrent_type="BDRip 1080p HEVC",
+        quality_json={},
+        superseded=False,
+        api_present=True,
+    )
+    hevc_files = [
+        SimpleNamespace(info_hash=hevc_h, relative_path="Show/ep01.mkv", full_path="/m/1"),
+        SimpleNamespace(info_hash=hevc_h, relative_path="Show/ep02.mkv", full_path="/m/2"),
+    ]
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    calls = {"n": 0}
+
+    def fake_scalars(_stmt):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return FakeScalars([])
+        if calls["n"] == 2:
+            return FakeScalars([current_row, hevc_row])
+        return FakeScalars(hevc_files)
+
+    db.scalars.side_effect = fake_scalars
+    service = FileTrackerService(db)
+    archive = service._prior_version_archive(  # type: ignore[attr-defined]
+        torrent_id=7002,
+        current_hash=current,
+        release_id=8001,
+        current_paths=paths,
+    )
+    assert archive is None
 
 
 def test_baseline_disk_mismatch_stays_new_not_changed(
