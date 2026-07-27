@@ -86,6 +86,7 @@ def _setup_list_db(
     db.scalar.return_value = total
     db.scalars.side_effect = [
         MagicMock(all=lambda: page_archives),  # archives
+        MagicMock(all=lambda: []),  # release meta
         MagicMock(all=lambda: []),  # pipelines
         MagicMock(all=lambda: tracked or []),  # tracked
         MagicMock(all=lambda: []),  # torrent_files
@@ -468,12 +469,13 @@ def test_age_boundary_missing_vs_overdue() -> None:
     db_overdue.execute.side_effect = _exec_overdue
     db_overdue.scalar.return_value = 1
     db_overdue.scalars.side_effect = [
-        MagicMock(all=lambda: overdue_pairing),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: overdue_pairing),
+        MagicMock(all=lambda: overdue_pairing),  # archives
+        MagicMock(all=lambda: []),  # release meta
+        MagicMock(all=lambda: []),  # pipelines
+        MagicMock(all=lambda: []),  # tracked
+        MagicMock(all=lambda: []),  # torrent_files
+        MagicMock(all=lambda: []),  # events
+        MagicMock(all=lambda: overdue_pairing),  # archives for events
     ]
     overdue = list_release_groups(db_overdue, hevc_filter="overdue", page=1, per_page=30)
     assert [g.release_id for g in overdue["groups"]] == [14]
@@ -503,12 +505,13 @@ def test_age_boundary_missing_vs_overdue() -> None:
     db_missing.execute.side_effect = _exec_missing
     db_missing.scalar.return_value = 3
     db_missing.scalars.side_effect = [
-        MagicMock(all=lambda: missing_pairing),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: missing_pairing),
+        MagicMock(all=lambda: missing_pairing),  # archives
+        MagicMock(all=lambda: []),  # release meta
+        MagicMock(all=lambda: []),  # pipelines
+        MagicMock(all=lambda: []),  # tracked
+        MagicMock(all=lambda: []),  # torrent_files
+        MagicMock(all=lambda: []),  # events
+        MagicMock(all=lambda: missing_pairing),  # archives for events
     ]
     missing = list_release_groups(db_missing, hevc_filter="missing", page=1, per_page=30)
     assert {g.release_id for g in missing["groups"]} == {11, 12, 13}
@@ -1142,12 +1145,13 @@ def test_show_hidden_with_hevc_filter_includes_ignored() -> None:
     db_all.scalar.return_value = 1
     db_all.execute.return_value.all.return_value = stats
     db_all.scalars.side_effect = [
-        MagicMock(all=lambda: pairing),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: pairing),
+        MagicMock(all=lambda: pairing),  # archives
+        MagicMock(all=lambda: []),  # release meta
+        MagicMock(all=lambda: []),  # pipelines
+        MagicMock(all=lambda: []),  # tracked
+        MagicMock(all=lambda: []),  # torrent_files
+        MagicMock(all=lambda: []),  # events
+        MagicMock(all=lambda: pairing),  # archives for events
     ]
     general = list_release_groups(db_all, show_hidden=False, page=1, per_page=30)
     assert len(general["groups"]) == 1

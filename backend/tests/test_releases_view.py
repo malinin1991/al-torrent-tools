@@ -86,6 +86,7 @@ def test_list_release_groups_exposes_genres() -> None:
     )
     db.scalars.side_effect = [
         MagicMock(all=lambda: [archive]),  # archives
+        MagicMock(all=lambda: []),  # release meta
         MagicMock(all=lambda: []),  # pipelines
         MagicMock(all=lambda: []),  # tracked
         MagicMock(all=lambda: []),  # torrent_files
@@ -213,6 +214,7 @@ def test_list_release_groups_hevc_filter_missing_marks_unpaired() -> None:
     db.scalar.return_value = 1
     db.scalars.side_effect = [
         MagicMock(all=lambda: pairing_rows),  # archives
+        MagicMock(all=lambda: []),  # release meta
         MagicMock(all=lambda: []),  # pipelines
         MagicMock(all=lambda: []),  # tracked
         MagicMock(all=lambda: []),  # torrent_files
@@ -314,12 +316,13 @@ def test_list_release_groups_hevc_filter_overdue_marks_status() -> None:
     db.execute.side_effect = _execute
     db.scalar.return_value = 1
     db.scalars.side_effect = [
-        MagicMock(all=lambda: pairing),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: []),
-        MagicMock(all=lambda: pairing),
+        MagicMock(all=lambda: pairing),  # archives
+        MagicMock(all=lambda: []),  # release meta
+        MagicMock(all=lambda: []),  # pipelines
+        MagicMock(all=lambda: []),  # tracked
+        MagicMock(all=lambda: []),  # torrent_files
+        MagicMock(all=lambda: []),  # events
+        MagicMock(all=lambda: pairing),  # archives for events
     ]
 
     result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)

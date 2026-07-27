@@ -45,6 +45,7 @@ from app.services.torrent_files_meta import (
     is_under_media_root,
     resolve_media_root,
 )
+from app.services.release_meta import load_release_meta_by_ids
 from app.services.torrent_qb_meta import (
     block_flags_from_quality_json,
     build_release_torrents_url,
@@ -511,6 +512,8 @@ def list_release_groups(
             .order_by(TorrentArchive.created_at.desc(), TorrentArchive.id.desc())
         ).all()
     )
+    # Сразу после архивов — стабильный слот для моков в тестах.
+    release_meta = load_release_meta_by_ids(db, release_ids)
 
     pipeline_by_hash = _latest_pipeline_by_hash(db, [a.info_hash for a in archives])
     tracked_by_id = _tracked_by_release_id(db, release_ids)
@@ -545,19 +548,32 @@ def list_release_groups(
         items = by_release.get(release_id) or []
         head = items[0] if items else None
         stats = stats_by_id[release_id]
-        genres: list[str] = []
-        members: list[dict[str, str]] = []
-        blocked_geo = False
-        blocked_copy = False
-        for item in items:
-            qj = item.quality_json if isinstance(item.quality_json, dict) else None
-            if not genres:
-                genres = genres_from_quality_json(qj)
-            if not members:
-                members = members_from_quality_json(qj)
-            geo, copy = block_flags_from_quality_json(qj)
-            blocked_geo = blocked_geo or geo
-            blocked_copy = blocked_copy or copy
+        meta = release_meta.get(release_id)
+        genres: list[str] = list(meta.genres) if meta and meta.genres else []
+        members: list[dict[str, str]] = list(meta.members) if meta and meta.members else []
+        blocked_geo = bool(meta.is_blocked_by_geo) if meta and meta.is_blocked_by_geo is not None else False
+        blocked_copy = (
+            bool(meta.is_blocked_by_copyrights)
+            if meta and meta.is_blocked_by_copyrights is not None
+            else False
+        )
+        need_block_fallback = meta is None or meta.is_blocked_by_geo is None or (
+            meta.is_blocked_by_copyrights is None
+        )
+        # Fallback: старые строки / sparse upsert ещё только в quality_json.
+        if not genres or not members or need_block_fallback:
+            for item in items:
+                qj = item.quality_json if isinstance(item.quality_json, dict) else None
+                if not genres:
+                    genres = genres_from_quality_json(qj)
+                if not members:
+                    members = members_from_quality_json(qj)
+                if need_block_fallback:
+                    geo, copy = block_flags_from_quality_json(qj)
+                    if meta is None or meta.is_blocked_by_geo is None:
+                        blocked_geo = blocked_geo or geo
+                    if meta is None or meta.is_blocked_by_copyrights is None:
+                        blocked_copy = blocked_copy or copy
         # Бейджи HEVC в UI: ignore_hevc по-прежнему скрывает (без include_ignored).
         hevc_unpaired = unpaired_by_archive_id(items)
         release_paths = paths_by_release.get(release_id, {})

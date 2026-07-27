@@ -69,6 +69,60 @@ class ReleaseCheckpoint(Base):
     processed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Release(Base):
+    """Карточка релиза AniLibria (состав, жанры, блокировки) — source of truth для UI.
+
+    Торренты по-прежнему в ``torrent_archive``; ``quality_json`` может дублировать
+    жанры/members для обратной совместимости (qB tags, старые строки).
+    """
+
+    __tablename__ = "releases"
+    release_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    release_alias: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    genres_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # None = ещё не синхронизировано с API (fallback на quality_json в UI).
+    is_blocked_by_geo: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    is_blocked_by_copyrights: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, default=None
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    members: Mapped[list["ReleaseMember"]] = relationship(
+        back_populates="release",
+        cascade="all, delete-orphan",
+        order_by="ReleaseMember.sort_order",
+    )
+
+
+class ReleaseMember(Base):
+    """Участник релиза (озвучка, сведение, тайминг, …)."""
+
+    __tablename__ = "release_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "release_id",
+            "role",
+            "nickname",
+            name="uq_release_members_release_role_nickname",
+        ),
+        Index("ix_release_members_nickname", "nickname"),
+        Index("ix_release_members_role", "role"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    release_id: Mapped[int] = mapped_column(
+        ForeignKey("releases.release_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # UUID участника из API, если есть.
+    api_member_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    role_label: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    nickname: Mapped[str] = mapped_column(String(255), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    release: Mapped["Release"] = relationship(back_populates="members")
+
+
 class TrackedRelease(Base):
     """Релизы, отслеживаемые для Telegram-уведомлений (/add или чекбокс в UI)."""
 

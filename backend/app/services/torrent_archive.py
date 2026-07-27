@@ -349,6 +349,12 @@ class TorrentArchiveService:
             # Обновление той же версии (тот же info_hash) — ignore_hevc сохраняем.
             # Новая версия (supersede выше) создаёт строку с ignore_hevc=False.
 
+        # Карточка релиза (состав/блокировки/жанры) — source of truth рядом с dual-write в quality_json.
+        if isinstance(release_payload, dict) and release_payload:
+            from app.services.release_meta import upsert_release_meta
+
+            upsert_release_meta(self._db, release_id, release_payload, commit=False)
+
         self._db.commit()
         self._db.refresh(archive)
         return archive

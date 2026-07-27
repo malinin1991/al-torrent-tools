@@ -278,7 +278,11 @@ class TorrentProcessor:
     def _persist_release_ui_meta_from_payload(
         self, release_id: int, release_payload: dict[str, Any]
     ) -> None:
-        """Жанры + members + блокировки из get_release → quality_json архивов."""
+        """Жанры + members + блокировки → releases (+ dual-write в quality_json архивов)."""
+        from app.services.release_meta import upsert_release_meta
+
+        upsert_release_meta(self._db, release_id, release_payload, commit=True)
+
         genres = extract_release_genres(release_payload)
         if genres:
             self._persist_genres_to_archives(release_id, genres)

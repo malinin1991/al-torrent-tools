@@ -106,7 +106,7 @@ _KNOWN_MEMBER_ROLES = frozenset(
 
 
 def extract_release_members(release_payload: dict[str, Any]) -> list[dict[str, str]]:
-    """Участники релиза: [{role, role_label, nickname}, ...] в порядке API."""
+    """Участники релиза: [{role, role_label, nickname, api_id?}, ...] в порядке API."""
     raw = release_payload.get("members")
     if not isinstance(raw, list):
         return []
@@ -127,14 +127,24 @@ def extract_release_members(release_payload: dict[str, Any]) -> list[dict[str, s
         elif isinstance(role_obj, str):
             role = (_clean(role_obj) or "").casefold()
         if role not in _KNOWN_MEMBER_ROLES:
-            role = "unknown" if role else "unknown"
+            role = "unknown"
         if not role_label:
             role_label = role
         key = (role, nickname.casefold())
         if key in seen:
             continue
         seen.add(key)
-        members.append({"role": role, "role_label": role_label, "nickname": nickname})
+        entry: dict[str, str] = {
+            "role": role,
+            "role_label": role_label,
+            "nickname": nickname,
+        }
+        api_id = item.get("id")
+        if isinstance(api_id, str) and api_id.strip():
+            entry["api_id"] = api_id.strip()
+        elif isinstance(api_id, (int, float)):
+            entry["api_id"] = str(int(api_id))
+        members.append(entry)
     return members
 
 
