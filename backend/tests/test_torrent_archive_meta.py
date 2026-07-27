@@ -39,6 +39,22 @@ def test_build_category_anilibria_without_year() -> None:
     assert TorrentArchiveService._build_category({}) == "AniLibria"
 
 
+def test_attach_release_names_sparse_block_flags_do_not_clobber() -> None:
+    """Sparse payload с одним block-ключом не затирает второй флаг в quality_json."""
+    quality = {
+        "is_blocked_by_geo": True,
+        "is_blocked_by_copyrights": True,
+        "genres": ["Комедия"],
+    }
+    out = TorrentArchiveService._attach_release_names(
+        quality,
+        {"is_blocked_by_geo": False, "name": {"main": "Show"}},
+    )
+    assert out["is_blocked_by_geo"] is False
+    assert out["is_blocked_by_copyrights"] is True
+    assert out["names"]["main"] == "Show"
+
+
 def test_save_torrent_supersedes_old_hash(tmp_path) -> None:
     """Смена info_hash у того же torrent_id сохраняет старую версию в истории."""
     from types import SimpleNamespace

@@ -122,6 +122,42 @@ def test_ignore_hevc_clears_missing_and_overdue() -> None:
     assert release_ids_matching_hevc_filter(overdue_rows, hevc_filter="overdue", now=now) == set()
 
 
+def test_include_ignored_brings_back_ignore_hevc_avc() -> None:
+    """include_ignored=True — ignored AVC снова в missing/overdue фильтрах."""
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 3)
+    missing_rows = [
+        _row(archive_id=1, torrent_id=10, codec="AVC", created_at=now, ignore_hevc=True),
+    ]
+    assert find_unpaired_avc(missing_rows, now=now, include_ignored=True)
+    assert release_ids_matching_hevc_filter(
+        missing_rows, hevc_filter="missing", now=now, include_ignored=True
+    ) == {1}
+
+    overdue_rows = [
+        _row(
+            archive_id=2,
+            torrent_id=300,
+            codec="AVC",
+            created_at=old,
+            ignore_hevc=True,
+            episodes="1-12",
+        ),
+        _row(
+            archive_id=3,
+            torrent_id=100,
+            codec="HEVC",
+            created_at=old,
+            episodes="1-11",
+        ),
+    ]
+    unpaired = find_unpaired_avc(overdue_rows, now=now, include_ignored=True)
+    assert any(u.overdue for u in unpaired)
+    assert release_ids_matching_hevc_filter(
+        overdue_rows, hevc_filter="overdue", now=now, include_ignored=True
+    ) == {1}
+
+
 def test_ignore_hevc_resets_on_supersede_new_archive_row() -> None:
     """Новая версия (новый archive после supersede) стартует с ignore_hevc=False."""
     now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)

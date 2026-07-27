@@ -17,9 +17,13 @@
         <option value="type_mismatch" {% if hevc_filter == "type_mismatch" %}selected{% endif %}>Расхождение типов</option>
       </select>
     </label>
+    <label class="row" style="gap:6px; margin:0;" title="{% if hevc_filter %}Включает AVC с «Игнорировать HEVC» в фильтр{% else %}Влияет только при фильтре HEVC (Нет HEVC / Просрочка / Расхождение){% endif %}">
+      <input type="checkbox" name="show_hidden" value="on" {% if show_hidden %}checked{% endif %} {% if not hevc_filter %}disabled{% endif %} />
+      Отображать скрытое
+    </label>
     <button class="btn" type="submit">Найти</button>
   </form>
-  <p class="muted" style="margin:10px 0 0;">Релизов: {{ total }}. Страница {{ page }} из {{ total_pages }}. Сортировка — по последнему торренту.</p>
+  <p class="muted" style="margin:10px 0 0;">Релизов: {{ total }}. Страница {{ page }} из {{ total_pages }}. {% if hevc_filter == "overdue" %}Сортировка — по длительности просрочки.{% else %}Сортировка — по последнему торренту.{% endif %}</p>
 </div>
 
 {% for group in groups %}
@@ -31,6 +35,12 @@
         {% if group.tracked %}
         <span class="badge badge-ok" title="{% if group.track_source == 'bot' %}добавлено ботом{% else %}отслеживание{% endif %}">Отслеживается</span>
         {% endif %}
+        {% if group.is_blocked_by_geo %}
+        <span class="badge badge-danger" title="Блокировка по геолокации">Геоблок</span>
+        {% endif %}
+        {% if group.is_blocked_by_copyrights %}
+        <span class="badge badge-danger" title="Заблокирован правообладателем">Копирасты</span>
+        {% endif %}
       </div>
       {% if group.release_alias and group.anime_name %}
       <span class="muted">{{ group.release_alias }}</span>
@@ -39,6 +49,13 @@
       <div class="genre-tags" aria-label="Жанры">
         {% for genre in group.genres %}
         <span class="genre-tag">{{ genre }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if group.members %}
+      <div class="member-tags" aria-label="Участники">
+        {% for m in group.members %}
+        <span class="member-tag member-tag--{{ m.role }}" title="{{ m.role_label }}">{{ m.nickname }}</span>
         {% endfor %}
       </div>
       {% endif %}
@@ -198,12 +215,13 @@
 
 {% set tracked_qs = '&tracked_only=on' if tracked_only else '' %}
 {% set hevc_qs = ('&hevc_filter=' ~ hevc_filter) if hevc_filter else '' %}
+{% set hidden_qs = '&show_hidden=on' if show_hidden else '' %}
 <div class="row" style="margin-top:12px;">
   {% if page > 1 %}
-  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}{{ hevc_qs }}&page={{ page - 1 }}">Назад</a>
+  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}&page={{ page - 1 }}">Назад</a>
   {% endif %}
   {% if page < total_pages %}
-  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}{{ hevc_qs }}&page={{ page + 1 }}">Вперёд</a>
+  <a class="btn" href="/releases?search={{ search }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}&page={{ page + 1 }}">Вперёд</a>
   {% endif %}
 </div>
 {% endblock %}

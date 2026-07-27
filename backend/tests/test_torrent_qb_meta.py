@@ -64,6 +64,49 @@ def test_extract_release_genres() -> None:
     assert genres_from_quality_json({"genres": names}) == names
 
 
+def test_extract_release_members_and_block_flags() -> None:
+    from app.services.torrent_qb_meta import (
+        block_flags_from_quality_json,
+        extract_release_block_flags,
+        extract_release_members,
+        members_from_quality_json,
+    )
+
+    members = extract_release_members(
+        {
+            "members": [
+                {
+                    "nickname": "Zvukar",
+                    "role": {"value": "voicing", "description": "Озвучка"},
+                },
+                {
+                    "nickname": "Timer",
+                    "role": {"value": "timing", "description": "Тайминг"},
+                },
+                {
+                    "nickname": "Zvukar",
+                    "role": {"value": "voicing", "description": "Озвучка"},
+                },
+                {"nickname": "Ghost", "role": {"value": "weird", "description": "?"}},
+            ]
+        }
+    )
+    assert members == [
+        {"role": "voicing", "role_label": "Озвучка", "nickname": "Zvukar"},
+        {"role": "timing", "role_label": "Тайминг", "nickname": "Timer"},
+        {"role": "unknown", "role_label": "?", "nickname": "Ghost"},
+    ]
+    assert members_from_quality_json({"members": members}) == members
+
+    assert extract_release_block_flags(
+        {"is_blocked_by_geo": True, "is_blocked_by_copyrights": False}
+    ) == (True, False)
+    assert block_flags_from_quality_json(
+        {"is_blocked_by_geo": True, "is_blocked_by_copyrights": True}
+    ) == (True, True)
+    assert block_flags_from_quality_json(None) == (False, False)
+
+
 def test_ensure_announce_passkey_injects_pk() -> None:
     announce = b"http://tr.libria.fun:2710/announce"
     info = b"d4:name4:test6:lengthi1ee"

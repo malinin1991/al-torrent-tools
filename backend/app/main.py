@@ -780,6 +780,7 @@ def releases_page(
     search: str | None = Query(default=None),
     tracked_only: str | None = Query(default=None),
     hevc_filter: str | None = Query(default=None),
+    show_hidden: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -789,6 +790,7 @@ def releases_page(
         search=search,
         tracked_only=only_tracked,
         hevc_filter=hevc_filter,
+        show_hidden=show_hidden == "on",
         page=page,
         per_page=30,
     )

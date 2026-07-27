@@ -32,6 +32,7 @@ from app.services.file_tracker import (
 from app.services.hevc_pairing import (
     HevcFilter,
     classify_archive_codec,
+    max_overdue_hours_by_release_id,
     overdue_hours_past_sla,
     unpaired_by_archive_id,
     release_ids_matching_hevc_filter,
@@ -45,8 +46,10 @@ from app.services.torrent_files_meta import (
     resolve_media_root,
 )
 from app.services.torrent_qb_meta import (
+    block_flags_from_quality_json,
     build_release_torrents_url,
     genres_from_quality_json,
+    members_from_quality_json,
     resolve_anilibria_site_url,
 )
 
@@ -236,6 +239,9 @@ class ReleaseGroup:
     archived_torrents: list[ReleaseTorrentRow] = field(default_factory=list)
     tracked: bool = False
     track_source: str | None = None
+    members: list[dict[str, str]] = field(default_factory=list)
+    is_blocked_by_geo: bool = False
+    is_blocked_by_copyrights: bool = False
 
 
 def format_bytes(size: int | None) -> str:
@@ -378,15 +384,33 @@ def list_release_groups(
     search: str | None = None,
     tracked_only: bool = False,
     hevc_filter: str | None = None,
+    show_hidden: bool = False,
     page: int = 1,
     per_page: int = 30,
 ) -> dict[str, Any]:
-    """Релизы из архива, сортировка по последнему обновлению любого торрента."""
+    """Релизы из архива, сортировка по последнему обновлению любого торрента.
+
+    При hevc_filter=overdue — сортировка по длительности просрочки ASC, затем last_updated DESC.
+    show_hidden влияет только при активном HEVC-фильтре (include ignore_hevc AVC).
+    """
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
     search_text = (search or "").strip()
     only_tracked = bool(tracked_only)
     hevc = _normalize_hevc_filter(hevc_filter)
+    # Чекбокс «Отображать скрытое» — только для HEVC-фильтров.
+    include_ignored = bool(show_hidden) and bool(hevc)
+    empty = {
+        "groups": [],
+        "search": search_text,
+        "tracked_only": only_tracked,
+        "hevc_filter": hevc,
+        "show_hidden": bool(show_hidden),
+        "page": page,
+        "per_page": per_page,
+        "total": 0,
+        "total_pages": 1,
+    }
 
     stats_query = (
         select(
@@ -411,33 +435,60 @@ def list_release_groups(
     if only_tracked:
         tracked_ids = select(TrackedRelease.release_id).where(TrackedRelease.enabled.is_(True))
         stats_query = stats_query.where(TorrentArchive.release_id.in_(tracked_ids))
+
+    hevc_archives: list[Any] | None = None
+    overdue_hours_map: dict[int, float] = {}
     if hevc:
+        hevc_archives = _active_archives_for_hevc_pairing(db)
         hevc_release_ids = release_ids_matching_hevc_filter(
-            _active_archives_for_hevc_pairing(db),
+            hevc_archives,
             hevc_filter=hevc,
+            include_ignored=include_ignored,
         )
         if not hevc_release_ids:
-            return {
-                "groups": [],
-                "search": search_text,
-                "tracked_only": only_tracked,
-                "hevc_filter": hevc,
-                "page": page,
-                "per_page": per_page,
-                "total": 0,
-                "total_pages": 1,
-            }
+            return empty
         stats_query = stats_query.where(TorrentArchive.release_id.in_(hevc_release_ids))
+        if hevc == "overdue":
+            overdue_hours_map = max_overdue_hours_by_release_id(
+                hevc_archives, include_ignored=include_ignored
+            )
 
-    total = db.scalar(select(func.count()).select_from(stats_query.subquery())) or 0
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    page = min(page, total_pages)
+    if hevc == "overdue":
+        # Полный набор stats → сортировка по overdue hours ASC → пагинация.
+        all_stats = db.execute(stats_query).all()
+        total = len(all_stats)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, total_pages)
 
-    page_rows = db.execute(
-        stats_query.order_by(func.max(TorrentArchive.created_at).desc().nullslast())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    ).all()
+        def _overdue_sort_key(row: Any) -> tuple:
+            rid = int(row.release_id)
+            hours = overdue_hours_map.get(rid)
+            # Нет часов — в конец; иначе ASC по длительности просрочки.
+            hours_key = float("inf") if hours is None else float(hours)
+            updated = row.last_updated
+            if updated is None:
+                updated_ts = float("-inf")
+            else:
+                # tie-break last_updated DESC → отрицательный timestamp.
+                try:
+                    updated_ts = -float(updated.timestamp())
+                except (OSError, OverflowError, ValueError):
+                    updated_ts = float("-inf")
+            return (hours_key, updated_ts)
+
+        sorted_stats = sorted(all_stats, key=_overdue_sort_key)
+        offset = (page - 1) * per_page
+        page_rows = sorted_stats[offset : offset + per_page]
+    else:
+        total = db.scalar(select(func.count()).select_from(stats_query.subquery())) or 0
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, total_pages)
+
+        page_rows = db.execute(
+            stats_query.order_by(func.max(TorrentArchive.created_at).desc().nullslast())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        ).all()
 
     release_ids = [int(row.release_id) for row in page_rows]
     if not release_ids:
@@ -446,6 +497,7 @@ def list_release_groups(
             "search": search_text,
             "tracked_only": only_tracked,
             "hevc_filter": hevc,
+            "show_hidden": bool(show_hidden),
             "page": page,
             "per_page": per_page,
             "total": total,
@@ -494,12 +546,19 @@ def list_release_groups(
         head = items[0] if items else None
         stats = stats_by_id[release_id]
         genres: list[str] = []
+        members: list[dict[str, str]] = []
+        blocked_geo = False
+        blocked_copy = False
         for item in items:
-            genres = genres_from_quality_json(
-                item.quality_json if isinstance(item.quality_json, dict) else None
-            )
-            if genres:
-                break
+            qj = item.quality_json if isinstance(item.quality_json, dict) else None
+            if not genres:
+                genres = genres_from_quality_json(qj)
+            if not members:
+                members = members_from_quality_json(qj)
+            geo, copy = block_flags_from_quality_json(qj)
+            blocked_geo = blocked_geo or geo
+            blocked_copy = blocked_copy or copy
+        # Бейджи HEVC в UI: ignore_hevc по-прежнему скрывает (без include_ignored).
         hevc_unpaired = unpaired_by_archive_id(items)
         release_paths = paths_by_release.get(release_id, {})
         active: list[ReleaseTorrentRow] = []
@@ -570,6 +629,9 @@ def list_release_groups(
                     site_url=site_url,
                 ),
                 genres=genres,
+                members=members,
+                is_blocked_by_geo=blocked_geo,
+                is_blocked_by_copyrights=blocked_copy,
                 torrents=active,
                 archived_torrents=archived,
                 tracked=bool(tracked_row and tracked_row.enabled),
@@ -582,6 +644,7 @@ def list_release_groups(
         "search": search_text,
         "tracked_only": only_tracked,
         "hevc_filter": hevc,
+        "show_hidden": bool(show_hidden),
         "page": page,
         "per_page": per_page,
         "total": total,

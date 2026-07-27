@@ -914,6 +914,7 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
             "search": "",
             "tracked_only": False,
             "hevc_filter": "missing",
+            "show_hidden": False,
             "page": 1,
             "per_page": 30,
             "total": 1,
@@ -1030,3 +1031,243 @@ def test_releases_page_passes_hevc_filter(monkeypatch: pytest.MonkeyPatch) -> No
     assert captured["hevc_filter"] == "overdue"
     assert captured["page"] == 2
     assert ctx["hevc_filter"] == "overdue"
+
+
+def test_overdue_sort_ascending_then_paginate() -> None:
+    """overdue: меньшая просрочка сверху; пагинация после сортировки."""
+    now = utcnow()
+    # release 1: ~10ч сверх SLA; release 2: ~2ч; release 3: ~5ч
+    def _overdue_pair(rid: int, past_hours: float, updated: datetime):
+        age = HEVC_SLA_HOURS + past_hours
+        avc = _archive(
+            archive_id=rid * 10,
+            release_id=rid,
+            torrent_id=rid * 100,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now - timedelta(hours=age),
+            anime_name=f"Show {rid}",
+            release_alias=f"show-{rid}",
+        )
+        hevc = _archive(
+            archive_id=rid * 10 + 1,
+            release_id=rid,
+            torrent_id=rid * 100 + 1,
+            episodes="1-11",
+            codec="HEVC",
+            created_at=now,
+            anime_name=f"Show {rid}",
+            release_alias=f"show-{rid}",
+        )
+        return [avc, hevc], SimpleNamespace(
+            release_id=rid, last_updated=updated, torrent_count=2
+        )
+
+    pair1, stats1 = _overdue_pair(1, 10, now - timedelta(hours=1))
+    pair2, stats2 = _overdue_pair(2, 2, now - timedelta(hours=3))
+    pair3, stats3 = _overdue_pair(3, 5, now)
+    pairing = pair1 + pair2 + pair3
+    # SQL отдаёт в произвольном порядке (как max created_at); ожидаем 2→3→1.
+    stats_all = [stats1, stats3, stats2]
+
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pair2,  # page1 per_page=1 → только release 2
+        stats_rows=stats_all,
+        total=3,
+    )
+    page1 = list_release_groups(db, hevc_filter="overdue", page=1, per_page=1)
+    assert page1["total"] == 3
+    assert page1["total_pages"] == 3
+    assert [g.release_id for g in page1["groups"]] == [2]
+
+    db2 = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pair3,
+        stats_rows=stats_all,
+        total=3,
+    )
+    page2 = list_release_groups(db2, hevc_filter="overdue", page=2, per_page=1)
+    assert [g.release_id for g in page2["groups"]] == [3]
+
+    db3 = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pair1,
+        stats_rows=stats_all,
+        total=3,
+    )
+    page3 = list_release_groups(db3, hevc_filter="overdue", page=3, per_page=1)
+    assert [g.release_id for g in page3["groups"]] == [1]
+
+
+def test_show_hidden_with_hevc_filter_includes_ignored() -> None:
+    """show_hidden + missing: ignored AVC снова в выдаче; без фильтра — не влияет."""
+    now = utcnow()
+    ignored = _archive(
+        archive_id=1,
+        release_id=7,
+        torrent_id=70,
+        episodes="1-2",
+        codec="AVC",
+        created_at=now,
+        anime_name="Hidden",
+        release_alias="hidden",
+    )
+    ignored.ignore_hevc = True
+    pairing = [ignored]
+    stats = [SimpleNamespace(release_id=7, last_updated=now, torrent_count=1)]
+
+    db_hidden = _setup_list_db(
+        pairing_rows=pairing, page_archives=pairing, stats_rows=stats, total=1
+    )
+    without = list_release_groups(db_hidden, hevc_filter="missing", page=1, per_page=30)
+    assert without["groups"] == []
+    assert without["show_hidden"] is False
+
+    db_show = _setup_list_db(
+        pairing_rows=pairing, page_archives=pairing, stats_rows=stats, total=1
+    )
+    with_hidden = list_release_groups(
+        db_show, hevc_filter="missing", show_hidden=True, page=1, per_page=30
+    )
+    assert with_hidden["show_hidden"] is True
+    assert len(with_hidden["groups"]) == 1
+    assert with_hidden["groups"][0].release_id == 7
+    # Бейджи UI по-прежнему не ставятся на ignore_hevc (unpaired без include_ignored).
+    assert with_hidden["groups"][0].torrents[0].hevc_pair_status is None
+    assert with_hidden["groups"][0].torrents[0].ignore_hevc is True
+
+    # Без HEVC-фильтра show_hidden no-op: релиз в общем списке и так виден.
+    db_all = MagicMock()
+    db_all.scalar.return_value = 1
+    db_all.execute.return_value.all.return_value = stats
+    db_all.scalars.side_effect = [
+        MagicMock(all=lambda: pairing),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: []),
+        MagicMock(all=lambda: pairing),
+    ]
+    general = list_release_groups(db_all, show_hidden=False, page=1, per_page=30)
+    assert len(general["groups"]) == 1
+    assert general["groups"][0].release_id == 7
+
+
+def test_releases_html_show_hidden_members_and_blocks() -> None:
+    from app.services.releases_view import ReleaseGroup, ReleaseTorrentRow
+
+    templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.filters["as_utc_iso"] = as_utc_iso
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    group = ReleaseGroup(
+        release_id=1,
+        release_alias="show",
+        anime_name="Show",
+        category="AniLibria/2024",
+        last_updated=now,
+        torrent_count=1,
+        release_url=None,
+        genres=["Комедия"],
+        members=[
+            {"role": "voicing", "role_label": "Озвучка", "nickname": "Zvukar"},
+            {"role": "timing", "role_label": "Тайминг", "nickname": "Timer"},
+        ],
+        is_blocked_by_geo=True,
+        is_blocked_by_copyrights=True,
+        torrents=[
+            ReleaseTorrentRow(
+                archive_id=1,
+                torrent_id=10,
+                info_hash="aa" * 20,
+                torrent_type="BDRip 1080p AVC",
+                torrent_description="1-2",
+                file_size=100,
+                file_size_label="100 B",
+                created_at=now,
+                pipeline_status=None,
+                pipeline_error=None,
+            ),
+        ],
+    )
+    request = MagicMock()
+    html = templates.TemplateResponse(
+        request,
+        "releases.html",
+        {
+            "request": request,
+            "groups": [group],
+            "search": "",
+            "tracked_only": False,
+            "hevc_filter": "overdue",
+            "show_hidden": True,
+            "page": 1,
+            "per_page": 30,
+            "total": 1,
+            "total_pages": 1,
+        },
+    ).body.decode("utf-8")
+
+    assert 'name="show_hidden"' in html
+    assert "Отображать скрытое" in html
+    assert "Сортировка — по длительности просрочки" in html
+    assert 'name="show_hidden" value="on"' in html and "checked" in html
+    assert "Геоблок" in html and "Копирасты" in html
+    assert "badge-danger" in html
+    assert 'member-tag--voicing' in html and "Zvukar" in html
+    assert 'member-tag--timing' in html and "Timer" in html
+    assert "Комедия" in html
+
+    # Пагинация пробрасывает show_hidden.
+    html_page = templates.TemplateResponse(
+        request,
+        "releases.html",
+        {
+            "request": request,
+            "groups": [group],
+            "search": "",
+            "tracked_only": False,
+            "hevc_filter": "overdue",
+            "show_hidden": True,
+            "page": 1,
+            "per_page": 30,
+            "total": 60,
+            "total_pages": 2,
+        },
+    ).body.decode("utf-8")
+    assert "show_hidden=on" in html_page
+    assert "hevc_filter=overdue" in html_page
+
+
+def test_releases_page_passes_show_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.main import releases_page
+
+    captured: dict = {}
+
+    def _list(db, **kwargs):  # noqa: ANN001
+        captured.update(kwargs)
+        return {
+            "groups": [],
+            "search": "",
+            "tracked_only": False,
+            "hevc_filter": kwargs.get("hevc_filter") or "",
+            "show_hidden": bool(kwargs.get("show_hidden")),
+            "page": 1,
+            "per_page": 30,
+            "total": 0,
+            "total_pages": 1,
+        }
+
+    monkeypatch.setattr("app.main.list_release_groups", _list)
+    monkeypatch.setattr(
+        "app.main.templates.TemplateResponse",
+        lambda request, name, ctx: ctx,
+    )
+    releases_page(
+        MagicMock(),
+        hevc_filter="missing",
+        show_hidden="on",
+        db=MagicMock(),
+    )
+    assert captured["show_hidden"] is True
+    assert captured["hevc_filter"] == "missing"

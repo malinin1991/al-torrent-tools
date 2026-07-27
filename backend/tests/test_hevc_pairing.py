@@ -266,7 +266,7 @@ def test_saijo_webrip_avc_webdl_hevc_type_mismatch_not_missing() -> None:
 
 
 def test_webrip_webdl_type_mismatch_and_overdue_after_sla() -> None:
-    """WEBRip AVC + WEB-DL HEVC age>24h → overdue бейдж, оба флага в фильтрах."""
+    """WEBRip AVC + WEB-DL HEVC age>24h → бейдж type_mismatch; оба флага в фильтрах."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
     rows = [
@@ -290,7 +290,7 @@ def test_webrip_webdl_type_mismatch_and_overdue_after_sla() -> None:
     assert unpaired[0].missing is False
     assert unpaired[0].type_mismatch is True
     assert unpaired[0].overdue is True
-    assert unpaired[0].status == "overdue"
+    assert unpaired[0].status == "type_mismatch"
     assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {1}
     assert release_ids_matching_hevc_filter(
         rows, hevc_filter="type_mismatch", now=now
@@ -1143,7 +1143,7 @@ def test_sync_aged_avc_alone_stays_missing(
 def test_sync_emits_when_flags_change_same_badge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Legacy overdue+missing → overdue+type_mismatch: тот же бейдж, новая запись."""
+    """Legacy overdue+missing → type_mismatch бейдж (priority) + новая запись."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
     avc = _row(
@@ -1186,9 +1186,10 @@ def test_sync_emits_when_flags_change_same_badge(
     db.scalar.side_effect = [pipeline, last]
     n = sync_hevc_pair_events_for_release(db, 1, now=now)
     assert n == 1
-    assert recorded[0]["to_status"] == "overdue"
+    assert recorded[0]["to_status"] == "type_mismatch"
     assert recorded[0]["details"]["missing"] is False
     assert recorded[0]["details"]["type_mismatch"] is True
+    assert recorded[0]["details"]["overdue"] is True
     assert recorded[0]["details"]["paired_hevc_info_hash"] == "bb" * 20
 
 

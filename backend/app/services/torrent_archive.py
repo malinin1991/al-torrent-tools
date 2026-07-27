@@ -86,7 +86,11 @@ class TorrentArchiveService:
         quality_json: dict[str, Any],
         release_payload: dict[str, Any],
     ) -> dict[str, Any]:
-        from app.services.torrent_qb_meta import extract_release_genres, extract_release_names
+        from app.services.torrent_qb_meta import (
+            extract_release_genres,
+            extract_release_members,
+            extract_release_names,
+        )
 
         main, original = extract_release_names(release_payload)
         if main or original:
@@ -94,6 +98,22 @@ class TorrentArchiveService:
         genres = extract_release_genres(release_payload)
         if genres:
             quality_json = {**quality_json, "genres": genres}
+        members = extract_release_members(release_payload)
+        if members:
+            quality_json = {**quality_json, "members": members}
+        # Каждый флаг — только если ключ есть (не сбрасывать соседний при sparse payload).
+        if "is_blocked_by_geo" in release_payload:
+            quality_json = {
+                **quality_json,
+                "is_blocked_by_geo": bool(release_payload.get("is_blocked_by_geo")),
+            }
+        if "is_blocked_by_copyrights" in release_payload:
+            quality_json = {
+                **quality_json,
+                "is_blocked_by_copyrights": bool(
+                    release_payload.get("is_blocked_by_copyrights")
+                ),
+            }
         return quality_json
 
     @staticmethod

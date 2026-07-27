@@ -100,6 +100,89 @@ def genres_from_quality_json(quality_json: dict[str, Any] | None) -> list[str]:
     return names
 
 
+_KNOWN_MEMBER_ROLES = frozenset(
+    {"poster", "timing", "voicing", "editing", "decorating", "translating"}
+)
+
+
+def extract_release_members(release_payload: dict[str, Any]) -> list[dict[str, str]]:
+    """Участники релиза: [{role, role_label, nickname}, ...] в порядке API."""
+    raw = release_payload.get("members")
+    if not isinstance(raw, list):
+        return []
+    members: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        nickname = _clean(item.get("nickname"))
+        if not nickname:
+            continue
+        role_obj = item.get("role")
+        role = ""
+        role_label = ""
+        if isinstance(role_obj, dict):
+            role = (_clean(role_obj.get("value")) or "").casefold()
+            role_label = _clean(role_obj.get("description")) or ""
+        elif isinstance(role_obj, str):
+            role = (_clean(role_obj) or "").casefold()
+        if role not in _KNOWN_MEMBER_ROLES:
+            role = "unknown" if role else "unknown"
+        if not role_label:
+            role_label = role
+        key = (role, nickname.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        members.append({"role": role, "role_label": role_label, "nickname": nickname})
+    return members
+
+
+def members_from_quality_json(quality_json: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Участники, сохранённые в torrent_archive.quality_json."""
+    if not isinstance(quality_json, dict):
+        return []
+    raw = quality_json.get("members")
+    if not isinstance(raw, list):
+        return []
+    members: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        nickname = _clean(item.get("nickname"))
+        if not nickname:
+            continue
+        role = (_clean(item.get("role")) or "unknown").casefold()
+        if role not in _KNOWN_MEMBER_ROLES:
+            role = "unknown"
+        role_label = _clean(item.get("role_label")) or role
+        key = (role, nickname.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        members.append({"role": role, "role_label": role_label, "nickname": nickname})
+    return members
+
+
+def extract_release_block_flags(release_payload: dict[str, Any]) -> tuple[bool, bool]:
+    """(is_blocked_by_geo, is_blocked_by_copyrights) из payload AniLibria."""
+    return (
+        bool(release_payload.get("is_blocked_by_geo")),
+        bool(release_payload.get("is_blocked_by_copyrights")),
+    )
+
+
+def block_flags_from_quality_json(quality_json: dict[str, Any] | None) -> tuple[bool, bool]:
+    """Флаги блокировок из torrent_archive.quality_json."""
+    if not isinstance(quality_json, dict):
+        return False, False
+    return (
+        bool(quality_json.get("is_blocked_by_geo")),
+        bool(quality_json.get("is_blocked_by_copyrights")),
+    )
+
+
 def extract_release_names(release_payload: dict[str, Any]) -> tuple[str | None, str | None]:
     """(русское main, оригинальное english)."""
     name = release_payload.get("name")

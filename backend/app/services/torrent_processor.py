@@ -34,8 +34,11 @@ from app.services.file_tracker import update_api_present_for_release
 from app.services.torrent_qb_meta import (
     build_qb_torrent_name_from_payloads,
     build_release_torrents_url,
+    extract_release_block_flags,
     extract_release_genres,
+    extract_release_members,
     genres_from_quality_json,
+    members_from_quality_json,
     resolve_anilibria_site_url,
 )
 
@@ -233,6 +236,66 @@ class TorrentProcessor:
         if changed:
             self._db.commit()
 
+    def _persist_members_and_blocks_to_archives(
+        self,
+        release_id: int,
+        *,
+        members: list[dict[str, str]] | None = None,
+        is_blocked_by_geo: bool | None = None,
+        is_blocked_by_copyrights: bool | None = None,
+    ) -> None:
+        """Пишет members / is_blocked_* в quality_json всех архивов релиза."""
+        if members is None and is_blocked_by_geo is None and is_blocked_by_copyrights is None:
+            return
+        rows = self._db.scalars(
+            select(TorrentArchive).where(TorrentArchive.release_id == release_id)
+        ).all()
+        changed = False
+        for row in rows:
+            quality = dict(row.quality_json) if isinstance(row.quality_json, dict) else {}
+            row_changed = False
+            if members is not None and members_from_quality_json(quality) != members:
+                quality["members"] = members
+                row_changed = True
+            if (
+                is_blocked_by_geo is not None
+                and bool(quality.get("is_blocked_by_geo")) != is_blocked_by_geo
+            ):
+                quality["is_blocked_by_geo"] = is_blocked_by_geo
+                row_changed = True
+            if (
+                is_blocked_by_copyrights is not None
+                and bool(quality.get("is_blocked_by_copyrights")) != is_blocked_by_copyrights
+            ):
+                quality["is_blocked_by_copyrights"] = is_blocked_by_copyrights
+                row_changed = True
+            if row_changed:
+                row.quality_json = quality
+                changed = True
+        if changed:
+            self._db.commit()
+
+    def _persist_release_ui_meta_from_payload(
+        self, release_id: int, release_payload: dict[str, Any]
+    ) -> None:
+        """Жанры + members + блокировки из get_release → quality_json архивов."""
+        genres = extract_release_genres(release_payload)
+        if genres:
+            self._persist_genres_to_archives(release_id, genres)
+        members = extract_release_members(release_payload)
+        geo, copy = extract_release_block_flags(release_payload)
+        # Пишем каждый флаг только если ключ есть в payload (sparse include=).
+        self._persist_members_and_blocks_to_archives(
+            release_id,
+            members=members if members or "members" in release_payload else None,
+            is_blocked_by_geo=(
+                geo if "is_blocked_by_geo" in release_payload else None
+            ),
+            is_blocked_by_copyrights=(
+                copy if "is_blocked_by_copyrights" in release_payload else None
+            ),
+        )
+
     async def _resolve_genres_for_meta(
         self,
         release_id: int,
@@ -240,9 +303,9 @@ class TorrentProcessor:
     ) -> list[str]:
         """Жанры: payload → архив → get_release (и запись в архив)."""
         if release_payload is not None:
+            self._persist_release_ui_meta_from_payload(release_id, release_payload)
             genres = extract_release_genres(release_payload)
             if genres:
-                self._persist_genres_to_archives(release_id, genres)
                 return genres
         genres = self._genres_from_archives(release_id)
         if genres:
@@ -250,17 +313,22 @@ class TorrentProcessor:
         try:
             payload = await self._al_client.get_release(
                 release_id,
-                include=["id", "alias", "genres"],
+                include=[
+                    "id",
+                    "alias",
+                    "genres",
+                    "members",
+                    "is_blocked_by_geo",
+                    "is_blocked_by_copyrights",
+                ],
             )
         except Exception as exc:
             self._add_log(f"Релиз {release_id}: не удалось получить genres: {exc}", "warning")
             return []
         if not isinstance(payload, dict):
             return []
-        genres = extract_release_genres(payload)
-        if genres:
-            self._persist_genres_to_archives(release_id, genres)
-        return genres
+        self._persist_release_ui_meta_from_payload(release_id, payload)
+        return extract_release_genres(payload)
 
     def _refresh_qb_tags(
         self,
@@ -700,6 +768,9 @@ class TorrentProcessor:
                 "year",
                 "description",
                 "genres",
+                "members",
+                "is_blocked_by_geo",
+                "is_blocked_by_copyrights",
                 "updated_at",
                 "fresh_at",
             ],
@@ -728,8 +799,7 @@ class TorrentProcessor:
         category = archive_service._build_category(release_payload)
         meta_clients = self._qb_clients_for_meta() if refresh_qb_meta else []
         genre_tags = extract_release_genres(release_payload)
-        if genre_tags:
-            self._persist_genres_to_archives(release_id, genre_tags)
+        self._persist_release_ui_meta_from_payload(release_id, release_payload)
 
         stats = self.empty_release_stats()
         stats["total"] = len(torrents)

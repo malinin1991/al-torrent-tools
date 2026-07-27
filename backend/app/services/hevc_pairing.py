@@ -15,7 +15,9 @@ overdue         — на слоте уже есть HEVC (тот же batch_star
 type_mismatch   — HEVC есть (тот же start+quality в web-классе), но тип рипа
                   WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
 
-Бейдж (status): overdue > type_mismatch > missing.
+Бейдж (status): type_mismatch > overdue > missing.
+  WEBRip↔WEB-DL — допустимое presence (не missing); бирка «расхождение типов»
+  важнее просрочки, даже если exact-пары нет и age > SLA.
 Число на бейдже «просрочка Nч» — часы сверх SLA: max(0, age − 24), не полный age.
 Фильтры независимы: один AVC может быть overdue и type_mismatch сразу;
 overdue и missing взаимоисключающи (overdue ⇒ has_hevc_for_batch_start).
@@ -412,11 +414,11 @@ class UnpairedAvc:
 
     @property
     def status(self) -> HevcPairStatus:
-        """Бейдж: overdue > type_mismatch > missing."""
-        if self.overdue:
-            return "overdue"
+        """Бейдж: type_mismatch > overdue > missing."""
         if self.type_mismatch:
             return "type_mismatch"
+        if self.overdue:
+            return "overdue"
         return "missing"
 
     @property
@@ -437,8 +439,13 @@ def find_unpaired_avc(
     now: datetime | None = None,
     sla_hours: float = HEVC_SLA_HOURS,
     require_active: bool = True,
+    include_ignored: bool = False,
 ) -> list[UnpairedAvc]:
-    """AVC с проблемой HEVC: missing / overdue / type_mismatch."""
+    """AVC с проблемой HEVC: missing / overdue / type_mismatch.
+
+    include_ignored=True — учитывать AVC с ignore_hevc (для фильтра «Отображать скрытое»).
+    По умолчанию такие AVC пропускаются (пара «закрыта» для фильтров/бейджей).
+    """
     current = now or utcnow()
     by_release: dict[int, list[Any]] = {}
     for row in archives:
@@ -502,7 +509,7 @@ def find_unpaired_avc(
         drafts: list[_AvcDraft] = []
         for row in avc_rows:
             # Ручной «Игнорировать HEVC» — считаем пару закрытой для фильтров/бейджей.
-            if bool(_archive_attr(row, "ignore_hevc", False)):
+            if bool(_archive_attr(row, "ignore_hevc", False)) and not include_ignored:
                 continue
             qj = _archive_attr(row, "quality_json")
             qj = qj if isinstance(qj, dict) else None
@@ -625,6 +632,7 @@ def find_unpaired_avc(
                         pair_ref.torrent_id if pair_ref and pair_ref.torrent_id else None
                     ),
                     batch_start=draft.presence[2] if draft.presence is not None else None,
+                    ignore_hevc=bool(_archive_attr(draft.row, "ignore_hevc", False)),
                     age_from_api=age_from_api,
                 )
             )
@@ -636,10 +644,13 @@ def unpaired_by_archive_id(
     *,
     now: datetime | None = None,
     sla_hours: float = HEVC_SLA_HOURS,
+    include_ignored: bool = False,
 ) -> dict[int, UnpairedAvc]:
     return {
         item.archive_id: item
-        for item in find_unpaired_avc(archives, now=now, sla_hours=sla_hours)
+        for item in find_unpaired_avc(
+            archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
+        )
     }
 
 
@@ -649,16 +660,43 @@ def release_ids_matching_hevc_filter(
     hevc_filter: HevcFilter,
     now: datetime | None = None,
     sla_hours: float = HEVC_SLA_HOURS,
+    include_ignored: bool = False,
 ) -> set[int]:
     """release_id с ≥1 AVC под фильтр; missing / overdue / type_mismatch независимы."""
     if hevc_filter not in ("missing", "overdue", "type_mismatch"):
         return set()
-    unmatched = find_unpaired_avc(archives, now=now, sla_hours=sla_hours)
+    unmatched = find_unpaired_avc(
+        archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
+    )
     if hevc_filter == "overdue":
         return {item.release_id for item in unmatched if item.overdue}
     if hevc_filter == "type_mismatch":
         return {item.release_id for item in unmatched if item.type_mismatch}
     return {item.release_id for item in unmatched if item.missing}
+
+
+def max_overdue_hours_by_release_id(
+    archives: Sequence[Any],
+    *,
+    now: datetime | None = None,
+    sla_hours: float = HEVC_SLA_HOURS,
+    include_ignored: bool = False,
+) -> dict[int, float]:
+    """release_id → max часов сверх SLA среди overdue AVC релиза."""
+    unmatched = find_unpaired_avc(
+        archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
+    )
+    result: dict[int, float] = {}
+    for item in unmatched:
+        if not item.overdue:
+            continue
+        past = overdue_hours_past_sla(item.age_hours, sla_hours=sla_hours)
+        if past is None:
+            continue
+        prev = result.get(item.release_id)
+        if prev is None or past > prev:
+            result[item.release_id] = past
+    return result
 
 
 def _need_message(state: HevcNeedState) -> str:

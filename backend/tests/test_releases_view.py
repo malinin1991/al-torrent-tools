@@ -73,7 +73,14 @@ def test_list_release_groups_exposes_genres() -> None:
         torrent_description="1-12",
         file_size=1024,
         created_at=None,
-        quality_json={"genres": ["Комедия", "Романтика"]},
+        quality_json={
+            "genres": ["Комедия", "Романтика"],
+            "members": [
+                {"role": "voicing", "role_label": "Озвучка", "nickname": "Zvukar"},
+            ],
+            "is_blocked_by_geo": True,
+            "is_blocked_by_copyrights": True,
+        },
         api_present=True,
         superseded=False,
     )
@@ -89,14 +96,21 @@ def test_list_release_groups_exposes_genres() -> None:
     result = list_release_groups(db, page=1, per_page=30)
 
     assert len(result["groups"]) == 1
-    assert result["groups"][0].genres == ["Комедия", "Романтика"]
-    assert result["groups"][0].tracked is False
-    assert result["groups"][0].track_source is None
-    assert result["groups"][0].torrents[0].api_present is True
-    assert result["groups"][0].torrents[0].hevc_pair_status is None
-    assert result["groups"][0].archived_torrents == []
+    group = result["groups"][0]
+    assert group.genres == ["Комедия", "Романтика"]
+    assert group.members == [
+        {"role": "voicing", "role_label": "Озвучка", "nickname": "Zvukar"},
+    ]
+    assert group.is_blocked_by_geo is True
+    assert group.is_blocked_by_copyrights is True
+    assert group.tracked is False
+    assert group.track_source is None
+    assert group.torrents[0].api_present is True
+    assert group.torrents[0].hevc_pair_status is None
+    assert group.archived_torrents == []
     assert result["tracked_only"] is False
     assert result["hevc_filter"] == ""
+    assert result["show_hidden"] is False
 
 
 def test_list_release_groups_tracked_only_flag() -> None:
