@@ -244,6 +244,12 @@ def test_list_release_groups_hevc_filter_overdue_marks_status() -> None:
         "quality": {"value": "1080p"},
         "codec": {"label": "AVC", "value": "x264/AVC"},
     }
+    quality_hevc = {
+        "type": {"value": "BDRip"},
+        "quality": {"value": "1080p"},
+        "codec": {"label": "HEVC", "value": "x265/HEVC"},
+    }
+    # AVC 1-12 + HEVC 1-11 age>SLA → overdue (presence есть), не pure missing
     overdue_row = SimpleNamespace(
         id=1,
         release_id=10,
@@ -253,15 +259,32 @@ def test_list_release_groups_hevc_filter_overdue_marks_status() -> None:
         torrent_id=100,
         info_hash="a" * 40,
         torrent_type="BDRip 1080p AVC",
-        torrent_description="1-2",
+        torrent_description="1-12",
         file_size=1024,
         created_at=now - timedelta(hours=HEVC_SLA_HOURS + 2),
         quality_json=quality_avc,
         api_present=True,
         superseded=False,
     )
+    hevc_partial = SimpleNamespace(
+        id=2,
+        release_id=10,
+        release_alias="show",
+        anime_name="Show",
+        category="AniLibria/2024",
+        torrent_id=101,
+        info_hash="b" * 40,
+        torrent_type="BDRip 1080p HEVC",
+        torrent_description="1-11",
+        file_size=1024,
+        created_at=now,
+        quality_json=quality_hevc,
+        api_present=True,
+        superseded=False,
+    )
+    pairing = [overdue_row, hevc_partial]
     stats_row = SimpleNamespace(
-        release_id=10, last_updated=overdue_row.created_at, torrent_count=1
+        release_id=10, last_updated=overdue_row.created_at, torrent_count=2
     )
     execute_calls = {"n": 0}
 
@@ -269,7 +292,7 @@ def test_list_release_groups_hevc_filter_overdue_marks_status() -> None:
         execute_calls["n"] += 1
         result = MagicMock()
         if execute_calls["n"] == 1:
-            result.all.return_value = [overdue_row]
+            result.all.return_value = pairing
         else:
             result.all.return_value = [stats_row]
         return result
@@ -277,19 +300,21 @@ def test_list_release_groups_hevc_filter_overdue_marks_status() -> None:
     db.execute.side_effect = _execute
     db.scalar.return_value = 1
     db.scalars.side_effect = [
-        MagicMock(all=lambda: [overdue_row]),
+        MagicMock(all=lambda: pairing),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
-        MagicMock(all=lambda: [overdue_row]),
+        MagicMock(all=lambda: pairing),
     ]
 
     result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
     assert result["hevc_filter"] == "overdue"
     assert len(result["groups"]) == 1
-    t = result["groups"][0].torrents[0]
+    by_id = {t.archive_id: t for t in result["groups"][0].torrents}
+    t = by_id[1]
     assert t.hevc_pair_status == "overdue"
+    assert by_id[2].hevc_pair_status is None
     # Бейдж: часы сверх SLA (age ≈ SLA+2 → ~2ч), не полный age.
     assert t.hevc_pair_age_hours is not None
     assert 1.5 < t.hevc_pair_age_hours < 2.5

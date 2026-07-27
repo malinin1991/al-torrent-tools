@@ -3,15 +3,18 @@
 missing         — HEVC вообще нет для слота (release + batch_start + quality /
                   source class). WEBRip↔WEB-DL не блокирует «HEVC есть».
                   AVC новее HEVC → не missing (это overdue после SLA).
-overdue         — age > 24h и нет актуального exact-аналога
+overdue         — на слоте уже есть HEVC (тот же batch_start; старый/частичный
+                  ОК) И age > 24h без актуального exact-аналога
                   (тот же rip type+quality+episodes), либо AVC новее exact-HEVC
                   по AniLibria torrent_id (created_at ALTT — только tie-break).
+                  Pure missing (нет HEVC на batch_start) никогда не overdue.
 type_mismatch   — HEVC есть (тот же start+quality в web-классе), но тип рипа
                   WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
 
 Бейдж (status): overdue > type_mismatch > missing.
 Число на бейдже «просрочка Nч» — часы сверх SLA: max(0, age − 24), не полный age.
-Фильтры независимы: один AVC может быть overdue и type_mismatch сразу.
+Фильтры независимы: один AVC может быть overdue и type_mismatch сразу;
+overdue и missing взаимоисключающи (overdue ⇒ has_hevc_for_batch_start).
 ignore_hevc на архиве AVC закрывает missing/overdue/type_mismatch.
 """
 
@@ -497,7 +500,14 @@ def find_unpaired_avc(
                 hevc=exact_ref,
             )
             needs_exact_catchup = (not has_exact) or avc_newer_exact
-            is_overdue = needs_exact_catchup and hours is not None and hours > sla_hours
+            # overdue только если HEVC уже был на этом batch_start (частичный/старый).
+            # Pure missing (нет presence) — только missing, даже при age > SLA.
+            is_overdue = (
+                has_presence
+                and needs_exact_catchup
+                and hours is not None
+                and hours > sla_hours
+            )
 
             if not is_missing and not is_overdue and not is_type_mismatch:
                 continue

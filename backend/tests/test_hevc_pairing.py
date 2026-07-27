@@ -450,7 +450,8 @@ def test_near_miss_same_start_not_missing() -> None:
     assert find_unpaired_avc(rows, now=now) == []
 
 
-def test_overdue_when_age_over_sla_without_exact() -> None:
+def test_avc_alone_aged_missing_not_overdue() -> None:
+    """AVC only, нет HEVC на batch_start, age>24h → missing, НЕ overdue."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     old = now - timedelta(hours=HEVC_SLA_HOURS + 1)
     fresh = now - timedelta(hours=2)
@@ -460,14 +461,16 @@ def test_overdue_when_age_over_sla_without_exact() -> None:
     ]
     unpaired = find_unpaired_avc(rows, now=now)
     by_id = {u.archive_id: u for u in unpaired}
-    assert by_id[1].overdue is True
+    assert by_id[1].overdue is False
     assert by_id[1].missing is True
-    assert by_id[1].status == "overdue"
-    assert by_id[1].need_state == "overdue"
+    assert by_id[1].status == "missing"
+    assert by_id[1].need_state == "missing"
     assert by_id[1].age_hours is not None and by_id[1].age_hours > HEVC_SLA_HOURS
     assert by_id[2].overdue is False
     assert by_id[2].missing is True
     assert by_id[2].status == "missing"
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == {1}
 
 
 def test_ignores_archived_and_superseded() -> None:
@@ -525,6 +528,23 @@ def test_release_ids_matching_filters() -> None:
             codec="HEVC",
             created_at=now,
         ),
+        # release 15: частичный HEVC + age>SLA → overdue, не missing
+        _row(
+            archive_id=7,
+            release_id=15,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now - timedelta(hours=30),
+            torrent_id=70,
+        ),
+        _row(
+            archive_id=8,
+            release_id=15,
+            episodes="1-11",
+            codec="HEVC",
+            created_at=now,
+            torrent_id=71,
+        ),
         _row(
             archive_id=5,
             release_id=40,
@@ -543,7 +563,7 @@ def test_release_ids_matching_filters() -> None:
         ),
     ]
     assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == {10, 20}
-    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {10}
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {15}
     assert release_ids_matching_hevc_filter(
         rows, hevc_filter="type_mismatch", now=now
     ) == {40}
@@ -567,28 +587,48 @@ def test_exact_pair_excluded_from_both_filters() -> None:
 
 
 def test_sla_boundary_exact_hours_not_overdue() -> None:
-    """age == SLA → missing; age > SLA → overdue."""
+    """С presence HEVC: age == SLA → ok (нет бейджа); age > SLA → overdue."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     rows = [
         _row(
             archive_id=1,
-            episodes="1",
+            release_id=1,
+            episodes="1-12",
             codec="AVC",
             created_at=now - timedelta(hours=HEVC_SLA_HOURS),
+            torrent_id=10,
         ),
         _row(
             archive_id=2,
-            episodes="2",
+            release_id=1,
+            episodes="1-11",
+            codec="HEVC",
+            created_at=now,
+            torrent_id=11,
+        ),
+        _row(
+            archive_id=3,
+            release_id=2,
+            episodes="1-12",
             codec="AVC",
             created_at=now - timedelta(hours=HEVC_SLA_HOURS, seconds=1),
+            torrent_id=20,
+        ),
+        _row(
+            archive_id=4,
+            release_id=2,
+            episodes="1-11",
+            codec="HEVC",
+            created_at=now,
+            torrent_id=21,
         ),
     ]
     unpaired = find_unpaired_avc(rows, now=now)
     by_id = {u.archive_id: u for u in unpaired}
-    assert by_id[1].overdue is False
-    assert by_id[1].status == "missing"
-    assert by_id[2].overdue is True
-    assert by_id[2].status == "overdue"
+    assert 1 not in by_id  # age == SLA → ещё не overdue, presence закрывает missing
+    assert by_id[3].overdue is True
+    assert by_id[3].missing is False
+    assert by_id[3].status == "overdue"
 
 
 def test_overdue_hours_past_sla_for_badge() -> None:
@@ -789,7 +829,48 @@ def test_sync_type_mismatch_message(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_sync_emits_transition_missing_to_overdue(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Переход need→need (missing→overdue) тоже пишется в историю."""
+    """Переход need→need (missing→overdue) при появлении частичного HEVC."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    avc = _row(
+        archive_id=1,
+        episodes="1-12",
+        codec="AVC",
+        created_at=now - timedelta(hours=HEVC_SLA_HOURS + 1),
+        info_hash="aa" * 20,
+        torrent_id=10,
+    )
+    hevc = _row(
+        archive_id=2,
+        episodes="1-11",
+        codec="HEVC",
+        created_at=now,
+        info_hash="bb" * 20,
+        torrent_id=11,
+    )
+    pipeline = SimpleNamespace(id=3, info_hash="aa" * 20, status="done")
+    recorded: list[dict] = []
+
+    def fake_record(db, pipeline_id, **kwargs):
+        recorded.append(kwargs)
+        return SimpleNamespace(id=1, **kwargs)
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc, hevc]
+    db.scalar.side_effect = [pipeline, SimpleNamespace(to_status="missing")]
+    n = sync_hevc_pair_events_for_release(db, 1, now=now)
+    assert n == 1
+    assert recorded[0]["from_status"] == "missing"
+    assert recorded[0]["to_status"] == "overdue"
+    assert recorded[0]["message"] == "Просрочка HEVC"
+    assert recorded[0]["details"]["missing"] is False
+    assert recorded[0]["details"]["overdue"] is True
+
+
+def test_sync_aged_avc_alone_stays_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AVC alone age>SLA остаётся missing — не эмитим ложный overdue."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     avc = _row(
         archive_id=1,
@@ -808,18 +889,28 @@ def test_sync_emits_transition_missing_to_overdue(
     monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
     db = MagicMock()
     db.scalars.return_value.all.return_value = [avc]
-    db.scalar.side_effect = [pipeline, SimpleNamespace(to_status="missing")]
+    db.scalar.side_effect = [
+        pipeline,
+        SimpleNamespace(
+            to_status="missing",
+            details_json={
+                "missing": True,
+                "overdue": False,
+                "type_mismatch": False,
+                "hevc_outdated": False,
+                "paired_hevc_info_hash": None,
+            },
+        ),
+    ]
     n = sync_hevc_pair_events_for_release(db, 1, now=now)
-    assert n == 1
-    assert recorded[0]["from_status"] == "missing"
-    assert recorded[0]["to_status"] == "overdue"
-    assert recorded[0]["message"] == "Просрочка HEVC"
+    assert n == 0
+    assert recorded == []
 
 
 def test_sync_emits_when_flags_change_same_badge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """overdue без HEVC → overdue+type_mismatch: тот же бейдж, но новая запись."""
+    """Legacy overdue+missing → overdue+type_mismatch: тот же бейдж, новая запись."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
     avc = _row(

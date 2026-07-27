@@ -362,7 +362,8 @@ def test_age_boundary_missing_vs_overdue() -> None:
         anime_name="Fresh Show",
         release_alias="fresh",
     )
-    old = _archive(
+    # Pure missing age>SLA — только missing, НЕ overdue
+    old_alone = _archive(
         archive_id=2,
         release_id=12,
         torrent_id=201,
@@ -383,39 +384,65 @@ def test_age_boundary_missing_vs_overdue() -> None:
         anime_name="Edge Show",
         release_alias="edge",
     )
-    pairing = [fresh, old, edge]
+    # overdue: частичный HEVC + age>SLA
+    overdue_avc = _archive(
+        archive_id=4,
+        release_id=14,
+        torrent_id=203,
+        episodes="1-12",
+        codec="AVC",
+        created_at=now - timedelta(hours=HEVC_SLA_HOURS + 1),
+        anime_name="Catchup Show",
+        release_alias="catchup",
+    )
+    overdue_hevc = _archive(
+        archive_id=5,
+        release_id=14,
+        torrent_id=204,
+        episodes="1-11",
+        codec="HEVC",
+        created_at=now,
+        anime_name="Catchup Show",
+        release_alias="catchup",
+    )
+    missing_pairing = [fresh, old_alone, edge]
+    overdue_pairing = [overdue_avc, overdue_hevc]
+    all_pairing = missing_pairing + overdue_pairing
 
-    # overdue: только release 12
+    # overdue: только release 14 (presence + age>SLA); pure missing не попадает
     db_overdue = MagicMock()
-    db_overdue.execute.return_value.all.return_value = pairing
     execute_n = {"n": 0}
 
     def _exec_overdue(stmt):  # noqa: ANN001
         execute_n["n"] += 1
         result = MagicMock()
         if execute_n["n"] == 1:
-            result.all.return_value = pairing
+            result.all.return_value = all_pairing
         else:
             result.all.return_value = [
-                SimpleNamespace(release_id=12, last_updated=old.created_at, torrent_count=1)
+                SimpleNamespace(
+                    release_id=14, last_updated=overdue_avc.created_at, torrent_count=2
+                )
             ]
         return result
 
     db_overdue.execute.side_effect = _exec_overdue
     db_overdue.scalar.return_value = 1
     db_overdue.scalars.side_effect = [
-        MagicMock(all=lambda: [old]),
+        MagicMock(all=lambda: overdue_pairing),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
-        MagicMock(all=lambda: [old]),
+        MagicMock(all=lambda: overdue_pairing),
     ]
     overdue = list_release_groups(db_overdue, hevc_filter="overdue", page=1, per_page=30)
-    assert [g.release_id for g in overdue["groups"]] == [12]
-    assert overdue["groups"][0].torrents[0].hevc_pair_status == "overdue"
+    assert [g.release_id for g in overdue["groups"]] == [14]
+    by_id = {t.archive_id: t for t in overdue["groups"][0].torrents}
+    assert by_id[4].hevc_pair_status == "overdue"
+    assert by_id[5].hevc_pair_status is None
 
-    # missing: все три unpaired
+    # missing: только pure missing (11/12/13); overdue-релиз 14 не в missing
     db_missing = MagicMock()
     exec_m = {"n": 0}
 
@@ -423,11 +450,13 @@ def test_age_boundary_missing_vs_overdue() -> None:
         exec_m["n"] += 1
         result = MagicMock()
         if exec_m["n"] == 1:
-            result.all.return_value = pairing
+            result.all.return_value = all_pairing
         else:
             result.all.return_value = [
                 SimpleNamespace(release_id=11, last_updated=fresh.created_at, torrent_count=1),
-                SimpleNamespace(release_id=12, last_updated=old.created_at, torrent_count=1),
+                SimpleNamespace(
+                    release_id=12, last_updated=old_alone.created_at, torrent_count=1
+                ),
                 SimpleNamespace(release_id=13, last_updated=edge.created_at, torrent_count=1),
             ]
         return result
@@ -435,18 +464,18 @@ def test_age_boundary_missing_vs_overdue() -> None:
     db_missing.execute.side_effect = _exec_missing
     db_missing.scalar.return_value = 3
     db_missing.scalars.side_effect = [
-        MagicMock(all=lambda: pairing),
+        MagicMock(all=lambda: missing_pairing),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
         MagicMock(all=lambda: []),
-        MagicMock(all=lambda: pairing),
+        MagicMock(all=lambda: missing_pairing),
     ]
     missing = list_release_groups(db_missing, hevc_filter="missing", page=1, per_page=30)
     assert {g.release_id for g in missing["groups"]} == {11, 12, 13}
     by_rid = {g.release_id: g.torrents[0].hevc_pair_status for g in missing["groups"]}
     assert by_rid[11] == "missing"
-    assert by_rid[12] == "overdue"
+    assert by_rid[12] == "missing"  # age>SLA без HEVC — всё ещё missing
     assert by_rid[13] == "missing"
 
 
