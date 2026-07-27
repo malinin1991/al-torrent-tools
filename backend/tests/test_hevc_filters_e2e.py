@@ -449,6 +449,55 @@ def test_age_boundary_missing_vs_overdue() -> None:
     assert by_rid[13] == "missing"
 
 
+def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
+    """WEBRip AVC + WEB-DL HEVC → type_mismatch filter, не missing."""
+    now = utcnow()
+    avc = _archive(
+        archive_id=1,
+        release_id=10278,
+        torrent_id=1,
+        episodes="1-4",
+        codec="AVC",
+        rip_type="WEBRip",
+        created_at=now - timedelta(hours=3),
+    )
+    hevc = _archive(
+        archive_id=2,
+        release_id=10278,
+        torrent_id=2,
+        episodes="1-4",
+        codec="HEVC",
+        rip_type="WEB-DL",
+        created_at=now,
+    )
+    pairing = [avc, hevc]
+    stats = [SimpleNamespace(release_id=10278, last_updated=now, torrent_count=2)]
+
+    db_mismatch = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pairing,
+        stats_rows=stats,
+        total=1,
+    )
+    mismatch = list_release_groups(
+        db_mismatch, hevc_filter="type_mismatch", page=1, per_page=30
+    )
+    assert len(mismatch["groups"]) == 1
+    by_id = {t.archive_id: t for t in mismatch["groups"][0].torrents}
+    assert by_id[1].hevc_pair_status == "type_mismatch"
+    assert by_id[2].hevc_pair_status is None
+
+    db_missing = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=[],
+        stats_rows=[],
+        total=0,
+    )
+    missing = list_release_groups(db_missing, hevc_filter="missing", page=1, per_page=30)
+    assert missing["groups"] == []
+    assert missing["total"] == 0
+
+
 def test_webrip_does_not_pair_with_bdrip_across_families() -> None:
     now = utcnow()
     avc = _archive(
@@ -578,6 +627,20 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
                 hevc_pair_status="missing",
                 hevc_pair_age_hours=2.0,
             ),
+            ReleaseTorrentRow(
+                archive_id=3,
+                torrent_id=12,
+                info_hash="cc" * 20,
+                torrent_type="WEBRip 1080p AVC",
+                torrent_description="1-4",
+                file_size=100,
+                file_size_label="100 B",
+                created_at=now,
+                pipeline_status=None,
+                pipeline_error=None,
+                hevc_pair_status="type_mismatch",
+                hevc_pair_age_hours=3.0,
+            ),
         ],
         archived_torrents=[],
         tracked=False,
@@ -604,8 +667,11 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
     assert 'value="missing"' in html and "selected" in html
     assert "Нет HEVC" in html
     assert "Просрочка" in html
+    assert "Расхождение типов" in html
+    assert 'value="type_mismatch"' in html
     assert "badge-danger" in html and "просрочка" in html
     assert "badge-warn" in html and "нет HEVC" in html
+    assert "badge-muted" in html and "расхождение типов" in html
     assert "hevc_filter=missing" in html or 'value="missing"' in html
 
 

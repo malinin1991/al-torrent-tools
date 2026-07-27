@@ -631,12 +631,14 @@ async def pipeline_detail_page(
         torrent_label = " · ".join(parts) if parts else None
 
     timeline = []
+    life_path_chunks: list[str] = []
     for event in events:
         job_exists = event.job_id is not None and event.job_id in existing_jobs
         details = event.details_json if isinstance(event.details_json, dict) else {}
         details_pretty = ""
         if details:
             details_pretty = json.dumps(details, ensure_ascii=False, indent=2, sort_keys=True)
+        actor = details.get("actor")
         timeline.append(
             {
                 "event": event,
@@ -644,10 +646,22 @@ async def pipeline_detail_page(
                 "job_link": (
                     f"/jobs?job_id={event.job_id}" if job_exists else None
                 ),
-                "actor": details.get("actor"),
+                "actor": actor,
                 "details_pretty": details_pretty,
             }
         )
+        status_part = ""
+        if event.from_status or event.to_status:
+            status_part = f" {event.from_status or '—'} → {event.to_status or '—'}"
+        actor_part = f" actor={actor}" if actor else ""
+        job_part = f" job=#{event.job_id}" if event.job_id is not None else ""
+        chunk = (
+            f"{event.created_at} [{event.event_type}]{status_part}{actor_part}{job_part}\n"
+            f"{event.message or ''}"
+        )
+        if details_pretty:
+            chunk += f"\nдетали:\n{details_pretty}"
+        life_path_chunks.append(chunk)
 
     master_states: dict = {}
     try:
@@ -663,6 +677,7 @@ async def pipeline_detail_page(
         {
             "pipeline": pipeline,
             "timeline": timeline,
+            "life_path_text": "\n\n".join(life_path_chunks),
             "release_name": release_name or f"Release #{pipeline.release_id}",
             "torrent_label": torrent_label or f"Torrent #{pipeline.torrent_id}",
             "master_state": master_states.get((pipeline.info_hash or "").lower(), {}),

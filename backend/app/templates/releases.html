@@ -10,10 +10,11 @@
     </label>
     <label class="row" style="gap:6px; margin:0;">
       HEVC
-      <select class="input" name="hevc_filter" style="max-width:160px;">
+      <select class="input" name="hevc_filter" style="max-width:200px;">
         <option value="" {% if not hevc_filter %}selected{% endif %}>Все</option>
         <option value="missing" {% if hevc_filter == "missing" %}selected{% endif %}>Нет HEVC</option>
         <option value="overdue" {% if hevc_filter == "overdue" %}selected{% endif %}>Просрочка</option>
+        <option value="type_mismatch" {% if hevc_filter == "type_mismatch" %}selected{% endif %}>Расхождение типов</option>
       </select>
     </label>
     <button class="btn" type="submit">Найти</button>
@@ -80,9 +81,11 @@
           <td>
             {{ t.torrent_type or "-" }}
             {% if t.hevc_pair_status == "overdue" %}
-            <span class="badge badge-danger" title="AVC без точного HEVC-аналога дольше 24 ч">просрочка {{ (t.hevc_pair_age_hours or 0)|int }}ч</span>
+            <span class="badge badge-danger" title="HEVC есть или нет exact-аналога, но актуальная пара не сделана вовремя (>24 ч)">просрочка {{ (t.hevc_pair_age_hours or 0)|int }}ч</span>
+            {% elif t.hevc_pair_status == "type_mismatch" %}
+            <span class="badge badge-muted" title="HEVC есть на том же старте батча, но тип рипа WEBRip↔WEB-DL расходится">расхождение типов</span>
             {% elif t.hevc_pair_status == "missing" %}
-            <span class="badge badge-warn" title="AVC без HEVC с тем же стартом батча">нет HEVC</span>
+            <span class="badge badge-warn" title="Для этого батча в релизе нет HEVC (тот же старт и quality)">нет HEVC</span>
             {% endif %}
           </td>
           <td>{{ t.torrent_description or "-" }}</td>

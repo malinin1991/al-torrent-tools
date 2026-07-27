@@ -1,7 +1,10 @@
-"""Тесты пар AVC↔HEVC и фильтров missing/overdue."""
+"""Тесты пар AVC↔HEVC и фильтров missing/overdue/type_mismatch."""
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
 
 from app.services.hevc_pairing import (
     HEVC_SLA_HOURS,
@@ -10,6 +13,7 @@ from app.services.hevc_pairing import (
     find_unpaired_avc,
     release_ids_matching_hevc_filter,
     rip_family_key,
+    sync_hevc_pair_events_for_release,
 )
 
 
@@ -35,6 +39,7 @@ def _row(
     superseded: bool = False,
     torrent_type: str | None = None,
     quality_json: dict | None = None,
+    info_hash: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=archive_id,
@@ -48,6 +53,7 @@ def _row(
         created_at=created_at,
         api_present=api_present,
         superseded=superseded,
+        info_hash=info_hash or f"{archive_id:040x}",
     )
 
 
@@ -70,7 +76,7 @@ def test_batch_start_key_regular_ova_film() -> None:
 
 
 def test_pf_film_avc_hevc_not_missing() -> None:
-    """AVC+HEVC оба «П/ф фильм» в одном rip_family — не missing."""
+    """AVC+HEVC оба «П/ф фильм» — не missing."""
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     rows = [
         _row(archive_id=1, episodes="П/ф фильм", codec="AVC", created_at=now),
@@ -81,7 +87,7 @@ def test_pf_film_avc_hevc_not_missing() -> None:
 
 
 def test_pf_film_pairs_with_film_label() -> None:
-    """«П/ф фильм» и «Фильм» — один film start-key внутри rip_family."""
+    """«П/ф фильм» и «Фильм» — один film start-key для presence."""
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     rows = [
         _row(archive_id=1, episodes="П/ф фильм", codec="AVC", created_at=now),
@@ -89,8 +95,7 @@ def test_pf_film_pairs_with_film_label() -> None:
     ]
     unpaired = find_unpaired_avc(rows, now=now)
     assert unpaired == []
-    # overdue: exact description всё ещё разный — не трогаем exact-логику;
-    # при age ≤ SLA overdue нет; при age > SLA AVC станет overdue, но не missing.
+    # overdue: exact description всё ещё разный — при age > SLA overdue, не missing.
     old = now - timedelta(hours=HEVC_SLA_HOURS + 1)
     overdue_rows = [
         _row(archive_id=10, episodes="П/ф фильм", codec="AVC", created_at=old),
@@ -128,12 +133,189 @@ def test_rip_family_strips_codec_from_quality_json_type() -> None:
     )
 
 
-def test_rip_family_fallback_strips_codec_from_torrent_type() -> None:
+def test_rip_family_keeps_webrip_and_webdl_distinct() -> None:
+    """WEBRip и WEB-DL — разные rip_family (без канона WEB)."""
+    assert (
+        rip_family_key(
+            quality_json=_qj(rip_type="WEBRip", quality="1080p", codec="AVC"),
+            torrent_type="WEBRip 1080p AVC",
+        )
+        == "WEBRip 1080p"
+    )
+    assert (
+        rip_family_key(
+            quality_json=_qj(rip_type="WEB-DL", quality="1080p", codec="HEVC"),
+            torrent_type="WEB-DL 1080p HEVC",
+        )
+        == "WEB-DL 1080p"
+    )
+    assert (
+        rip_family_key(quality_json={}, torrent_type="WEBDL 1080p HEVC")
+        == "WEB-DL 1080p"
+    )
     assert (
         rip_family_key(quality_json={}, torrent_type="WEBRip 1080p HEVC")
         == "WEBRip 1080p"
     )
     assert rip_family_key(quality_json=None, torrent_type="x265 HEVC") == ""
+
+
+def test_saijo_webrip_avc_webdl_hevc_type_mismatch_not_missing() -> None:
+    """Release 10278-like: AVC WEBRip + HEVC WEB-DL → type_mismatch, не missing."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=3377,
+            release_id=10278,
+            torrent_id=1,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEBRip",
+            quality="1080p",
+            created_at=now - timedelta(hours=3),
+        ),
+        _row(
+            archive_id=3380,
+            release_id=10278,
+            torrent_id=2,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            quality="1080p",
+            created_at=now,
+        ),
+    ]
+    assert batch_start_key("1-4") == ("regular", 1)
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is False
+    assert unpaired[0].type_mismatch is True
+    assert unpaired[0].overdue is False
+    assert unpaired[0].status == "type_mismatch"
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="type_mismatch", now=now
+    ) == {10278}
+
+
+def test_webrip_webdl_type_mismatch_and_overdue_after_sla() -> None:
+    """WEBRip AVC + WEB-DL HEVC age>24h → overdue бейдж, оба флага в фильтрах."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=old,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=old,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is False
+    assert unpaired[0].type_mismatch is True
+    assert unpaired[0].overdue is True
+    assert unpaired[0].status == "overdue"
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {1}
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="type_mismatch", now=now
+    ) == {1}
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+
+
+def test_bdrip_still_distinct_from_web() -> None:
+    """BDRip vs WEB* — разные продукты → missing, не type_mismatch."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="BDRip",
+            created_at=now,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=now,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert [u.archive_id for u in unpaired] == [1]
+    assert unpaired[0].rip_family == "BDRip 1080p"
+    assert unpaired[0].missing is True
+    assert unpaired[0].type_mismatch is False
+
+
+def test_avc_newer_than_hevc_not_missing_until_sla() -> None:
+    """Тот же start/exact: AVC republish новее HEVC, age≤24h → нет бейджа."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    hevc_ts = now - timedelta(hours=10)
+    avc_ts = now - timedelta(hours=1)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-12",
+            codec="AVC",
+            created_at=avc_ts,
+            info_hash="aa" * 20,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-12",
+            codec="HEVC",
+            created_at=hevc_ts,
+            info_hash="bb" * 20,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert unpaired == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+
+
+def test_avc_newer_than_hevc_overdue_after_sla() -> None:
+    """AVC новее exact-HEVC и age > 24h → overdue, не missing."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    hevc_ts = now - timedelta(hours=48)
+    avc_ts = now - timedelta(hours=HEVC_SLA_HOURS + 1)
+    rows = [
+        _row(archive_id=1, episodes="1-12", codec="AVC", created_at=avc_ts),
+        _row(archive_id=2, episodes="1-12", codec="HEVC", created_at=hevc_ts),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is False
+    assert unpaired[0].hevc_outdated is True
+    assert unpaired[0].overdue is True
+    assert unpaired[0].status == "overdue"
+    assert unpaired[0].need_state == "overdue"
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {1}
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+
+
+def test_hevc_newer_or_equal_not_missing() -> None:
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    avc_ts = now - timedelta(hours=5)
+    rows_newer = [
+        _row(archive_id=1, episodes="1-12", codec="AVC", created_at=avc_ts),
+        _row(archive_id=2, episodes="1-12", codec="HEVC", created_at=now),
+    ]
+    assert find_unpaired_avc(rows_newer, now=now) == []
+    rows_equal = [
+        _row(archive_id=3, episodes="1-12", codec="AVC", created_at=now),
+        _row(archive_id=4, episodes="1-12", codec="HEVC", created_at=now),
+    ]
+    assert find_unpaired_avc(rows_equal, now=now) == []
 
 
 def test_classify_archive_codec_from_quality_and_type() -> None:
@@ -266,6 +448,7 @@ def test_overdue_when_age_over_sla_without_exact() -> None:
     assert by_id[1].overdue is True
     assert by_id[1].missing is True
     assert by_id[1].status == "overdue"
+    assert by_id[1].need_state == "overdue"
     assert by_id[1].age_hours is not None and by_id[1].age_hours > HEVC_SLA_HOURS
     assert by_id[2].overdue is False
     assert by_id[2].missing is True
@@ -327,9 +510,28 @@ def test_release_ids_matching_filters() -> None:
             codec="HEVC",
             created_at=now,
         ),
+        _row(
+            archive_id=5,
+            release_id=40,
+            episodes="1-2",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now,
+        ),
+        _row(
+            archive_id=6,
+            release_id=40,
+            episodes="1-2",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=now,
+        ),
     ]
     assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == {10, 20}
     assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {10}
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="type_mismatch", now=now
+    ) == {40}
     assert release_ids_matching_hevc_filter(rows, hevc_filter="", now=now) == set()
 
 
@@ -395,6 +597,8 @@ def test_different_rip_families_do_not_pair() -> None:
     unpaired = find_unpaired_avc(rows, now=now)
     assert [u.archive_id for u in unpaired] == [1]
     assert unpaired[0].rip_family == "BDRip 1080p"
+    assert unpaired[0].missing is True
+    assert unpaired[0].type_mismatch is False
 
 
 def test_ova_and_film_start_pairing() -> None:
@@ -410,3 +614,232 @@ def test_ova_and_film_start_pairing() -> None:
     # 1 paired with OVA (start 1); 3 paired with Film; 5 alone (ova start 5)
     assert [u.archive_id for u in unpaired] == [5]
     assert unpaired[0].missing is True
+
+
+def test_same_web_type_hevc_clears_type_mismatch() -> None:
+    """WEBRip AVC + WEBRip HEVC → ок; WEB-DL HEVC рядом не ломает."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=now,
+        ),
+        _row(
+            archive_id=3,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=now,
+        ),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+
+
+def test_sync_hevc_pair_events_emits_on_need_and_skips_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Первый sync → hevc_status «Нет HEVC»; повтор без смены state → 0."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    avc = _row(
+        archive_id=1,
+        release_id=99,
+        torrent_id=55,
+        episodes="1-4",
+        codec="AVC",
+        rip_type="WEBRip",
+        created_at=now,
+        info_hash="aa" * 20,
+    )
+    pipeline = SimpleNamespace(id=7, info_hash="aa" * 20, status="master_added")
+    recorded: list[dict] = []
+
+    def fake_record(db, pipeline_id, **kwargs):
+        recorded.append({"pipeline_id": pipeline_id, **kwargs})
+        return SimpleNamespace(id=len(recorded), pipeline_id=pipeline_id, **kwargs)
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc]
+    db.scalar.side_effect = [pipeline, None]
+    n = sync_hevc_pair_events_for_release(db, 99, job_id=3, now=now)
+    assert n == 1
+    assert recorded[0]["event_type"] == "hevc_status"
+    assert recorded[0]["message"] == "Нет HEVC"
+    assert recorded[0]["to_status"] == "missing"
+    assert recorded[0]["details"]["rip_family"] == "WEBRip 1080p"
+    assert recorded[0]["details"]["batch_start_key"] == ["regular", 1]
+
+    db.scalar.side_effect = [pipeline, SimpleNamespace(to_status="missing")]
+    n2 = sync_hevc_pair_events_for_release(db, 99, job_id=3, now=now)
+    assert n2 == 0
+    assert len(recorded) == 1
+
+
+def test_sync_hevc_pair_events_clears_when_same_type_pair_appears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    avc = _row(
+        archive_id=1,
+        episodes="1-4",
+        codec="AVC",
+        rip_type="WEBRip",
+        created_at=now - timedelta(hours=2),
+        info_hash="aa" * 20,
+    )
+    hevc = _row(
+        archive_id=2,
+        episodes="1-4",
+        codec="HEVC",
+        rip_type="WEBRip",
+        created_at=now,
+        info_hash="bb" * 20,
+        torrent_id=56,
+    )
+    pipeline = SimpleNamespace(id=7, info_hash="aa" * 20, status="done")
+    recorded: list[dict] = []
+
+    def fake_record(db, pipeline_id, **kwargs):
+        recorded.append({"pipeline_id": pipeline_id, **kwargs})
+        return SimpleNamespace(id=1, pipeline_id=pipeline_id, **kwargs)
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc, hevc]
+    db.scalar.side_effect = [pipeline, SimpleNamespace(to_status="missing")]
+    n = sync_hevc_pair_events_for_release(db, 1, now=now)
+    assert n == 1
+    assert recorded[0]["message"] == "HEVC пара найдена"
+    assert recorded[0]["from_status"] == "missing"
+    assert recorded[0]["to_status"] == "ok"
+
+
+def test_sync_type_mismatch_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    avc = _row(
+        archive_id=1,
+        episodes="1-4",
+        codec="AVC",
+        rip_type="WEBRip",
+        created_at=now - timedelta(hours=2),
+        info_hash="aa" * 20,
+    )
+    hevc = _row(
+        archive_id=2,
+        episodes="1-4",
+        codec="HEVC",
+        rip_type="WEB-DL",
+        created_at=now,
+        info_hash="bb" * 20,
+        torrent_id=77,
+    )
+    pipeline = SimpleNamespace(id=3, info_hash="aa" * 20, status="done")
+    recorded: list[dict] = []
+
+    def fake_record(db, pipeline_id, **kwargs):
+        recorded.append(kwargs)
+        return SimpleNamespace(id=1, **kwargs)
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc, hevc]
+    db.scalar.side_effect = [pipeline, None]
+    n = sync_hevc_pair_events_for_release(db, 1, now=now)
+    assert n == 1
+    assert recorded[0]["message"] == "Расхождение типов"
+    assert recorded[0]["to_status"] == "type_mismatch"
+    assert recorded[0]["details"]["type_mismatch"] is True
+    assert recorded[0]["details"]["missing"] is False
+
+
+def test_sync_emits_transition_missing_to_overdue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Переход need→need (missing→overdue) тоже пишется в историю."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    avc = _row(
+        archive_id=1,
+        episodes="1-12",
+        codec="AVC",
+        created_at=now - timedelta(hours=HEVC_SLA_HOURS + 1),
+        info_hash="aa" * 20,
+    )
+    pipeline = SimpleNamespace(id=3, info_hash="aa" * 20, status="done")
+    recorded: list[dict] = []
+
+    def fake_record(db, pipeline_id, **kwargs):
+        recorded.append(kwargs)
+        return SimpleNamespace(id=1, **kwargs)
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc]
+    db.scalar.side_effect = [pipeline, SimpleNamespace(to_status="missing")]
+    n = sync_hevc_pair_events_for_release(db, 1, now=now)
+    assert n == 1
+    assert recorded[0]["from_status"] == "missing"
+    assert recorded[0]["to_status"] == "overdue"
+    assert recorded[0]["message"] == "Просрочка HEVC"
+
+
+def test_sync_emits_when_flags_change_same_badge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """overdue без HEVC → overdue+type_mismatch: тот же бейдж, но новая запись."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
+    avc = _row(
+        archive_id=1,
+        episodes="1-4",
+        codec="AVC",
+        rip_type="WEBRip",
+        created_at=old,
+        info_hash="aa" * 20,
+    )
+    hevc = _row(
+        archive_id=2,
+        episodes="1-4",
+        codec="HEVC",
+        rip_type="WEB-DL",
+        created_at=old,
+        info_hash="bb" * 20,
+        torrent_id=88,
+    )
+    pipeline = SimpleNamespace(id=3, info_hash="aa" * 20, status="done")
+    recorded: list[dict] = []
+
+    def fake_record(db, pipeline_id, **kwargs):
+        recorded.append(kwargs)
+        return SimpleNamespace(id=1, **kwargs)
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc, hevc]
+    last = SimpleNamespace(
+        to_status="overdue",
+        details_json={
+            "missing": True,
+            "overdue": True,
+            "type_mismatch": False,
+            "hevc_outdated": False,
+            "paired_hevc_info_hash": None,
+        },
+    )
+    db.scalar.side_effect = [pipeline, last]
+    n = sync_hevc_pair_events_for_release(db, 1, now=now)
+    assert n == 1
+    assert recorded[0]["to_status"] == "overdue"
+    assert recorded[0]["details"]["missing"] is False
+    assert recorded[0]["details"]["type_mismatch"] is True
+    assert recorded[0]["details"]["paired_hevc_info_hash"] == "bb" * 20

@@ -27,6 +27,7 @@ from app.services.release_checkpoint import (
     should_skip_by_torrents_fingerprint,
     torrents_fingerprint,
 )
+from app.services.hevc_pairing import sync_hevc_pair_events_for_release
 from app.services.telegram_notify import enqueue_pipeline_telegram_notification
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.file_tracker import update_api_present_for_release
@@ -50,6 +51,23 @@ class TorrentProcessor:
     def _add_log(self, message: str, level: str = "info") -> None:
         self._db.add(JobLog(job_id=self._job_id, message=message, level=level))
         self._db.commit()
+
+    def _sync_hevc_pair_events(self, release_id: int) -> None:
+        """Переходы «нет HEVC»↔пара на pipeline_events (без спама на каждом прогоне)."""
+        try:
+            n = sync_hevc_pair_events_for_release(
+                self._db, release_id, job_id=self._job_id
+            )
+            if n:
+                self._add_log(
+                    f"Релиз {release_id}: hevc_status events={n}",
+                    "debug",
+                )
+        except Exception as exc:
+            self._add_log(
+                f"Релиз {release_id}: hevc_status sync failed: {exc}",
+                "warning",
+            )
 
     def _get_master_client(self) -> QbClient:
         qb_client = self._db.scalar(select(QbClient).where(QbClient.role == "master", QbClient.enabled.is_(True)).limit(1))
@@ -532,6 +550,8 @@ class TorrentProcessor:
             f"Релиз {release_id}: api_present refresh true={stats['true']}, false={stats['false']}",
             "debug",
         )
+        # api_present меняет результат find_unpaired_avc — обновим hevc_status.
+        self._sync_hevc_pair_events(release_id)
         return stats
 
     async def process_release(
@@ -569,6 +589,7 @@ class TorrentProcessor:
                 fresh_at=list_fresh_at,
                 torrents_fingerprint_value="",
             )
+            self._sync_hevc_pair_events(release_id)
             return self.empty_release_stats()
 
         fingerprint = torrents_fingerprint(torrents)
@@ -643,6 +664,7 @@ class TorrentProcessor:
                 fresh_at=list_fresh_at,
                 torrents_fingerprint_value=fingerprint,
             )
+            self._sync_hevc_pair_events(release_id)
             return {
                 "total": len(torrents),
                 "added": 0,
@@ -920,4 +942,5 @@ class TorrentProcessor:
         else:
             # Иначе markers совпадут со старым checkpoint и early-skip скроет ретрай.
             invalidate_release_checkpoint(self._db, release_id)
+        self._sync_hevc_pair_events(release_id)
         return stats

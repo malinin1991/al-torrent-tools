@@ -44,8 +44,15 @@
 </div>
 
 <div class="card">
-  <h2 style="margin:0 0 12px; font-size:1.1rem;">Жизненный путь</h2>
+  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 12px;">
+    <h2 style="margin:0; font-size:1.1rem;">Жизненный путь</h2>
+    {% if timeline %}
+    <button class="btn btn-secondary" type="button" id="copy-pipeline-path-btn" onclick="copyPipelineLifePath()">Копировать жизненный путь</button>
+    <span id="copy-pipeline-path-status" class="muted" hidden>Скопировано</span>
+    {% endif %}
+  </div>
   {% if timeline %}
+  <pre id="pipeline-life-path-text" hidden>{{ life_path_text }}</pre>
   <ol class="pipeline-timeline">
     {% for item in timeline %}
     {% set event = item.event %}
@@ -85,4 +92,37 @@
   <p class="muted">Событий пока нет (timeline пишется с момента деплоя audit trail).</p>
   {% endif %}
 </div>
+<script>
+function copyPipelineLifePath() {
+  const pre = document.getElementById("pipeline-life-path-text");
+  const status = document.getElementById("copy-pipeline-path-status");
+  if (!pre) return;
+  const text = pre.textContent || "";
+  const onSuccess = () => {
+    if (status) {
+      status.hidden = false;
+      setTimeout(() => { status.hidden = true; }, 2000);
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(onSuccess).catch(() => fallbackCopyPipelinePath(text, onSuccess));
+  } else {
+    fallbackCopyPipelinePath(text, onSuccess);
+  }
+}
+function fallbackCopyPipelinePath(text, onSuccess) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.appendChild(area);
+  area.select();
+  try {
+    document.execCommand("copy");
+    onSuccess();
+  } finally {
+    document.body.removeChild(area);
+  }
+}
+</script>
 {% endblock %}

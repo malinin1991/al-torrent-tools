@@ -207,7 +207,7 @@ class ReleaseTorrentRow:
     pipeline_error: str | None
     pipeline_id: int | None = None
     api_present: bool = True
-    hevc_pair_status: Literal["missing", "overdue"] | None = None
+    hevc_pair_status: Literal["missing", "overdue", "type_mismatch"] | None = None
     hevc_pair_age_hours: float | None = None
     files: list[ReleaseFileRow] = field(default_factory=list)
 
@@ -325,7 +325,7 @@ def build_archive_page_rows(db: Session, archives: list[TorrentArchive]) -> list
 
 def _normalize_hevc_filter(value: str | None) -> HevcFilter:
     text = (value or "").strip().lower()
-    if text in ("missing", "overdue"):
+    if text in ("missing", "overdue", "type_mismatch"):
         return text  # type: ignore[return-value]
     return ""
 
@@ -342,6 +342,7 @@ def _active_archives_for_hevc_pairing(db: Session) -> list[Any]:
                 TorrentArchive.torrent_description,
                 TorrentArchive.quality_json,
                 TorrentArchive.created_at,
+                TorrentArchive.info_hash,
                 TorrentArchive.api_present,
                 TorrentArchive.superseded,
             ).where(
