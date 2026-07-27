@@ -67,12 +67,13 @@
       <thead>
         <tr>
           <th>Тип</th>
+          <th class="col-download" aria-label="Скачать"></th>
           <th>Серии</th>
           <th>Размер</th>
           <th>Pipeline</th>
           <th>Добавлен</th>
+          <th title="Дата/время добавления по AniLibria">AniLibria</th>
           <th>Hash</th>
-          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -82,6 +83,11 @@
             {% with t=t %}
             {% include "partials/release_torrent_type_cell.html" %}
             {% endwith %}
+          </td>
+          <td class="col-download">
+            <a class="btn btn-icon" href="/api/archive/{{ t.archive_id }}/download" title="Скачать" aria-label="Скачать">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg>
+            </a>
           </td>
           <td>{{ t.torrent_description or "-" }}</td>
           <td>{{ t.file_size_label }}</td>
@@ -98,14 +104,18 @@
           <td>
             {% if t.created_at %}
             <time class="local-time" datetime="{{ t.created_at|as_utc_iso }}">{{ t.created_at }}</time>
-            {% else %}-{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if t.api_created_at %}
+            <time class="local-time" datetime="{{ t.api_created_at|as_utc_iso }}">{{ t.api_created_at }}</time>
+            {% else %}—{% endif %}
           </td>
           <td><code>{{ t.info_hash[:12] }}…</code></td>
-          <td><a class="btn" href="/api/archive/{{ t.archive_id }}/download">Скачать</a></td>
         </tr>
         {% if t.files %}
         <tr class="torrent-files-row">
-          <td colspan="7">
+          <td colspan="8">
             {% with files=t.files, allow_file_downloads=true, info_hash=t.info_hash %}
             {% include "partials/torrent_file_list.html" %}
             {% endwith %}
@@ -113,7 +123,7 @@
         </tr>
         {% endif %}
         {% else %}
-        <tr><td colspan="7" class="muted">Нет актуальных торрентов</td></tr>
+        <tr><td colspan="8" class="muted">Нет актуальных торрентов</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -125,18 +135,24 @@
         <thead>
           <tr>
             <th>Тип</th>
+            <th class="col-download" aria-label="Скачать"></th>
             <th>Серии</th>
             <th>Размер</th>
             <th>Pipeline</th>
             <th>Добавлен</th>
+            <th title="Дата/время добавления по AniLibria">AniLibria</th>
             <th>Hash</th>
-            <th></th>
           </tr>
         </thead>
         <tbody>
           {% for t in group.archived_torrents %}
           <tr>
             <td>{{ t.torrent_type or "-" }}</td>
+            <td class="col-download">
+              <a class="btn btn-icon" href="/api/archive/{{ t.archive_id }}/download" title="Скачать" aria-label="Скачать">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg>
+              </a>
+            </td>
             <td>{{ t.torrent_description or "-" }}</td>
             <td>{{ t.file_size_label }}</td>
             <td>
@@ -151,14 +167,18 @@
             <td>
               {% if t.created_at %}
               <time class="local-time" datetime="{{ t.created_at|as_utc_iso }}">{{ t.created_at }}</time>
-              {% else %}-{% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if t.api_created_at %}
+              <time class="local-time" datetime="{{ t.api_created_at|as_utc_iso }}">{{ t.api_created_at }}</time>
+              {% else %}—{% endif %}
             </td>
             <td><code>{{ t.info_hash[:12] }}…</code></td>
-            <td><a class="btn" href="/api/archive/{{ t.archive_id }}/download">Скачать</a></td>
           </tr>
           {% if t.files %}
           <tr class="torrent-files-row">
-            <td colspan="7">
+            <td colspan="8">
               {% with files=t.files, allow_file_downloads=false %}
               {% include "partials/torrent_file_list.html" %}
               {% endwith %}

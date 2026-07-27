@@ -163,6 +163,10 @@ def test_extract_api_created_at_z_suffix_and_invalid() -> None:
     assert TorrentArchiveService._extract_api_created_at(
         {"updated_at": "2021-09-21T11:45:00Z"}
     ) == datetime(2021, 9, 21, 11, 45, 0)
+    # Миллисекунды + Z: UTC naive, не wall-clock UTC+7 (16:07Z ≠ 23:07 UTC).
+    assert TorrentArchiveService._extract_api_created_at(
+        {"updated_at": "2026-07-24T16:07:58.000Z"}
+    ) == datetime(2026, 7, 24, 16, 7, 58)
     assert TorrentArchiveService._extract_api_created_at({"created_at": "not-a-date"}) is None
     assert TorrentArchiveService._extract_api_created_at({}) is None
 

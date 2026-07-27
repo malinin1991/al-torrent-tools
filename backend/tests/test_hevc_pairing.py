@@ -19,11 +19,16 @@ from app.services.hevc_pairing import (
     sync_hevc_pair_events_for_release,
 )
 
-# Реальный баг бейджа: age≈60ч показывали как 60/371 вместо age−24≈36.
-_BADGE_NOW = datetime(2026, 7, 27, 11, 18, 0)  # naive UTC, как utcnow()
-_BADGE_AVC_UPLOAD = datetime(2026, 7, 24, 23, 10, 7)
-_BADGE_AGE_HOURS = 60.131388888888885
-_BADGE_PAST_SLA_HOURS = 36.131388888888885
+# TZ-контракт бейджа overdue (см. test_overdue_badge_hours_tz_al_api_z_utc_plus_7):
+# API AL: UTC с Z → naive UTC в api_created_at; UI AL: wall-clock UTC+7;
+# age = (utcnow − upload_utc) − 24. Оба конца в одной шкале → не ±7ч.
+# Пример: API 2026-07-24T16:07:58.000Z (= 24.07 23:07 UTC+7),
+# now 27.07 11:18 UTC+7 (= 27.07 04:18 UTC) → age≈60.17h → past SLA≈36.17h.
+_UTC_PLUS_7 = timezone(timedelta(hours=7))
+_BADGE_NOW = datetime(2026, 7, 27, 11, 18, 0, tzinfo=_UTC_PLUS_7)
+_BADGE_AVC_UPLOAD = datetime(2026, 7, 24, 16, 7, 58)  # naive UTC = API …T16:07:58.000Z
+_BADGE_AGE_HOURS = 60.16722222222222
+_BADGE_PAST_SLA_HOURS = 36.16722222222222
 
 
 def _qj(*, rip_type: str, quality: str, codec: str) -> dict:
@@ -696,7 +701,7 @@ def test_overdue_hours_past_sla_for_badge() -> None:
     assert overdue_hours_past_sla(10.0) == 0.0
     assert overdue_hours_past_sla(float(HEVC_SLA_HOURS)) == 0.0
     assert overdue_hours_past_sla(float(HEVC_SLA_HOURS) + 2.5) == 2.5
-    # Регрессия: 60.13ч age → 36.13ч past SLA (не ~60 и не 371).
+    # Регрессия: ~60.17ч age → ~36.17ч past SLA (не ~60 и не 371).
     assert age_hours(_BADGE_AVC_UPLOAD, now=_BADGE_NOW) == pytest.approx(_BADGE_AGE_HOURS)
     assert overdue_hours_past_sla(_BADGE_AGE_HOURS) == pytest.approx(_BADGE_PAST_SLA_HOURS)
     assert int(overdue_hours_past_sla(_BADGE_AGE_HOURS) or 0) == 36
@@ -705,8 +710,57 @@ def test_overdue_hours_past_sla_for_badge() -> None:
     assert abs(past - 371) > 100
 
 
+def test_overdue_badge_hours_tz_al_api_z_utc_plus_7() -> None:
+    """TZ: API …Z → naive UTC; now UTC+7; past SLA≈36, не 36±7.
+
+    AniLibria UI показывает UTC+7 (16:07Z → 23:07 local). Часы бейджа —
+    (now − upload) в UTC минус 24ч. Если Z срезать без конвертации (23:07 как UTC)
+    при корректном now → ~29ч; если wall-clock now принять за UTC при корректном
+    upload → ~43ч. max(created_at, updated_at) остаётся источником upload.
+    """
+    from app.services.torrent_archive import TorrentArchiveService
+
+    api_created = TorrentArchiveService._extract_api_created_at(
+        {
+            "created_at": "2026-07-10T16:52:16.000Z",
+            "updated_at": "2026-07-24T16:07:58.000Z",
+        }
+    )
+    assert api_created == datetime(2026, 7, 24, 16, 7, 58)
+
+    now_local = datetime(2026, 7, 27, 11, 18, 0, tzinfo=_UTC_PLUS_7)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=100,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now_local.astimezone(timezone.utc).replace(tzinfo=None)
+            - timedelta(hours=2),
+            api_created_at=api_created,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=99,
+            episodes="1-11",
+            codec="HEVC",
+            created_at=now_local.astimezone(timezone.utc).replace(tzinfo=None)
+            - timedelta(hours=1),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now_local)
+    assert len(unpaired) == 1
+    past = overdue_hours_past_sla(unpaired[0].age_hours)
+    assert past == pytest.approx(_BADGE_PAST_SLA_HOURS)
+    assert int(past or 0) == 36
+    # Явный запрет сдвига ±7ч от неверной TZ-интерпретации.
+    assert abs((past or 0.0) - 29.0) > 5
+    assert abs((past or 0.0) - 43.0) > 5
+
+
 def test_overdue_badge_hours_past_sla_frozen_api_created_at() -> None:
     """Бейдж hevc_pair_age_hours = age(api)−24, не сырой age (~60) и не 371."""
+    now_utc = _BADGE_NOW.astimezone(timezone.utc).replace(tzinfo=None)
     rows = [
         _row(
             archive_id=1,
@@ -714,7 +768,7 @@ def test_overdue_badge_hours_past_sla_frozen_api_created_at() -> None:
             episodes="1-12",
             codec="AVC",
             # system created свежий — SLA только от api_created_at
-            created_at=_BADGE_NOW - timedelta(hours=2),
+            created_at=now_utc - timedelta(hours=2),
             api_created_at=_BADGE_AVC_UPLOAD,
         ),
         _row(
@@ -722,7 +776,7 @@ def test_overdue_badge_hours_past_sla_frozen_api_created_at() -> None:
             torrent_id=99,
             episodes="1-11",
             codec="HEVC",
-            created_at=_BADGE_NOW - timedelta(hours=1),
+            created_at=now_utc - timedelta(hours=1),
         ),
     ]
     unpaired = find_unpaired_avc(rows, now=_BADGE_NOW)
@@ -733,16 +787,18 @@ def test_overdue_badge_hours_past_sla_frozen_api_created_at() -> None:
     assert u.age_hours == pytest.approx(_BADGE_AGE_HOURS)
     # Тот же путь, что releases_view → hevc_pair_age_hours
     badge_hours = overdue_hours_past_sla(u.age_hours)
-    assert badge_hours == pytest.approx(36.131388888888885)
-    assert badge_hours == _BADGE_PAST_SLA_HOURS
+    assert badge_hours == pytest.approx(_BADGE_PAST_SLA_HOURS)
     assert int(badge_hours or 0) == 36
     assert badge_hours is not None
     assert abs(badge_hours - 60) > 20  # не сырой age
     assert abs(badge_hours - 371) > 100
+    assert abs(badge_hours - 29) > 5  # не −7ч TZ skew
+    assert abs(badge_hours - 43) > 5  # не +7ч TZ skew
 
 
 def test_overdue_badge_hours_past_sla_frozen_system_created_at() -> None:
     """Те же часы через fallback system created_at; age_from_api=False."""
+    now_utc = _BADGE_NOW.astimezone(timezone.utc).replace(tzinfo=None)
     rows = [
         _row(
             archive_id=1,
@@ -757,7 +813,7 @@ def test_overdue_badge_hours_past_sla_frozen_system_created_at() -> None:
             torrent_id=99,
             episodes="1-11",
             codec="HEVC",
-            created_at=_BADGE_NOW - timedelta(hours=1),
+            created_at=now_utc - timedelta(hours=1),
         ),
     ]
     unpaired = find_unpaired_avc(rows, now=_BADGE_NOW)
@@ -767,7 +823,7 @@ def test_overdue_badge_hours_past_sla_frozen_system_created_at() -> None:
     assert u.age_from_api is False
     assert u.age_hours == pytest.approx(_BADGE_AGE_HOURS)
     badge_hours = overdue_hours_past_sla(u.age_hours)
-    assert badge_hours == pytest.approx(36.131388888888885)
+    assert badge_hours == pytest.approx(_BADGE_PAST_SLA_HOURS)
     assert int(badge_hours or 0) == 36
 
 

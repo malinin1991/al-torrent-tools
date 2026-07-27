@@ -209,6 +209,8 @@ class ReleaseTorrentRow:
     pipeline_status: str | None
     pipeline_error: str | None
     pipeline_id: int | None = None
+    # Дата загрузки версии на AniLibria (naive UTC = max created_at/updated_at API).
+    api_created_at: datetime | None = None
     api_present: bool = True
     hevc_pair_status: Literal["missing", "overdue", "type_mismatch"] | None = None
     # Для бейджа overdue: часы сверх SLA (age − 24), не полный age AVC.
@@ -536,6 +538,7 @@ def list_release_groups(
                 file_size=item.file_size,
                 file_size_label=format_bytes(item.file_size),
                 created_at=item.created_at,
+                api_created_at=getattr(item, "api_created_at", None),
                 pipeline_status=status,
                 pipeline_error=error,
                 pipeline_id=pipeline_id,

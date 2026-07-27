@@ -283,12 +283,19 @@ def pair_key(
 
 
 def _as_naive_utc(value: datetime) -> datetime:
+    """Aware → UTC naive; naive уже трактуем как UTC (контракт БД / api_created_at)."""
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def age_hours(created_at: datetime | None, *, now: datetime | None = None) -> float | None:
+    """Возраст в часах: (now − upload) в одной шкале UTC.
+
+    ``now`` по умолчанию — ``utcnow()`` (naive UTC). Aware ``now`` (например UTC+7)
+    нормализуется через ``astimezone(UTC)`` — нельзя подставлять wall-clock UTC+7
+    как naive UTC, иначе бейдж уедет на +7ч.
+    """
     if created_at is None:
         return None
     current = _as_naive_utc(now or utcnow())

@@ -109,7 +109,14 @@ class TorrentArchiveService:
 
     @staticmethod
     def _parse_api_datetime(raw: Any) -> datetime | None:
-        """AniLibria OpenAPI date-time → naive UTC; иначе None."""
+        """AniLibria OpenAPI date-time → naive UTC; иначе None.
+
+        Контракт TZ: API отдаёт UTC (`Z` / `+00:00`); UI сайта — wall-clock UTC+7.
+        Z/+offset всегда конвертируем в UTC и снимаем tzinfo (как ``utcnow()`` и БД).
+        Naive строку без offset считаем уже UTC (не локаль сервера / не UTC+7).
+        Ошибка «срезать Z и оставить цифры» или «принять 23:07 UTC+7 за UTC»
+        даёт бейдж overdue со сдвигом ±7ч.
+        """
         if isinstance(raw, datetime):
             if raw.tzinfo is None:
                 return raw

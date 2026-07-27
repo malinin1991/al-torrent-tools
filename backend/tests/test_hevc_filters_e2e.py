@@ -562,9 +562,13 @@ def test_list_release_groups_overdue_age_from_api_created_at() -> None:
 def test_list_release_groups_overdue_badge_hours_past_sla_frozen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """hevc_pair_age_hours = age−24 (≈36), не сырой age (~60) и не 371."""
-    frozen_now = datetime(2026, 7, 27, 11, 18, 0)  # naive UTC
-    avc_upload = datetime(2026, 7, 24, 23, 10, 7)
+    """hevc_pair_age_hours = age−24 (≈36), не сырой age (~60), не 371 и не 36±7.
+
+    TZ: upload = API 2026-07-24T16:07:58Z (naive UTC); now = 27.07 04:18 UTC
+    (= 11:18 UTC+7). Нельзя подставлять wall-clock 23:07/11:18 как naive UTC.
+    """
+    frozen_now = datetime(2026, 7, 27, 4, 18, 0)  # naive UTC = 11:18 UTC+7
+    avc_upload = datetime(2026, 7, 24, 16, 7, 58)  # naive UTC = API …T16:07:58.000Z
     monkeypatch.setattr("app.services.hevc_pairing.utcnow", lambda: frozen_now)
 
     avc = _archive(
@@ -600,10 +604,13 @@ def test_list_release_groups_overdue_badge_hours_past_sla_frozen(
     t = {row.archive_id: row for row in result["groups"][0].torrents}[1]
     assert t.hevc_pair_status == "overdue"
     assert t.hevc_overdue_age_from_api is True
-    assert t.hevc_pair_age_hours == pytest.approx(36.131388888888885)
+    assert t.api_created_at == avc_upload
+    assert t.hevc_pair_age_hours == pytest.approx(36.16722222222222)
     assert int(t.hevc_pair_age_hours or 0) == 36
     assert abs((t.hevc_pair_age_hours or 0) - 60) > 20
     assert abs((t.hevc_pair_age_hours or 0) - 371) > 100
+    assert abs((t.hevc_pair_age_hours or 0) - 29) > 5
+    assert abs((t.hevc_pair_age_hours or 0) - 43) > 5
 
 
 def test_multi_avc_overdue_earliest_anchor_hours_e2e(
@@ -825,6 +832,7 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
                 file_size=100,
                 file_size_label="100 B",
                 created_at=now - timedelta(hours=30),
+                api_created_at=now - timedelta(hours=30),
                 pipeline_status=None,
                 pipeline_error=None,
                 hevc_pair_status="overdue",
@@ -841,6 +849,7 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
                 file_size=100,
                 file_size_label="100 B",
                 created_at=now,
+                api_created_at=None,
                 pipeline_status=None,
                 pipeline_error=None,
                 hevc_pair_status="missing",
@@ -876,7 +885,22 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
                 hevc_overdue_age_from_api=False,
             ),
         ],
-        archived_torrents=[],
+        archived_torrents=[
+            ReleaseTorrentRow(
+                archive_id=5,
+                torrent_id=14,
+                info_hash="ee" * 20,
+                torrent_type="BDRip 1080p AVC",
+                torrent_description="1-1",
+                file_size=50,
+                file_size_label="50 B",
+                created_at=now - timedelta(days=10),
+                api_created_at=now - timedelta(days=11),
+                pipeline_status=None,
+                pipeline_error=None,
+                api_present=False,
+            ),
+        ],
         tracked=False,
         track_source=None,
     )
@@ -908,6 +932,17 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
     assert "badge-warn" in html and "нет HEVC" in html
     assert "badge-muted" in html and "расхождение типов" in html
     assert "hevc_filter=missing" in html or 'value="missing"' in html
+    # Колонка AniLibria + узкая иконка скачивания (без широкой кнопки «Скачать»).
+    assert 'title="Дата/время добавления по AniLibria"' in html
+    assert ">AniLibria<" in html
+    assert 'aria-label="Скачать"' in html
+    assert 'class="btn btn-icon"' in html
+    assert "/api/archive/1/download" in html
+    assert "/api/archive/5/download" in html
+    assert ">Скачать<" not in html
+    assert 'datetime="' in html and "local-time" in html
+    # null api_created_at → прочерк; непустой → time
+    assert html.count(">—<") >= 1 or "—</td>" in html
 
 
 def test_overdue_badge_orange_vs_red_in_type_cell() -> None:
