@@ -305,21 +305,25 @@ class TorrentProcessor:
         release_id: int,
         release_payload: dict[str, Any] | None = None,
     ) -> list[str]:
-        """Жанры: payload → архив → get_release (и запись в архив)."""
+        """Жанры (+ side-effect: upsert releases/members/blocks).
+
+        С payload — сразу persist.
+        Без payload (full_sync all_seen + refresh_qb_meta) — всегда get_release:
+        иначе жанры из quality_json коротнули бы путь и состав/блокировки
+        никогда не попали бы в таблицы ``releases`` / ``release_members``.
+        """
         if release_payload is not None:
             self._persist_release_ui_meta_from_payload(release_id, release_payload)
             genres = extract_release_genres(release_payload)
             if genres:
                 return genres
-        genres = self._genres_from_archives(release_id)
-        if genres:
-            return genres
         try:
             payload = await self._al_client.get_release(
                 release_id,
                 include=[
                     "id",
                     "alias",
+                    "name",
                     "genres",
                     "members",
                     "is_blocked_by_geo",
@@ -328,11 +332,14 @@ class TorrentProcessor:
             )
         except Exception as exc:
             self._add_log(f"Релиз {release_id}: не удалось получить genres: {exc}", "warning")
-            return []
+            return self._genres_from_archives(release_id)
         if not isinstance(payload, dict):
-            return []
+            return self._genres_from_archives(release_id)
         self._persist_release_ui_meta_from_payload(release_id, payload)
-        return extract_release_genres(payload)
+        genres = extract_release_genres(payload)
+        if genres:
+            return genres
+        return self._genres_from_archives(release_id)
 
     def _refresh_qb_tags(
         self,
