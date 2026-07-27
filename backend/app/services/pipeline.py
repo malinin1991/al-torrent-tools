@@ -574,21 +574,17 @@ class TorrentPipelineService:
             .limit(1)
         )
         if archive is not None and not archive.api_present:
-            self._record_event(
-                pipeline,
-                event_type="hash_enqueued",
-                message=f"Pipeline {pipeline.id}: hash_torrent пропуск (api_present=false)",
-                details={"skipped": True, "reason": "api_present=false"},
-                log_level="debug",
+            # Не пишем PipelineEvent — job не поставлен; иначе spam на каждый retry.
+            self._add_log(
+                f"Pipeline {pipeline.id}: hash_torrent пропуск (api_present=false)",
+                "debug",
             )
             return
         if self._hash_torrent_already_done_or_queued(pipeline.info_hash):
-            self._record_event(
-                pipeline,
-                event_type="hash_enqueued",
-                message=f"Pipeline {pipeline.id}: hash_torrent уже был/в очереди — пропуск",
-                details={"skipped": True, "reason": "already_done_or_queued"},
-                log_level="debug",
+            # Не пишем PipelineEvent — job не поставлен; иначе spam на каждый retry.
+            self._add_log(
+                f"Pipeline {pipeline.id}: hash_torrent уже был/в очереди — пропуск",
+                "debug",
             )
             return
         job = None
@@ -616,15 +612,13 @@ class TorrentPipelineService:
                 log_level="debug",
             )
         except JobAlreadyRunningError as exc:
-            self._record_event(
-                pipeline,
-                event_type="hash_enqueued",
-                message=(
+            # Не пишем PipelineEvent — job уже в очереди, повторный enqueue не состоялся.
+            self._add_log(
+                (
                     f"Pipeline {pipeline.id}: hash_torrent уже в очереди "
                     f"(job_id={exc.running_job_id})"
                 ),
-                details={"skipped": True, "hash_job_id": exc.running_job_id},
-                log_level="debug",
+                "debug",
             )
         except UnknownJobTypeError:
             self._record_event(

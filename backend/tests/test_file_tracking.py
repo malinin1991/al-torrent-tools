@@ -207,8 +207,9 @@ def test_process_completion_retry_enqueues_hash_if_needed() -> None:
 
 
 def test_enqueue_hash_skips_when_already_success() -> None:
+    """Skip уже поставленного/завершённого hash — без PipelineEvent (без spam timeline)."""
     db = MagicMock()
-    service = TorrentPipelineService(db)
+    service = TorrentPipelineService(db, job_id=42)
     pipeline = SimpleNamespace(
         id=1,
         info_hash="abc123",
@@ -223,6 +224,10 @@ def test_enqueue_hash_skips_when_already_success() -> None:
     service._enqueue_hash_torrent(pipeline)
 
     service._hash_torrent_already_done_or_queued.assert_called_once_with("abc123")
+    service._add_log.assert_called_once()
+    assert "пропуск" in service._add_log.call_args.args[0]
+    events = [c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], PipelineEvent)]
+    assert events == []
 
 
 def test_hash_torrent_already_done_allows_retry_after_failed() -> None:
