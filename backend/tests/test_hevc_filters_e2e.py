@@ -569,6 +569,66 @@ def test_list_release_groups_overdue_badge_hours_past_sla_frozen(
     assert abs((t.hevc_pair_age_hours or 0) - 371) > 100
 
 
+def test_multi_avc_overdue_earliest_anchor_hours_e2e(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Несколько overdue AVC на одном start: бейдж от earliest (1-3), не от 1-4."""
+    frozen_now = datetime(2026, 7, 27, 12, 0, 0)
+    monkeypatch.setattr("app.services.hevc_pairing.utcnow", lambda: frozen_now)
+    avc_13 = _archive(
+        archive_id=1,
+        release_id=30,
+        torrent_id=301,
+        episodes="1-3",
+        codec="AVC",
+        created_at=frozen_now - timedelta(hours=1),
+        api_created_at=frozen_now - timedelta(hours=50),
+        anime_name="Multi AVC Anchor",
+        release_alias="multi-avc-anchor",
+    )
+    avc_14 = _archive(
+        archive_id=2,
+        release_id=30,
+        torrent_id=302,
+        episodes="1-4",
+        codec="AVC",
+        created_at=frozen_now - timedelta(hours=1),
+        api_created_at=frozen_now - timedelta(hours=30),
+        anime_name="Multi AVC Anchor",
+        release_alias="multi-avc-anchor",
+    )
+    hevc_12 = _archive(
+        archive_id=3,
+        release_id=30,
+        torrent_id=200,
+        episodes="1-2",
+        codec="HEVC",
+        created_at=frozen_now - timedelta(hours=2),
+        anime_name="Multi AVC Anchor",
+        release_alias="multi-avc-anchor",
+    )
+    pairing = [avc_13, avc_14, hevc_12]
+    stats = [SimpleNamespace(release_id=30, last_updated=frozen_now, torrent_count=3)]
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pairing,
+        stats_rows=stats,
+        total=1,
+    )
+    result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+    assert len(result["groups"]) == 1
+    by_id = {t.archive_id: t for t in result["groups"][0].torrents}
+    assert by_id[1].hevc_pair_status == "overdue"
+    assert by_id[2].hevc_pair_status == "overdue"
+    assert by_id[3].hevc_pair_status is None
+    for archive_id in (1, 2):
+        hours = by_id[archive_id].hevc_pair_age_hours
+        assert hours == pytest.approx(26.0)
+        assert int(hours or 0) == 26
+        # Не бейдж от 1-4 (30−24=6)
+        assert abs((hours or 0) - 6) > 10
+
+
 def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
     """WEBRip AVC + WEB-DL HEVC → type_mismatch filter, не missing."""
     now = utcnow()
