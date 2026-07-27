@@ -10,6 +10,7 @@ type_mismatch   — HEVC есть (тот же start+quality в web-классе
                   WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
 
 Бейдж (status): overdue > type_mismatch > missing.
+Число на бейдже «просрочка Nч» — часы сверх SLA: max(0, age − 24), не полный age.
 Фильтры независимы: один AVC может быть overdue и type_mismatch сразу.
 ignore_hevc на архиве AVC закрывает missing/overdue/type_mismatch.
 """
@@ -282,6 +283,15 @@ def age_hours(created_at: datetime | None, *, now: datetime | None = None) -> fl
         return None
     current = _as_naive_utc(now or utcnow())
     return (current - _as_naive_utc(created_at)).total_seconds() / 3600.0
+
+
+def overdue_hours_past_sla(
+    age: float | None, *, sla_hours: float = HEVC_SLA_HOURS
+) -> float | None:
+    """Часы сверх SLA для бейджа; фильтр overdue по-прежнему смотрит на полный age."""
+    if age is None:
+        return None
+    return max(0.0, float(age) - float(sla_hours))
 
 
 def _created_is_newer(left: datetime | None, right: datetime | None) -> bool:

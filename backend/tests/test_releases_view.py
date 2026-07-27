@@ -290,7 +290,9 @@ def test_list_release_groups_hevc_filter_overdue_marks_status() -> None:
     assert len(result["groups"]) == 1
     t = result["groups"][0].torrents[0]
     assert t.hevc_pair_status == "overdue"
-    assert t.hevc_pair_age_hours is not None and t.hevc_pair_age_hours > HEVC_SLA_HOURS
+    # Бейдж: часы сверх SLA (age ≈ SLA+2 → ~2ч), не полный age.
+    assert t.hevc_pair_age_hours is not None
+    assert 1.5 < t.hevc_pair_age_hours < 2.5
 
 
 def _events_db(rows: list) -> MagicMock:

@@ -612,7 +612,8 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
                 pipeline_status=None,
                 pipeline_error=None,
                 hevc_pair_status="overdue",
-                hevc_pair_age_hours=30.0,
+                # Часы сверх SLA (age 30 − 24), не полный age.
+                hevc_pair_age_hours=6.0,
             ),
             ReleaseTorrentRow(
                 archive_id=2,
@@ -670,7 +671,7 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
     assert "Просрочка" in html
     assert "Расхождение типов" in html
     assert 'value="type_mismatch"' in html
-    assert "badge-danger" in html and "просрочка" in html
+    assert "badge-danger" in html and "просрочка 6ч" in html
     assert "badge-warn" in html and "нет HEVC" in html
     assert "badge-muted" in html and "расхождение типов" in html
     assert "hevc_filter=missing" in html or 'value="missing"' in html

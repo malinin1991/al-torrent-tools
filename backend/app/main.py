@@ -45,6 +45,7 @@ from app.services.hevc_pairing import (
     age_hours,
     classify_archive_codec,
     find_unpaired_avc,
+    overdue_hours_past_sla,
     sync_hevc_pair_events_for_release,
 )
 from app.services.releases_view import build_archive_page_rows, list_release_groups
@@ -906,9 +907,11 @@ def toggle_ignore_hevc(
         torrent_type=archive.torrent_type,
         hevc_pair_status=unpaired.status if unpaired else None,
         hevc_pair_age_hours=(
-            unpaired.age_hours
+            overdue_hours_past_sla(unpaired.age_hours)
             if unpaired
-            else age_hours(getattr(archive, "created_at", None), now=utcnow())
+            else overdue_hours_past_sla(
+                age_hours(getattr(archive, "created_at", None), now=utcnow())
+            )
         ),
         codec_family=codec,
         archive_id=archive.id,

@@ -32,6 +32,7 @@ from app.services.file_tracker import (
 from app.services.hevc_pairing import (
     HevcFilter,
     classify_archive_codec,
+    overdue_hours_past_sla,
     unpaired_by_archive_id,
     release_ids_matching_hevc_filter,
 )
@@ -210,6 +211,7 @@ class ReleaseTorrentRow:
     pipeline_id: int | None = None
     api_present: bool = True
     hevc_pair_status: Literal["missing", "overdue", "type_mismatch"] | None = None
+    # Для бейджа overdue: часы сверх SLA (age − 24), не полный age AVC.
     hevc_pair_age_hours: float | None = None
     codec_family: str | None = None
     ignore_hevc: bool = False
@@ -536,7 +538,9 @@ def list_release_groups(
                 pipeline_id=pipeline_id,
                 api_present=bool(getattr(item, "api_present", True)),
                 hevc_pair_status=unpaired.status if unpaired else None,
-                hevc_pair_age_hours=unpaired.age_hours if unpaired else None,
+                hevc_pair_age_hours=(
+                    overdue_hours_past_sla(unpaired.age_hours) if unpaired else None
+                ),
                 codec_family=codec,
                 ignore_hevc=bool(getattr(item, "ignore_hevc", False)),
                 files=file_rows,

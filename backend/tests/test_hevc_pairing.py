@@ -11,6 +11,7 @@ from app.services.hevc_pairing import (
     batch_start_key,
     classify_archive_codec,
     find_unpaired_avc,
+    overdue_hours_past_sla,
     release_ids_matching_hevc_filter,
     rip_family_key,
     sync_hevc_pair_events_for_release,
@@ -588,6 +589,14 @@ def test_sla_boundary_exact_hours_not_overdue() -> None:
     assert by_id[1].status == "missing"
     assert by_id[2].overdue is True
     assert by_id[2].status == "overdue"
+
+
+def test_overdue_hours_past_sla_for_badge() -> None:
+    """Бейдж показывает часы сверх SLA, не полный age AVC."""
+    assert overdue_hours_past_sla(None) is None
+    assert overdue_hours_past_sla(10.0) == 0.0
+    assert overdue_hours_past_sla(float(HEVC_SLA_HOURS)) == 0.0
+    assert overdue_hours_past_sla(float(HEVC_SLA_HOURS) + 2.5) == 2.5
 
 
 def test_different_rip_families_do_not_pair() -> None:
