@@ -56,6 +56,7 @@ def _archive(
         quality_json=_qj(rip_type=rip_type, quality=quality, codec=codec),
         api_present=api_present,
         superseded=superseded,
+        ignore_hevc=False,
     )
 
 

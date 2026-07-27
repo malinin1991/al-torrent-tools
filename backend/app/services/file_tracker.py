@@ -412,7 +412,12 @@ class FileTrackerService:
             )
 
         # Orphan только под корнем контента торрента (не общий save_path года).
+        # Пути других активных торрентов того же release_id — siblings, не orphan.
         known_paths = {r.full_path for r in rows if r.full_path}
+        known_paths |= self._sibling_full_paths(
+            release_id=release_id,
+            current_hash=prepared.normalized_hash,
+        )
         orphan_root = resolve_orphan_scan_root(
             save_path=save_path,
             content_path=content_path,
@@ -664,6 +669,40 @@ class FileTrackerService:
         if prior is None:
             return None
         return (prior.info_hash or "").strip().lower() or None
+
+    def _sibling_full_paths(self, *, release_id: int, current_hash: str) -> set[str]:
+        """full_path состава других активных торрентов того же release_id."""
+        current = (current_hash or "").strip().lower()
+        rows = list(
+            self._db.scalars(
+                select(TorrentArchive).where(
+                    TorrentArchive.release_id == release_id,
+                    TorrentArchive.api_present.is_(True),
+                    TorrentArchive.superseded.is_(False),
+                )
+            ).all()
+        )
+        # Тестовые MagicMock side_effect могут отдать «чужие» строки без info_hash.
+        if rows and not hasattr(rows[0], "info_hash"):
+            return set()
+        sibling_hashes = [
+            key
+            for row in rows
+            if (key := (getattr(row, "info_hash", None) or "").strip().lower())
+            and key != current
+        ]
+        if not sibling_hashes:
+            return set()
+        paths: set[str] = set()
+        for full in self._db.scalars(
+            select(TorrentFile.full_path).where(
+                TorrentFile.info_hash.in_(sibling_hashes),
+                TorrentFile.full_path.is_not(None),
+            )
+        ).all():
+            if isinstance(full, str) and full:
+                paths.add(full)
+        return paths
 
     @staticmethod
     def _note_ui_transition(

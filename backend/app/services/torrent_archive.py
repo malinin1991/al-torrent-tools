@@ -274,6 +274,8 @@ class TorrentArchiveService:
             archive.file_size = self._to_file_size(torrent_payload)
             archive.api_present = True
             archive.superseded = False
+            # Обновление той же версии (тот же info_hash) — ignore_hevc сохраняем.
+            # Новая версия (supersede выше) создаёт строку с ignore_hevc=False.
 
         self._db.commit()
         self._db.refresh(archive)

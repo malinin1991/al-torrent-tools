@@ -164,6 +164,9 @@ class TorrentArchive(Base):
     api_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     # True = заменён новой версией того же torrent_id (другой info_hash) — храним как историю.
     superseded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
+    # AVC: не требовать HEVC-пару (фильтры/бейджи missing|overdue|type_mismatch).
+    # Сбрасывается при новой версии (supersede → новая строка с default False).
+    ignore_hevc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

@@ -356,8 +356,8 @@ def test_recent_events_collects_removed_candidates() -> None:
         ),
     ]
     result = _recent_events_by_info_hash(_events_db(rows), [1])
-    assert ("fille4.mkv", "/media/fille4.mkv") in result[info_hash].removed_candidates
-    assert ("/media/orphan.mkv", "/media/orphan.mkv") in result[info_hash].removed_candidates
+    assert ("fille4.mkv", "/media/fille4.mkv", "removed") in result[info_hash].removed_candidates
+    assert ("/media/orphan.mkv", "/media/orphan.mkv", "orphan") in result[info_hash].removed_candidates
     assert all(c[0] != "ok.mkv" for c in result[info_hash].removed_candidates)
 
 
@@ -778,7 +778,7 @@ def test_filter_removed_candidates_drops_foreign_titles(tmp_path, monkeypatch) -
         ],
         files,  # type: ignore[arg-type]
     )
-    paths = {full for _display, full in filtered}
+    paths = {full for _display, full, _kind in filtered}
     assert str(ep.resolve()) in paths
     assert str(foreign.resolve()) not in paths
 
@@ -808,7 +808,7 @@ def test_filter_removed_candidates_drops_ds_store(tmp_path, monkeypatch) -> None
         ],
         files,  # type: ignore[arg-type]
     )
-    assert all(not str(p).endswith(".DS_Store") for _, p in filtered if p)
+    assert all(not str(p).endswith(".DS_Store") for _, p, *_rest in filtered if p)
 
 
 def test_info_hashes_with_active_hash_job() -> None:

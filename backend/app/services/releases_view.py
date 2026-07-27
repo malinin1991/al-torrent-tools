@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from app.utils.datetime_fmt import utcnow
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -31,6 +31,7 @@ from app.services.file_tracker import (
 )
 from app.services.hevc_pairing import (
     HevcFilter,
+    classify_archive_codec,
     unpaired_by_archive_id,
     release_ids_matching_hevc_filter,
 )
@@ -190,7 +191,8 @@ class _TorrentEvents:
     """latest kind по пути + кандидаты «удалён» (нет в торренте, есть на диске)."""
 
     latest_by_path: dict[str, str] = field(default_factory=dict)
-    removed_candidates: list[tuple[str, str | None]] = field(default_factory=list)
+    # (display_path, full_path, kind) — kind: removed|orphan
+    removed_candidates: list[tuple[str, str | None, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -209,6 +211,8 @@ class ReleaseTorrentRow:
     api_present: bool = True
     hevc_pair_status: Literal["missing", "overdue", "type_mismatch"] | None = None
     hevc_pair_age_hours: float | None = None
+    codec_family: str | None = None
+    ignore_hevc: bool = False
     files: list[ReleaseFileRow] = field(default_factory=list)
 
 
@@ -278,19 +282,24 @@ def build_archive_page_rows(db: Session, archives: list[TorrentArchive]) -> list
         if f.full_path
     ]
     for events in events_by_hash.values():
-        for _rel, full in events.removed_candidates:
+        for _rel, full, _kind in events.removed_candidates:
             if full:
                 all_full_paths.append(full)
     hashes_by_path = _disk_hashes_by_path(db, all_full_paths)
     active_hash_jobs = (
         _info_hashes_with_active_hash_job(db, list(files_by_hash.keys())) if files_by_hash else set()
     )
+    paths_by_release = _active_file_paths_by_release(archives, files_by_hash)
 
     result: list[ArchivePageRow] = []
     for item in archives:
         info_hash_key = (item.info_hash or "").strip().lower()
         torrent_events = events_by_hash.get(info_hash_key) or _TorrentEvents()
         torrent_files = files_by_hash.get(info_hash_key, [])
+        sib_rels, sib_fulls = _sibling_owned_paths(
+            paths_by_release.get(int(item.release_id), {}),
+            exclude_hash=info_hash_key,
+        )
         file_rows = _build_file_rows(
             torrent_files,
             torrent_events.latest_by_path,
@@ -299,6 +308,8 @@ def build_archive_page_rows(db: Session, archives: list[TorrentArchive]) -> list
             removed_candidates=_filter_removed_candidates(
                 torrent_events.removed_candidates,
                 torrent_files,
+                sibling_rel_paths=sib_rels,
+                sibling_full_paths=sib_fulls,
             ),
         )
         result.append(
@@ -345,6 +356,7 @@ def _active_archives_for_hevc_pairing(db: Session) -> list[Any]:
                 TorrentArchive.info_hash,
                 TorrentArchive.api_present,
                 TorrentArchive.superseded,
+                TorrentArchive.ignore_hevc,
             ).where(
                 TorrentArchive.api_present.is_(True),
                 TorrentArchive.superseded.is_(False),
@@ -452,7 +464,7 @@ def list_release_groups(
         if f.full_path
     ]
     for events in events_by_hash.values():
-        for _rel, full in events.removed_candidates:
+        for _rel, full, _kind in events.removed_candidates:
             if full:
                 all_full_paths.append(full)
     hashes_by_path = _disk_hashes_by_path(db, all_full_paths)
@@ -461,6 +473,7 @@ def list_release_groups(
         if files_by_hash
         else set()
     )
+    paths_by_release = _active_file_paths_by_release(archives, files_by_hash)
     site_url = resolve_anilibria_site_url()
 
     by_release: dict[int, list[TorrentArchive]] = {rid: [] for rid in release_ids}
@@ -481,6 +494,7 @@ def list_release_groups(
             if genres:
                 break
         hevc_unpaired = unpaired_by_archive_id(items)
+        release_paths = paths_by_release.get(release_id, {})
         active: list[ReleaseTorrentRow] = []
         archived: list[ReleaseTorrentRow] = []
         for item in items:
@@ -490,6 +504,9 @@ def list_release_groups(
             info_hash_key = item.info_hash.lower()
             torrent_events = events_by_hash.get(info_hash_key) or _TorrentEvents()
             torrent_files = files_by_hash.get(info_hash_key, [])
+            sib_rels, sib_fulls = _sibling_owned_paths(
+                release_paths, exclude_hash=info_hash_key
+            )
             file_rows = _build_file_rows(
                 torrent_files,
                 torrent_events.latest_by_path,
@@ -498,9 +515,13 @@ def list_release_groups(
                 removed_candidates=_filter_removed_candidates(
                     torrent_events.removed_candidates,
                     torrent_files,
+                    sibling_rel_paths=sib_rels,
+                    sibling_full_paths=sib_fulls,
                 ),
             )
             unpaired = hevc_unpaired.get(item.id)
+            qj = item.quality_json if isinstance(item.quality_json, dict) else None
+            codec = classify_archive_codec(quality_json=qj, torrent_type=item.torrent_type)
             row = ReleaseTorrentRow(
                 archive_id=item.id,
                 torrent_id=item.torrent_id,
@@ -516,6 +537,8 @@ def list_release_groups(
                 api_present=bool(getattr(item, "api_present", True)),
                 hevc_pair_status=unpaired.status if unpaired else None,
                 hevc_pair_age_hours=unpaired.age_hours if unpaired else None,
+                codec_family=codec,
+                ignore_hevc=bool(getattr(item, "ignore_hevc", False)),
                 files=file_rows,
             )
             if row.api_present:
@@ -565,12 +588,22 @@ def split_active_archived(
 
 
 def _filter_removed_candidates(
-    candidates: list[tuple[str, str | None]],
+    candidates: list[tuple[str, str | None, str]] | list[tuple[str, str | None]],
     files: list[TorrentFile],
-) -> list[tuple[str, str | None]]:
-    """Отбрасывает «удалён/orphan» вне корня этого торрента и служебный мусор."""
+    *,
+    sibling_rel_paths: set[str] | None = None,
+    sibling_full_paths: set[str] | None = None,
+) -> list[tuple[str, str | None, str]]:
+    """Отбрасывает «удалён/orphan» вне корня этого торрента и служебный мусор.
+
+    Orphan-пути, принадлежащие другим активным торрентам того же release_id
+    (siblings), не показываем как «удалён». Sticky ``removed`` (история vs prior
+    ЭТОГО торрента) оставляем.
+    """
     if not candidates:
         return []
+    sib_rels = sibling_rel_paths or set()
+    sib_fulls = sibling_full_paths or set()
     known = {f.full_path for f in files if f.full_path}
     root = resolve_orphan_scan_root(
         save_path=None,
@@ -578,19 +611,37 @@ def _filter_removed_candidates(
         known_full_paths=known,
         media_root=resolve_media_root(),
     )
+
+    normalized: list[tuple[str, str | None, str]] = []
+    for item in candidates:
+        if len(item) == 3:
+            display, full, kind = item  # type: ignore[misc]
+        else:
+            display, full = item  # type: ignore[misc]
+            kind = KIND_REMOVED
+        normalized.append((display or "", full, kind or KIND_REMOVED))
+
+    def _is_sibling_owned(display: str, full: str | None) -> bool:
+        if display and (display in sib_rels or display in sib_fulls):
+            return True
+        if full and (full in sib_fulls or full in sib_rels):
+            return True
+        return False
+
     if root is None:
         # Нет якоря по файлам торрента — показываем только removed с relative_path
         # (состав .torrent), без абсолютных orphan-путей чужих тайтлов.
-        return [
-            (display, full)
-            for display, full in candidates
-            if display
-            and not display.startswith("/")
-            and not is_junk_file(display)
-        ]
+        filtered: list[tuple[str, str | None, str]] = []
+        for display, full, kind in normalized:
+            if not display or display.startswith("/") or is_junk_file(display):
+                continue
+            if kind == KIND_ORPHAN and _is_sibling_owned(display, full):
+                continue
+            filtered.append((display, full, kind))
+        return filtered
 
-    filtered: list[tuple[str, str | None]] = []
-    for display, full in candidates:
+    filtered = []
+    for display, full, kind in normalized:
         path_raw = full or display
         if not path_raw:
             continue
@@ -600,8 +651,54 @@ def _filter_removed_candidates(
             Path(path_raw).resolve().relative_to(root)
         except (ValueError, OSError):
             continue
-        filtered.append((display, full))
+        # Sibling composition: только orphan-оверлей, sticky removed — история.
+        if kind == KIND_ORPHAN and _is_sibling_owned(display, full):
+            continue
+        filtered.append((display, full, kind))
     return filtered
+
+
+def _active_file_paths_by_release(
+    archives: Sequence[Any] | list[TorrentArchive],
+    files_by_hash: dict[str, list[TorrentFile]],
+) -> dict[int, dict[str, tuple[set[str], set[str]]]]:
+    """release_id → info_hash → (relative_paths, full_paths) для api_present не-superseded."""
+    result: dict[int, dict[str, tuple[set[str], set[str]]]] = {}
+    for archive in archives:
+        if not bool(getattr(archive, "api_present", True)):
+            continue
+        if bool(getattr(archive, "superseded", False)):
+            continue
+        key = (getattr(archive, "info_hash", None) or "").strip().lower()
+        if not key:
+            continue
+        release_id = int(getattr(archive, "release_id"))
+        rels: set[str] = set()
+        fulls: set[str] = set()
+        for f in files_by_hash.get(key, []):
+            if f.relative_path:
+                rels.add(f.relative_path)
+            if f.full_path:
+                fulls.add(f.full_path)
+        result.setdefault(release_id, {})[key] = (rels, fulls)
+    return result
+
+
+def _sibling_owned_paths(
+    by_hash: dict[str, tuple[set[str], set[str]]],
+    *,
+    exclude_hash: str,
+) -> tuple[set[str], set[str]]:
+    """Объединение путей всех активных торрентов релиза, кроме текущего."""
+    current = (exclude_hash or "").strip().lower()
+    rels: set[str] = set()
+    fulls: set[str] = set()
+    for key, (r, f) in by_hash.items():
+        if key == current:
+            continue
+        rels |= r
+        fulls |= f
+    return rels, fulls
 
 
 def _build_file_rows(
@@ -610,7 +707,7 @@ def _build_file_rows(
     hashes_by_path: dict[str, DiskFileHash] | None = None,
     *,
     hash_job_active: bool = False,
-    removed_candidates: list[tuple[str, str | None]] | None = None,
+    removed_candidates: list[tuple[str, str | None, str]] | list[tuple[str, str | None]] | None = None,
 ) -> list[ReleaseFileRow]:
     hash_map = hashes_by_path or {}
     rows: list[ReleaseFileRow] = []
@@ -646,7 +743,11 @@ def _build_file_rows(
         if item.full_path:
             seen_keys.add(item.full_path)
 
-    for display_path, full_path in removed_candidates or []:
+    for cand in removed_candidates or []:
+        if len(cand) == 3:
+            display_path, full_path, _kind = cand  # type: ignore[misc]
+        else:
+            display_path, full_path = cand  # type: ignore[misc]
         key = display_path or full_path or ""
         if not key or key in seen_keys:
             continue
@@ -910,7 +1011,7 @@ def _recent_events_by_info_hash(
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
-        bucket.removed_candidates.append((display, row.full_path))
+        bucket.removed_candidates.append((display, row.full_path, row.kind))
     return result
 
 

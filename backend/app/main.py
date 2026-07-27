@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -40,6 +41,12 @@ from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, build_anilibria_client, get_setting_value
 from app.services.file_hasher import normalize_file_hash_workers_setting
+from app.services.hevc_pairing import (
+    age_hours,
+    classify_archive_codec,
+    find_unpaired_avc,
+    sync_hevc_pair_events_for_release,
+)
 from app.services.releases_view import build_archive_page_rows, list_release_groups
 from app.services.system_status import collect_system_status
 from app.services.telegram_notify import (
@@ -51,7 +58,7 @@ from app.services.telegram_notify import (
     upsert_tracked_release,
 )
 from app.services.torrent_archive import resolve_torrent_storage_root
-from app.utils.datetime_fmt import as_utc_iso
+from app.utils.datetime_fmt import as_utc_iso, utcnow
 
 
 logger = logging.getLogger(__name__)
@@ -850,6 +857,67 @@ def toggle_release_tracking(
             "tracked": tracked,
             "track_source": source,
         },
+    )
+
+
+@app.post("/releases/archive/{archive_id}/ignore-hevc", response_class=HTMLResponse)
+def toggle_ignore_hevc(
+    request: Request,
+    archive_id: int,
+    enabled: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """HTMX: «Игнорировать HEVC» на AVC-строке /releases."""
+    archive = db.get(TorrentArchive, archive_id)
+    if archive is None:
+        raise HTTPException(status_code=404, detail="Архив не найден")
+    if bool(getattr(archive, "superseded", False)) or not bool(
+        getattr(archive, "api_present", True)
+    ):
+        raise HTTPException(status_code=400, detail="Только для актуального торрента")
+    qj = archive.quality_json if isinstance(archive.quality_json, dict) else None
+    codec = classify_archive_codec(quality_json=qj, torrent_type=archive.torrent_type)
+    if codec != "AVC":
+        raise HTTPException(status_code=400, detail="Игнор HEVC только для AVC")
+
+    archive.ignore_hevc = enabled == "on"
+    db.commit()
+    try:
+        sync_hevc_pair_events_for_release(db, int(archive.release_id))
+    except Exception:
+        logger.exception(
+            "hevc_status sync после ignore_hevc archive_id=%s", archive_id
+        )
+
+    # Пересчитаем бейдж для HTMX-ячейки (без полного list_release_groups).
+    siblings = list(
+        db.scalars(
+            select(TorrentArchive).where(
+                TorrentArchive.release_id == archive.release_id,
+                TorrentArchive.api_present.is_(True),
+                TorrentArchive.superseded.is_(False),
+            )
+        ).all()
+    )
+    unpaired = {
+        item.archive_id: item for item in find_unpaired_avc(siblings, now=utcnow())
+    }.get(int(archive.id))
+    row = SimpleNamespace(
+        torrent_type=archive.torrent_type,
+        hevc_pair_status=unpaired.status if unpaired else None,
+        hevc_pair_age_hours=(
+            unpaired.age_hours
+            if unpaired
+            else age_hours(getattr(archive, "created_at", None), now=utcnow())
+        ),
+        codec_family=codec,
+        archive_id=archive.id,
+        ignore_hevc=bool(archive.ignore_hevc),
+    )
+    return templates.TemplateResponse(
+        request,
+        "partials/release_torrent_type_cell.html",
+        {"t": row},
     )
 
 

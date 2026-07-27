@@ -2036,7 +2036,7 @@ def test_three_versions_sticky_statuses_removed_only_on_bump_version(
         MagicMock(all=lambda: []),  # archives legacy
     ]
     by_hash = _recent_events_by_info_hash(db_events, [release_id])
-    assert (f_dup, full_v1[f_dup]) in by_hash[v2].removed_candidates
+    assert (f_dup, full_v1[f_dup], "removed") in by_hash[v2].removed_candidates
     assert v3 in by_hash
     assert all(c[0] != f_dup for c in by_hash[v3].removed_candidates)
 

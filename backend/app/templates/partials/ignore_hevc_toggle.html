@@ -1,0 +1,15 @@
+<form class="ignore-hevc-toggle row" style="gap:6px; margin:4px 0 0; display:inline-flex;">
+  <label class="row" style="gap:6px; margin:0;" title="Не считать этот AVC без/с просроченной HEVC-парой">
+    <input
+      type="checkbox"
+      name="enabled"
+      value="on"
+      {% if ignore_hevc %}checked{% endif %}
+      hx-post="/releases/archive/{{ archive_id }}/ignore-hevc"
+      hx-include="closest form"
+      hx-target="closest .torrent-type-cell"
+      hx-swap="innerHTML"
+    />
+    <span class="muted">Игнорировать HEVC</span>
+  </label>
+</form>

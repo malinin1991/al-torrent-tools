@@ -40,6 +40,7 @@ def _row(
     torrent_type: str | None = None,
     quality_json: dict | None = None,
     info_hash: str | None = None,
+    ignore_hevc: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=archive_id,
@@ -54,6 +55,7 @@ def _row(
         api_present=api_present,
         superseded=superseded,
         info_hash=info_hash or f"{archive_id:040x}",
+        ignore_hevc=ignore_hevc,
     )
 
 
@@ -284,13 +286,13 @@ def test_avc_newer_than_hevc_not_missing_until_sla() -> None:
 
 
 def test_avc_newer_than_hevc_overdue_after_sla() -> None:
-    """AVC новее exact-HEVC и age > 24h → overdue, не missing."""
+    """AVC новее exact-HEVC по torrent_id и age > 24h → overdue, не missing."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     hevc_ts = now - timedelta(hours=48)
     avc_ts = now - timedelta(hours=HEVC_SLA_HOURS + 1)
     rows = [
-        _row(archive_id=1, episodes="1-12", codec="AVC", created_at=avc_ts),
-        _row(archive_id=2, episodes="1-12", codec="HEVC", created_at=hevc_ts),
+        _row(archive_id=1, torrent_id=200, episodes="1-12", codec="AVC", created_at=avc_ts),
+        _row(archive_id=2, torrent_id=100, episodes="1-12", codec="HEVC", created_at=hevc_ts),
     ]
     unpaired = find_unpaired_avc(rows, now=now)
     assert len(unpaired) == 1
@@ -303,17 +305,29 @@ def test_avc_newer_than_hevc_overdue_after_sla() -> None:
     assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
 
 
+def test_hevc_newer_by_torrent_id_not_overdue_even_if_created_at_older() -> None:
+    """HEVC с большим torrent_id, но более ранним ALTT created_at — не overdue."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    avc_ts = now - timedelta(hours=HEVC_SLA_HOURS + 2)
+    hevc_ts = now - timedelta(hours=HEVC_SLA_HOURS + 40)
+    rows = [
+        _row(archive_id=1, torrent_id=50, episodes="1-12", codec="AVC", created_at=avc_ts),
+        _row(archive_id=2, torrent_id=90, episodes="1-12", codec="HEVC", created_at=hevc_ts),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+
+
 def test_hevc_newer_or_equal_not_missing() -> None:
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     avc_ts = now - timedelta(hours=5)
     rows_newer = [
-        _row(archive_id=1, episodes="1-12", codec="AVC", created_at=avc_ts),
-        _row(archive_id=2, episodes="1-12", codec="HEVC", created_at=now),
+        _row(archive_id=1, torrent_id=10, episodes="1-12", codec="AVC", created_at=avc_ts),
+        _row(archive_id=2, torrent_id=20, episodes="1-12", codec="HEVC", created_at=now),
     ]
     assert find_unpaired_avc(rows_newer, now=now) == []
     rows_equal = [
-        _row(archive_id=3, episodes="1-12", codec="AVC", created_at=now),
-        _row(archive_id=4, episodes="1-12", codec="HEVC", created_at=now),
+        _row(archive_id=3, torrent_id=30, episodes="1-12", codec="AVC", created_at=now),
+        _row(archive_id=4, torrent_id=40, episodes="1-12", codec="HEVC", created_at=now),
     ]
     assert find_unpaired_avc(rows_equal, now=now) == []
 

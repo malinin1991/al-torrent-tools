@@ -4,12 +4,14 @@ missing         — HEVC вообще нет для слота (release + batch_
                   source class). WEBRip↔WEB-DL не блокирует «HEVC есть».
                   AVC новее HEVC → не missing (это overdue после SLA).
 overdue         — age > 24h и нет актуального exact-аналога
-                  (тот же rip type+quality+episodes), либо AVC новее exact-HEVC.
+                  (тот же rip type+quality+episodes), либо AVC новее exact-HEVC
+                  по AniLibria torrent_id (created_at ALTT — только tie-break).
 type_mismatch   — HEVC есть (тот же start+quality в web-классе), но тип рипа
                   WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
 
 Бейдж (status): overdue > type_mismatch > missing.
 Фильтры независимы: один AVC может быть overdue и type_mismatch сразу.
+ignore_hevc на архиве AVC закрывает missing/overdue/type_mismatch.
 """
 
 from __future__ import annotations
@@ -289,6 +291,26 @@ def _created_is_newer(left: datetime | None, right: datetime | None) -> bool:
     return _as_naive_utc(left) > _as_naive_utc(right)
 
 
+def _avc_is_newer_than_hevc(
+    *,
+    avc_torrent_id: int,
+    avc_created_at: datetime | None,
+    hevc: _HevcPairRef,
+) -> bool:
+    """True если HEVC устарел относительно AVC (нужен catch-up).
+
+    Источник истины порядка загрузок AniLibria — ``torrent_id``.
+    ``created_at`` ALTT только tie-break при равных torrent_id (иначе ingest
+    HEVC раньше AVC даёт вечный overdue при более новом hevc.torrent_id).
+    """
+    if avc_torrent_id and hevc.torrent_id:
+        if hevc.torrent_id < avc_torrent_id:
+            return True
+        if hevc.torrent_id > avc_torrent_id:
+            return False
+    return _created_is_newer(avc_created_at, hevc.created_at)
+
+
 @dataclass(frozen=True)
 class _HevcPairRef:
     created_at: datetime | None
@@ -301,6 +323,9 @@ class _HevcPairRef:
 def _pick_latest_hevc(current: _HevcPairRef | None, candidate: _HevcPairRef) -> _HevcPairRef:
     if current is None:
         return candidate
+    # Порядок AniLibria: больший torrent_id = более поздняя загрузка.
+    if candidate.torrent_id != current.torrent_id:
+        return candidate if candidate.torrent_id > current.torrent_id else current
     if candidate.created_at is None:
         return current
     if current.created_at is None:
@@ -326,6 +351,7 @@ class UnpairedAvc:
     paired_hevc_info_hash: str | None = None
     paired_hevc_torrent_id: int | None = None
     batch_start: BatchStartKey | None = None
+    ignore_hevc: bool = False
 
     @property
     def status(self) -> HevcPairStatus:
@@ -416,6 +442,9 @@ def find_unpaired_avc(
                 avc_rows.append(row)
 
         for row in avc_rows:
+            # Ручной «Игнорировать HEVC» — считаем пару закрытой для фильтров/бейджей.
+            if bool(_archive_attr(row, "ignore_hevc", False)):
+                continue
             qj = _archive_attr(row, "quality_json")
             qj = qj if isinstance(qj, dict) else None
             torrent_type = _archive_attr(row, "torrent_type")
@@ -425,6 +454,7 @@ def find_unpaired_avc(
             created = _archive_attr(row, "created_at")
             hours = age_hours(created, now=current)
             avc_rip_type = rip_type_key(quality_json=qj, torrent_type=torrent_type)
+            avc_torrent_id = int(_archive_attr(row, "torrent_id") or 0)
 
             presence = presence_pair_key(
                 quality_json=qj,
@@ -451,7 +481,11 @@ def find_unpaired_avc(
             )
             exact_ref = hevc_exact.get(exact_key) if exact_key is not None else None
             has_exact = exact_ref is not None
-            avc_newer_exact = has_exact and _created_is_newer(created, exact_ref.created_at)
+            avc_newer_exact = has_exact and _avc_is_newer_than_hevc(
+                avc_torrent_id=avc_torrent_id,
+                avc_created_at=created,
+                hevc=exact_ref,
+            )
             needs_exact_catchup = (not has_exact) or avc_newer_exact
             is_overdue = needs_exact_catchup and hours is not None and hours > sla_hours
 
@@ -463,7 +497,7 @@ def find_unpaired_avc(
                 UnpairedAvc(
                     archive_id=int(_archive_attr(row, "id")),
                     release_id=release_id,
-                    torrent_id=int(_archive_attr(row, "torrent_id") or 0),
+                    torrent_id=avc_torrent_id,
                     rip_family=family,
                     episodes=episodes,
                     created_at=created,
@@ -595,7 +629,10 @@ def sync_hevc_pair_events_for_release(
             continue
 
         item = unpaired.get(int(row.id))
-        new_state: HevcNeedState = item.need_state if item is not None else "ok"
+        ignored = bool(getattr(row, "ignore_hevc", False))
+        new_state: HevcNeedState = (
+            "ok" if ignored else (item.need_state if item is not None else "ok")
+        )
 
         last = db.scalar(
             select(PipelineEvent)
@@ -611,11 +648,15 @@ def sync_hevc_pair_events_for_release(
             prev_state = "ok"
 
         new_flags = _need_flags_fingerprint(
-            missing=bool(item.missing) if item else False,
-            overdue=bool(item.overdue) if item else False,
-            type_mismatch=bool(item.type_mismatch) if item else False,
-            hevc_outdated=bool(item.hevc_outdated) if item else False,
-            paired_hevc_info_hash=item.paired_hevc_info_hash if item else None,
+            missing=bool(item.missing) if item and not ignored else False,
+            overdue=bool(item.overdue) if item and not ignored else False,
+            type_mismatch=bool(item.type_mismatch) if item and not ignored else False,
+            hevc_outdated=bool(item.hevc_outdated) if item and not ignored else False,
+            paired_hevc_info_hash=(
+                None
+                if ignored
+                else (item.paired_hevc_info_hash if item else None)
+            ),
         )
         raw_prev_details = getattr(last, "details_json", None) if last is not None else None
         prev_details = raw_prev_details if isinstance(raw_prev_details, dict) else {}
@@ -630,10 +671,15 @@ def sync_hevc_pair_events_for_release(
                 else None
             ),
         )
+        prev_ignored = bool(prev_details.get("ignore_hevc"))
         # Переход need-state или смена причины при том же бейдже
         # (overdue+missing → overdue+type_mismatch). Без details у прошлого
         # события не сравниваем флаги — иначе legacy/mock спамили бы каждый sync.
-        if prev_state == new_state and (not prev_details or prev_flags == new_flags):
+        if (
+            prev_state == new_state
+            and prev_ignored == ignored
+            and (not prev_details or prev_flags == new_flags)
+        ):
             continue
 
         presence = presence_pair_key(
@@ -641,6 +687,12 @@ def sync_hevc_pair_events_for_release(
             torrent_type=row.torrent_type,
             torrent_description=row.torrent_description,
         )
+        if ignored:
+            reason = "ignore_hevc"
+        elif new_state != "ok":
+            reason = new_state
+        else:
+            reason = "paired"
         details: dict[str, Any] = {
             "actor": "job" if job_id is not None else "pipeline",
             "release_id": release_id,
@@ -656,19 +708,23 @@ def sync_hevc_pair_events_for_release(
             ),
             "batch_start_key": list(presence[2]) if presence is not None else None,
             "episodes": normalize_episodes(row.torrent_description),
-            "reason": new_state if new_state != "ok" else "paired",
-            "paired_hevc_info_hash": item.paired_hevc_info_hash if item else None,
-            "paired_hevc_torrent_id": item.paired_hevc_torrent_id if item else None,
-            "hevc_outdated": bool(item.hevc_outdated) if item else False,
-            "missing": bool(item.missing) if item else False,
-            "overdue": bool(item.overdue) if item else False,
-            "type_mismatch": bool(item.type_mismatch) if item else False,
+            "reason": reason,
+            "paired_hevc_info_hash": None if ignored else (item.paired_hevc_info_hash if item else None),
+            "paired_hevc_torrent_id": (
+                None if ignored else (item.paired_hevc_torrent_id if item else None)
+            ),
+            "hevc_outdated": bool(item.hevc_outdated) if item and not ignored else False,
+            "missing": bool(item.missing) if item and not ignored else False,
+            "overdue": bool(item.overdue) if item and not ignored else False,
+            "type_mismatch": bool(item.type_mismatch) if item and not ignored else False,
+            "ignore_hevc": ignored,
         }
+        message = "Игнор HEVC" if ignored else _need_message(new_state)
         record_pipeline_event(
             db,
             pipeline.id,
             event_type="hevc_status",
-            message=_need_message(new_state),
+            message=message,
             job_id=job_id,
             from_status=prev_state if last is not None else None,
             to_status=new_state,
