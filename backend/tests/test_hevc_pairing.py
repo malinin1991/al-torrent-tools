@@ -36,6 +36,7 @@ def _row(
     rip_type: str = "BDRip",
     quality: str = "1080p",
     created_at: datetime | None = None,
+    api_created_at: datetime | None = None,
     api_present: bool = True,
     superseded: bool = False,
     torrent_type: str | None = None,
@@ -53,6 +54,7 @@ def _row(
         if quality_json is not None
         else _qj(rip_type=rip_type, quality=quality, codec=codec),
         created_at=created_at,
+        api_created_at=api_created_at,
         api_present=api_present,
         superseded=superseded,
         info_hash=info_hash or f"{archive_id:040x}",
@@ -957,3 +959,113 @@ def test_sync_emits_when_flags_change_same_badge(
     assert recorded[0]["details"]["missing"] is False
     assert recorded[0]["details"]["type_mismatch"] is True
     assert recorded[0]["details"]["paired_hevc_info_hash"] == "bb" * 20
+
+
+def test_overdue_sla_uses_api_created_at_when_set() -> None:
+    """SLA clock: при api_created_at age считается от него, не от system created_at."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    # system created_at свежий (<SLA), api_created_at старый (>SLA) → overdue + age_from_api
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now - timedelta(hours=2),
+            api_created_at=now - timedelta(hours=30),
+        ),
+        _row(archive_id=2, episodes="1-11", codec="HEVC", created_at=now),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].overdue is True
+    assert unpaired[0].age_from_api is True
+    assert unpaired[0].age_hours is not None
+    assert unpaired[0].age_hours > HEVC_SLA_HOURS
+
+
+def test_overdue_sla_falls_back_to_system_created_at() -> None:
+    """Без api_created_at SLA от system created_at; age_from_api=False (оранжевый бейдж)."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now - timedelta(hours=30),
+            api_created_at=None,
+        ),
+        _row(archive_id=2, episodes="1-11", codec="HEVC", created_at=now),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].overdue is True
+    assert unpaired[0].age_from_api is False
+
+
+def test_fresh_api_created_at_not_overdue_despite_old_system_created() -> None:
+    """api_created_at свежий (<SLA) — не overdue, даже если system created_at старый."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now - timedelta(hours=48),
+            api_created_at=now - timedelta(hours=2),
+        ),
+        _row(archive_id=2, episodes="1-11", codec="HEVC", created_at=now),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    # presence есть, exact нет, но age по api < SLA → только type? нет, BDRip same.
+    # exact нет + presence → overdue только если age > SLA. Здесь age мал → ok.
+    assert all(not u.overdue for u in unpaired)
+    assert unpaired == [] or all(u.status != "overdue" for u in unpaired)
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+
+
+def test_catchup_tiebreak_uses_system_created_not_api() -> None:
+    """Catch-up tie-break (равный torrent_id): system created_at, не api_created_at."""
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    # AVC ALTT новее HEVC → catch-up; api старше — не отменяет.
+    rows_outdated = [
+        _row(
+            archive_id=1,
+            torrent_id=50,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now - timedelta(hours=1),
+            api_created_at=now - timedelta(hours=48),
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=50,
+            episodes="1-12",
+            codec="HEVC",
+            created_at=now - timedelta(hours=5),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows_outdated, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].hevc_outdated is True
+    assert unpaired[0].overdue is True
+    assert unpaired[0].age_from_api is True
+
+    # AVC ALTT старше HEVC → не catch-up; свежий api не должен отравлять сравнение.
+    rows_ok = [
+        _row(
+            archive_id=3,
+            torrent_id=60,
+            episodes="1-12",
+            codec="AVC",
+            created_at=now - timedelta(hours=10),
+            api_created_at=now - timedelta(hours=1),
+        ),
+        _row(
+            archive_id=4,
+            torrent_id=60,
+            episodes="1-12",
+            codec="HEVC",
+            created_at=now - timedelta(hours=2),
+        ),
+    ]
+    assert find_unpaired_avc(rows_ok, now=now) == []

@@ -35,6 +35,7 @@ def _archive(
     rip_type: str = "BDRip",
     quality: str = "1080p",
     created_at: datetime | None = None,
+    api_created_at: datetime | None = None,
     anime_name: str = "One Piece",
     release_alias: str = "one-piece",
     api_present: bool = True,
@@ -53,6 +54,7 @@ def _archive(
         torrent_description=episodes,
         file_size=1024,
         created_at=created_at,
+        api_created_at=api_created_at,
         quality_json=_qj(rip_type=rip_type, quality=quality, codec=codec),
         api_present=api_present,
         superseded=superseded,
@@ -479,6 +481,47 @@ def test_age_boundary_missing_vs_overdue() -> None:
     assert by_rid[13] == "missing"
 
 
+def test_list_release_groups_overdue_age_from_api_created_at() -> None:
+    """api_created_at → hevc_overdue_age_from_api=True в list_release_groups."""
+    now = utcnow()
+    # system created_at свежий (<SLA), api старый (>SLA) → overdue + age_from_api
+    avc = _archive(
+        archive_id=1,
+        release_id=20,
+        torrent_id=300,
+        episodes="1-12",
+        codec="AVC",
+        created_at=now - timedelta(hours=2),
+        api_created_at=now - timedelta(hours=HEVC_SLA_HOURS + 2),
+        anime_name="API Age Show",
+        release_alias="api-age",
+    )
+    hevc = _archive(
+        archive_id=2,
+        release_id=20,
+        torrent_id=301,
+        episodes="1-11",
+        codec="HEVC",
+        created_at=now,
+        anime_name="API Age Show",
+        release_alias="api-age",
+    )
+    pairing = [avc, hevc]
+    stats = [SimpleNamespace(release_id=20, last_updated=now, torrent_count=2)]
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=pairing,
+        stats_rows=stats,
+        total=1,
+    )
+    result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+    assert len(result["groups"]) == 1
+    by_id = {t.archive_id: t for t in result["groups"][0].torrents}
+    assert by_id[1].hevc_pair_status == "overdue"
+    assert by_id[1].hevc_overdue_age_from_api is True
+    assert by_id[2].hevc_pair_status is None
+
+
 def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
     """WEBRip AVC + WEB-DL HEVC → type_mismatch filter, не missing."""
     now = utcnow()
@@ -643,6 +686,7 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
                 hevc_pair_status="overdue",
                 # Часы сверх SLA (age 30 − 24), не полный age.
                 hevc_pair_age_hours=6.0,
+                hevc_overdue_age_from_api=True,
             ),
             ReleaseTorrentRow(
                 archive_id=2,
@@ -671,6 +715,21 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
                 pipeline_error=None,
                 hevc_pair_status="type_mismatch",
                 hevc_pair_age_hours=3.0,
+            ),
+            ReleaseTorrentRow(
+                archive_id=4,
+                torrent_id=13,
+                info_hash="dd" * 20,
+                torrent_type="BDRip 1080p AVC",
+                torrent_description="5-6",
+                file_size=100,
+                file_size_label="100 B",
+                created_at=now - timedelta(hours=40),
+                pipeline_status=None,
+                pipeline_error=None,
+                hevc_pair_status="overdue",
+                hevc_pair_age_hours=16.0,
+                hevc_overdue_age_from_api=False,
             ),
         ],
         archived_torrents=[],
@@ -701,9 +760,59 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
     assert "Расхождение типов" in html
     assert 'value="type_mismatch"' in html
     assert "badge-danger" in html and "просрочка 6ч" in html
+    assert "badge-warn" in html and "просрочка 16ч" in html
     assert "badge-warn" in html and "нет HEVC" in html
     assert "badge-muted" in html and "расхождение типов" in html
     assert "hevc_filter=missing" in html or 'value="missing"' in html
+
+
+def test_overdue_badge_orange_vs_red_in_type_cell() -> None:
+    """Оранжевый (fallback) vs красный (api_created_at) бейдж просрочки."""
+    from app.services.releases_view import ReleaseTorrentRow
+
+    templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.filters["as_utc_iso"] = as_utc_iso
+    request = MagicMock()
+
+    red = ReleaseTorrentRow(
+        archive_id=1,
+        torrent_id=10,
+        info_hash="aa" * 20,
+        torrent_type="BDRip 1080p AVC",
+        torrent_description="1-2",
+        file_size=1,
+        file_size_label="1 B",
+        created_at=None,
+        pipeline_status=None,
+        pipeline_error=None,
+        hevc_pair_status="overdue",
+        hevc_pair_age_hours=5.0,
+        hevc_overdue_age_from_api=True,
+    )
+    orange = ReleaseTorrentRow(
+        archive_id=2,
+        torrent_id=11,
+        info_hash="bb" * 20,
+        torrent_type="BDRip 1080p AVC",
+        torrent_description="3-4",
+        file_size=1,
+        file_size_label="1 B",
+        created_at=None,
+        pipeline_status=None,
+        pipeline_error=None,
+        hevc_pair_status="overdue",
+        hevc_pair_age_hours=7.0,
+        hevc_overdue_age_from_api=False,
+    )
+    red_html = templates.TemplateResponse(
+        request, "partials/release_torrent_type_cell.html", {"t": red}
+    ).body.decode("utf-8")
+    orange_html = templates.TemplateResponse(
+        request, "partials/release_torrent_type_cell.html", {"t": orange}
+    ).body.decode("utf-8")
+    assert 'class="badge badge-danger"' in red_html and "просрочка 5ч" in red_html
+    assert 'class="badge badge-warn"' in orange_html and "просрочка 7ч" in orange_html
+    assert "badge-danger" not in orange_html
 
 
 def test_releases_page_passes_hevc_filter(monkeypatch: pytest.MonkeyPatch) -> None:

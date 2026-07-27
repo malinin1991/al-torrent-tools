@@ -588,9 +588,19 @@ class FileTrackerService:
         current_family: str,
         candidate: Any,
     ) -> bool:
-        """True если кандидат — та же codec/rip family (не opposite-codec sibling)."""
+        """True если кандидат — та же codec/rip family (не opposite-codec sibling).
+
+        Fail closed both ways: известный codec с одной стороны и неизвестный с
+        другой → не same family (иначе AVC/HEVC мог бы ошибочно сматчиться).
+        Оба неизвестны — решают family-ключи.
+        """
         cand_codec, cand_family = FileTrackerService._sticky_rip_identity(candidate)
-        if current_codec and cand_codec and current_codec != cand_codec:
+        if current_codec is None:
+            if cand_codec is not None:
+                return False
+        elif cand_codec is None:
+            return False
+        elif current_codec != cand_codec:
             return False
         if current_family and cand_family and current_family != cand_family:
             return False

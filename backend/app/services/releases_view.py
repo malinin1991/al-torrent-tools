@@ -213,6 +213,8 @@ class ReleaseTorrentRow:
     hevc_pair_status: Literal["missing", "overdue", "type_mismatch"] | None = None
     # Для бейджа overdue: часы сверх SLA (age − 24), не полный age AVC.
     hevc_pair_age_hours: float | None = None
+    # True = age от api_created_at → красный бейдж; False = fallback system created_at → оранжевый.
+    hevc_overdue_age_from_api: bool = False
     codec_family: str | None = None
     ignore_hevc: bool = False
     files: list[ReleaseFileRow] = field(default_factory=list)
@@ -355,6 +357,7 @@ def _active_archives_for_hevc_pairing(db: Session) -> list[Any]:
                 TorrentArchive.torrent_description,
                 TorrentArchive.quality_json,
                 TorrentArchive.created_at,
+                TorrentArchive.api_created_at,
                 TorrentArchive.info_hash,
                 TorrentArchive.api_present,
                 TorrentArchive.superseded,
@@ -541,6 +544,7 @@ def list_release_groups(
                 hevc_pair_age_hours=(
                     overdue_hours_past_sla(unpaired.age_hours) if unpaired else None
                 ),
+                hevc_overdue_age_from_api=bool(unpaired.age_from_api) if unpaired else False,
                 codec_family=codec,
                 ignore_hevc=bool(getattr(item, "ignore_hevc", False)),
                 files=file_rows,

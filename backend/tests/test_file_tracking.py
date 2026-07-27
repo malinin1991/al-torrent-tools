@@ -2902,6 +2902,63 @@ def test_split_active_archived() -> None:
     assert len(archived) == 1 and archived[0].torrent_id == 2
 
 
+def test_same_sticky_rip_family_fail_closed_when_current_codec_unknown() -> None:
+    """Без codec текущего — sibling с AVC/HEVC не prior (fail closed)."""
+    from types import SimpleNamespace
+
+    hevc = SimpleNamespace(
+        quality_json={
+            "type": {"value": "BDRip"},
+            "quality": {"value": "1080p"},
+            "codec": {"label": "HEVC"},
+        },
+        torrent_type="BDRip 1080p HEVC",
+    )
+    unknown = SimpleNamespace(quality_json={}, torrent_type=None)
+    assert (
+        FileTrackerService._same_sticky_rip_family(
+            current_codec=None,
+            current_family="BDRip 1080p",
+            candidate=hevc,
+        )
+        is False
+    )
+    assert (
+        FileTrackerService._same_sticky_rip_family(
+            current_codec="AVC",
+            current_family="BDRip 1080p",
+            candidate=hevc,
+        )
+        is False
+    )
+    assert (
+        FileTrackerService._same_sticky_rip_family(
+            current_codec="HEVC",
+            current_family="BDRip 1080p",
+            candidate=hevc,
+        )
+        is True
+    )
+    # Известный current + неизвестный candidate — fail closed.
+    assert (
+        FileTrackerService._same_sticky_rip_family(
+            current_codec="AVC",
+            current_family="BDRip 1080p",
+            candidate=unknown,
+        )
+        is False
+    )
+    # Оба без codec — семейство решают family-ключи.
+    assert (
+        FileTrackerService._same_sticky_rip_family(
+            current_codec=None,
+            current_family="",
+            candidate=unknown,
+        )
+        is True
+    )
+
+
 def test_file_status_for_ui_sticky_semantics() -> None:
     from app.services.file_tracker import file_status_for_ui
 

@@ -41,6 +41,21 @@ from app.services.torrent_qb_meta import (
 
 
 class TorrentProcessor:
+    # Поля торрента для archive save / meta (как telegram handler + created_at).
+    RELEASE_TORRENTS_INCLUDE = [
+        "id",
+        "description",
+        "codec",
+        "type",
+        "quality",
+        "label",
+        "info_hash",
+        "hash",
+        "size",
+        "updated_at",
+        "created_at",
+    ]
+
     def __init__(self, db: Session, job_id: int, client: AniLibriaClient) -> None:
         self._db = db
         self._job_id = job_id
@@ -565,18 +580,7 @@ class TorrentProcessor:
     ) -> dict[str, int]:
         torrents_payload = await self._al_client.get_torrents_for_release(
             release_id,
-            include=[
-                "id",
-                "description",
-                "codec",
-                "type",
-                "quality",
-                "label",
-                "info_hash",
-                "hash",
-                "size",
-                "updated_at",
-            ],
+            include=list(self.RELEASE_TORRENTS_INCLUDE),
         )
         torrents = self._iter_torrents(torrents_payload)
         if not torrents:
@@ -599,6 +603,15 @@ class TorrentProcessor:
             if tid is not None:
                 present_ids.add(tid)
         update_api_present_for_release(self._db, release_id, present_ids)
+        # Backfill api_created_at из list (в т.ч. already-seen / full_sync), не перекачивая .torrent.
+        filled = TorrentArchiveService(self._db).fill_missing_api_created_at(
+            release_id, torrents
+        )
+        if filled:
+            self._add_log(
+                f"Релиз {release_id}: api_created_at backfill={filled}",
+                "debug",
+            )
 
         all_seen = True
         for torrent in torrents:

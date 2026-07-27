@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,29 @@ class TorrentArchiveService:
     @staticmethod
     def _extract_torrent_description(torrent_payload: dict[str, Any]) -> str | None:
         return TorrentArchiveService._clean_text(torrent_payload.get("description"))
+
+    @staticmethod
+    def _extract_api_created_at(torrent_payload: dict[str, Any]) -> datetime | None:
+        """AniLibria torrent.created_at (OpenAPI date-time) → naive UTC для БД."""
+        raw = torrent_payload.get("created_at")
+        if isinstance(raw, datetime):
+            if raw.tzinfo is None:
+                return raw
+            return raw.astimezone(timezone.utc).replace(tzinfo=None)
+        if not isinstance(raw, str):
+            return None
+        text = raw.strip()
+        if not text:
+            return None
+        if text.endswith("Z") or text.endswith("z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
     @staticmethod
     def _extract_torrent_type(torrent_payload: dict[str, Any]) -> str | None:
@@ -227,6 +251,7 @@ class TorrentArchiveService:
         torrent_id = int(torrent_payload["id"])
         torrent_description = self._extract_torrent_description(torrent_payload)
         torrent_type = self._extract_torrent_type(torrent_payload)
+        api_created_at = self._extract_api_created_at(torrent_payload)
         quality_json = self._attach_release_names(
             self._build_quality_json(torrent_payload),
             release_payload,
@@ -253,6 +278,7 @@ class TorrentArchiveService:
                 quality_json=quality_json,
                 file_path=str(relative_path),
                 file_size=self._to_file_size(torrent_payload),
+                api_created_at=api_created_at,
                 api_present=True,
                 superseded=False,
             )
@@ -272,6 +298,9 @@ class TorrentArchiveService:
             archive.quality_json = quality_json
             archive.file_path = str(relative_path)
             archive.file_size = self._to_file_size(torrent_payload)
+            # Не затираем уже сохранённый api_created_at, если payload без/с битым created_at.
+            if api_created_at is not None:
+                archive.api_created_at = api_created_at
             archive.api_present = True
             archive.superseded = False
             # Обновление той же версии (тот же info_hash) — ignore_hevc сохраняем.
@@ -280,6 +309,51 @@ class TorrentArchiveService:
         self._db.commit()
         self._db.refresh(archive)
         return archive
+
+    def fill_missing_api_created_at(
+        self,
+        release_id: int,
+        torrents: list[dict[str, Any]],
+    ) -> int:
+        """Проставить пустой api_created_at из list payload (full_sync/ongoing backfill).
+
+        Не перезаписывает уже заполненные значения и игнорирует битый/пустой created_at.
+        """
+        by_tid: dict[int, datetime] = {}
+        for torrent in torrents:
+            if not isinstance(torrent, dict):
+                continue
+            raw_id = torrent.get("id") or torrent.get("torrent_id")
+            try:
+                tid = int(raw_id) if raw_id is not None else None
+            except (TypeError, ValueError):
+                tid = None
+            if tid is None:
+                continue
+            parsed = self._extract_api_created_at(torrent)
+            if parsed is not None:
+                by_tid[tid] = parsed
+        if not by_tid:
+            return 0
+        rows = list(
+            self._db.scalars(
+                select(TorrentArchive).where(
+                    TorrentArchive.release_id == release_id,
+                    TorrentArchive.torrent_id.in_(list(by_tid.keys())),
+                    TorrentArchive.api_created_at.is_(None),
+                )
+            ).all()
+        )
+        updated = 0
+        for row in rows:
+            value = by_tid.get(int(row.torrent_id))
+            if value is None:
+                continue
+            row.api_created_at = value
+            updated += 1
+        if updated:
+            self._db.commit()
+        return updated
 
     def list_archive(self, *, page: int, per_page: int, search: str | None) -> dict[str, Any]:
         filters = []

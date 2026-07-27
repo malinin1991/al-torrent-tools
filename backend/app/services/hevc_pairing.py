@@ -6,8 +6,10 @@ missing         — HEVC вообще нет для слота (release + batch_
 overdue         — на слоте уже есть HEVC (тот же batch_start; старый/частичный
                   ОК) И age > 24h без актуального exact-аналога
                   (тот же rip type+quality+episodes), либо AVC новее exact-HEVC
-                  по AniLibria torrent_id (created_at ALTT — только tie-break).
-                  Pure missing (нет HEVC на batch_start) никогда не overdue.
+                  по AniLibria torrent_id (system created_at ALTT — только
+                  tie-break; api_created_at сюда не подмешиваем).
+                  Часы SLA: api_created_at (AniLibria upload) если есть, иначе
+                  system created_at. Pure missing никогда не overdue.
 type_mismatch   — HEVC есть (тот же start+quality в web-классе), но тип рипа
                   WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
 
@@ -288,6 +290,17 @@ def age_hours(created_at: datetime | None, *, now: datetime | None = None) -> fl
     return (current - _as_naive_utc(created_at)).total_seconds() / 3600.0
 
 
+def sla_age_source(row: Any) -> tuple[datetime | None, bool]:
+    """Точка отсчёта SLA overdue: api_created_at если есть, иначе system created_at.
+
+    Второй элемент — True, если использован AniLibria api_created_at (красный бейдж).
+    """
+    api_created = _archive_attr(row, "api_created_at")
+    if api_created is not None:
+        return api_created, True
+    return _archive_attr(row, "created_at"), False
+
+
 def overdue_hours_past_sla(
     age: float | None, *, sla_hours: float = HEVC_SLA_HOURS
 ) -> float | None:
@@ -365,6 +378,8 @@ class UnpairedAvc:
     paired_hevc_torrent_id: int | None = None
     batch_start: BatchStartKey | None = None
     ignore_hevc: bool = False
+    # True = age считали от api_created_at (красный бейдж); False = fallback system created_at.
+    age_from_api: bool = False
 
     @property
     def status(self) -> HevcPairStatus:
@@ -464,8 +479,11 @@ def find_unpaired_avc(
             desc = _archive_attr(row, "torrent_description")
             family = rip_family_key(quality_json=qj, torrent_type=torrent_type)
             episodes = normalize_episodes(desc)
-            created = _archive_attr(row, "created_at")
-            hours = age_hours(created, now=current)
+            # SLA clock (бейдж age): api_created_at|system created_at.
+            # Catch-up freshness: torrent_id + tie-break system created_at (не api).
+            sla_created, age_from_api = sla_age_source(row)
+            system_created = _archive_attr(row, "created_at")
+            hours = age_hours(sla_created, now=current)
             avc_rip_type = rip_type_key(quality_json=qj, torrent_type=torrent_type)
             avc_torrent_id = int(_archive_attr(row, "torrent_id") or 0)
 
@@ -496,7 +514,7 @@ def find_unpaired_avc(
             has_exact = exact_ref is not None
             avc_newer_exact = has_exact and _avc_is_newer_than_hevc(
                 avc_torrent_id=avc_torrent_id,
-                avc_created_at=created,
+                avc_created_at=system_created,
                 hevc=exact_ref,
             )
             needs_exact_catchup = (not has_exact) or avc_newer_exact
@@ -520,7 +538,7 @@ def find_unpaired_avc(
                     torrent_id=avc_torrent_id,
                     rip_family=family,
                     episodes=episodes,
-                    created_at=created,
+                    created_at=sla_created,
                     age_hours=hours,
                     missing=is_missing,
                     overdue=is_overdue,
@@ -531,6 +549,7 @@ def find_unpaired_avc(
                         pair_ref.torrent_id if pair_ref and pair_ref.torrent_id else None
                     ),
                     batch_start=presence[2] if presence is not None else None,
+                    age_from_api=age_from_api,
                 )
             )
     return unpaired
