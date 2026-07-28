@@ -175,22 +175,40 @@ def members_from_quality_json(quality_json: dict[str, Any] | None) -> list[dict[
     return members
 
 
+def parse_api_bool(value: Any) -> bool | None:
+    """Нормализация bool из API/JSONB; None если значение нераспознано."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().casefold()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off", ""):
+            return False
+    return None
+
+
 def extract_release_block_flags(release_payload: dict[str, Any]) -> tuple[bool, bool]:
-    """(is_blocked_by_geo, is_blocked_by_copyrights) из payload AniLibria."""
-    return (
-        bool(release_payload.get("is_blocked_by_geo")),
-        bool(release_payload.get("is_blocked_by_copyrights")),
-    )
+    """(is_blocked_by_geo, is_blocked_by_copyrights) из payload AniLibria.
+
+    Ключ отсутствует → False (для вызовов, где наличие ключа уже проверено снаружи).
+    """
+    geo = parse_api_bool(release_payload.get("is_blocked_by_geo"))
+    copy = parse_api_bool(release_payload.get("is_blocked_by_copyrights"))
+    return (bool(geo), bool(copy))
 
 
 def block_flags_from_quality_json(quality_json: dict[str, Any] | None) -> tuple[bool, bool]:
     """Флаги блокировок из torrent_archive.quality_json."""
     if not isinstance(quality_json, dict):
         return False, False
-    return (
-        bool(quality_json.get("is_blocked_by_geo")),
-        bool(quality_json.get("is_blocked_by_copyrights")),
-    )
+    geo = parse_api_bool(quality_json.get("is_blocked_by_geo"))
+    copy = parse_api_bool(quality_json.get("is_blocked_by_copyrights"))
+    return (bool(geo), bool(copy))
 
 
 def extract_release_names(release_payload: dict[str, Any]) -> tuple[str | None, str | None]:

@@ -10,10 +10,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import Release, ReleaseMember
 from app.services.torrent_qb_meta import (
-    extract_release_block_flags,
     extract_release_genres,
     extract_release_members,
     extract_release_names,
+    parse_api_bool,
 )
 from app.utils.datetime_fmt import utcnow
 
@@ -86,11 +86,12 @@ def upsert_release_meta(
         row.genres_json = list(genres)
 
     if "is_blocked_by_geo" in release_payload or "is_blocked_by_copyrights" in release_payload:
-        geo, copy = extract_release_block_flags(release_payload)
         if "is_blocked_by_geo" in release_payload:
-            row.is_blocked_by_geo = geo
+            parsed = parse_api_bool(release_payload.get("is_blocked_by_geo"))
+            row.is_blocked_by_geo = False if parsed is None else parsed
         if "is_blocked_by_copyrights" in release_payload:
-            row.is_blocked_by_copyrights = copy
+            parsed = parse_api_bool(release_payload.get("is_blocked_by_copyrights"))
+            row.is_blocked_by_copyrights = False if parsed is None else parsed
 
     if "members" in release_payload:
         members = extract_release_members(release_payload)

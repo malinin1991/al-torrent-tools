@@ -101,6 +101,9 @@ def test_extract_release_members_and_block_flags() -> None:
     assert extract_release_block_flags(
         {"is_blocked_by_geo": True, "is_blocked_by_copyrights": False}
     ) == (True, False)
+    assert extract_release_block_flags(
+        {"is_blocked_by_geo": "true", "is_blocked_by_copyrights": "0"}
+    ) == (True, False)
     assert block_flags_from_quality_json(
         {"is_blocked_by_geo": True, "is_blocked_by_copyrights": True}
     ) == (True, True)
