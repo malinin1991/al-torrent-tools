@@ -7,13 +7,18 @@ overdue         — на слоте уже есть HEVC (тот же batch_star
                   ОК) И age > 24h без актуального exact-аналога
                   (тот же rip type+quality+episodes), либо AVC новее exact-HEVC
                   по AniLibria torrent_id (system created_at ALTT — только
-                  tie-break; api_created_at сюда не подмешиваем).
+                  tie-break). Парная заливка HEVC→AVC (типичный порядок AL):
+                  hevc.torrent_id < avc и api_created_at в окне
+                  HEVC_PAIR_UPLOAD_GRACE_HOURS — exact актуальна, не catch-up.
                   Часы SLA: api_created_at (AL max created_at/updated_at) если
                   есть, иначе system created_at. Pure missing никогда не overdue.
                   Несколько overdue AVC в одном presence-слоте (тот же start) —
                   age от earliest upload среди нуждающихся в catch-up.
                   Якорь наследует superseded/исторические AVC того же слота:
                   смена AVC 1-3→1-4 не сбрасывает отсчёт, пока HEVC не догнал.
+                  Среди кандидатов якоря предпочитаем api_created_at; local-only
+                  ALTT created_at не перебивает свежий AL-clock (нет backfill
+                  api у torrent_id, исчезнувших из list API).
 type_mismatch   — HEVC есть (тот же start+quality в web-классе), но тип рипа
                   WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
 
@@ -43,6 +48,9 @@ from app.services.telegram_notify import classify_torrent_codec_family
 from app.utils.datetime_fmt import utcnow
 
 HEVC_SLA_HOURS = 24
+# Окно парной заливки на AniLibria: сначала HEVC, затем AVC (часто tid+1).
+# Внутри окна меньший hevc.torrent_id не значит «HEVC устарел».
+HEVC_PAIR_UPLOAD_GRACE_HOURS = 2
 
 HevcFilter = Literal["", "missing", "overdue", "type_mismatch"]
 HevcPairStatus = Literal["missing", "overdue", "type_mismatch"]
@@ -336,10 +344,26 @@ def _created_is_newer(left: datetime | None, right: datetime | None) -> bool:
     return _as_naive_utc(left) > _as_naive_utc(right)
 
 
+def _paired_upload_within_grace(
+    *,
+    avc_api_created_at: datetime | None,
+    hevc_api_created_at: datetime | None,
+    grace_hours: float = HEVC_PAIR_UPLOAD_GRACE_HOURS,
+) -> bool:
+    """True если api_created_at AVC и HEVC в одном окне парной заливки."""
+    if avc_api_created_at is None or hevc_api_created_at is None:
+        return False
+    delta_h = (
+        _as_naive_utc(avc_api_created_at) - _as_naive_utc(hevc_api_created_at)
+    ).total_seconds() / 3600.0
+    return abs(delta_h) <= float(grace_hours)
+
+
 def _avc_is_newer_than_hevc(
     *,
     avc_torrent_id: int,
     avc_created_at: datetime | None,
+    avc_api_created_at: datetime | None,
     hevc: _HevcPairRef,
 ) -> bool:
     """True если HEVC устарел относительно AVC (нужен catch-up).
@@ -347,9 +371,17 @@ def _avc_is_newer_than_hevc(
     Источник истины порядка загрузок AniLibria — ``torrent_id``.
     ``created_at`` ALTT только tie-break при равных torrent_id (иначе ingest
     HEVC раньше AVC даёт вечный overdue при более новом hevc.torrent_id).
+
+    Исключение: парная заливка HEVC→AVC (hevc.tid < avc.tid, но
+    ``api_created_at`` в ``HEVC_PAIR_UPLOAD_GRACE_HOURS``) — не catch-up.
     """
     if avc_torrent_id and hevc.torrent_id:
         if hevc.torrent_id < avc_torrent_id:
+            if _paired_upload_within_grace(
+                avc_api_created_at=avc_api_created_at,
+                hevc_api_created_at=hevc.api_created_at,
+            ):
+                return False
             return True
         if hevc.torrent_id > avc_torrent_id:
             return False
@@ -363,6 +395,7 @@ class _HevcPairRef:
     torrent_id: int
     archive_id: int
     rip_type: str
+    api_created_at: datetime | None = None
 
 
 @dataclass
@@ -458,9 +491,11 @@ def _build_avc_draft(
     family = rip_family_key(quality_json=qj, torrent_type=torrent_type)
     episodes = normalize_episodes(desc)
     # SLA clock (бейдж age): api_created_at|system created_at.
-    # Catch-up freshness: torrent_id + tie-break system created_at (не api).
+    # Catch-up freshness: torrent_id + tie-break system created_at;
+    # парная заливка — api_created_at в HEVC_PAIR_UPLOAD_GRACE_HOURS.
     sla_created, age_from_api = sla_age_source(row)
     system_created = _archive_attr(row, "created_at")
+    avc_api_created = _archive_attr(row, "api_created_at")
     avc_rip_type = rip_type_key(quality_json=qj, torrent_type=torrent_type)
     avc_torrent_id = int(_archive_attr(row, "torrent_id") or 0)
 
@@ -492,6 +527,7 @@ def _build_avc_draft(
     avc_newer_exact = has_exact and _avc_is_newer_than_hevc(
         avc_torrent_id=avc_torrent_id,
         avc_created_at=system_created,
+        avc_api_created_at=avc_api_created,
         hevc=exact_ref,
     )
     needs_exact_catchup = (not has_exact) or avc_newer_exact
@@ -513,10 +549,10 @@ def _build_avc_draft(
 
 
 def _contribute_overdue_anchor(
-    anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]],
+    anchor_candidates: dict[PresenceKey, list[tuple[datetime, bool]]],
     draft: _AvcDraft,
 ) -> None:
-    """Якорь слота = earliest SLA-upload среди AVC с pending exact catch-up."""
+    """Кандидат якоря слота: AVC с pending exact catch-up (active или история)."""
     if (
         draft.is_missing
         or not draft.needs_exact_catchup
@@ -524,9 +560,26 @@ def _contribute_overdue_anchor(
         or draft.sla_created is None
     ):
         return
-    prev = anchor_by_presence.get(draft.presence)
-    if prev is None or _as_naive_utc(draft.sla_created) < _as_naive_utc(prev[0]):
-        anchor_by_presence[draft.presence] = (draft.sla_created, draft.age_from_api)
+    anchor_candidates.setdefault(draft.presence, []).append(
+        (draft.sla_created, draft.age_from_api)
+    )
+
+
+def _pick_overdue_anchor(
+    candidates: list[tuple[datetime, bool]],
+) -> tuple[datetime, bool] | None:
+    """Якорь SLA: предпочитаем api_created_at, среди них — earliest.
+
+    Superseded torrent_id часто нет в list API → api_created_at пуст и остаётся
+    только локальный created_at ALTT. Такой local-only не должен перебивать
+    свежий AL-clock активного AVC (ложные «просрочка 289ч» при заливе 3ч назад).
+    Если api-кандидатов нет — earliest среди local.
+    """
+    if not candidates:
+        return None
+    api_ones = [c for c in candidates if c[1]]
+    pool = api_ones if api_ones else candidates
+    return min(pool, key=lambda c: _as_naive_utc(c[0]))
 
 
 def find_unpaired_avc(
@@ -590,6 +643,7 @@ def find_unpaired_avc(
                 torrent_id=int(_archive_attr(row, "torrent_id") or 0),
                 archive_id=int(_archive_attr(row, "id")),
                 rip_type=rip_type,
+                api_created_at=_archive_attr(row, "api_created_at"),
             )
 
             if codec == "HEVC":
@@ -632,9 +686,10 @@ def find_unpaired_avc(
         # Presence-слот: якорь = earliest upload среди AVC, которым нужен exact catch-up.
         # 1-2 exact OK + 1-3/1-4 catch-up → часы от 1-3, не от более нового 1-4.
         # Superseded 1-3 тоже якорит активный 1-4, пока HEVC не догнал.
-        anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]] = {}
+        # Кандидаты с api_created_at предпочтительнее local-only (см. _pick_overdue_anchor).
+        anchor_candidates: dict[PresenceKey, list[tuple[datetime, bool]]] = {}
         for draft in drafts:
-            _contribute_overdue_anchor(anchor_by_presence, draft)
+            _contribute_overdue_anchor(anchor_candidates, draft)
         # История слота: ignore_hevc не отсекает — якорь catch-up от earliest upload.
         for row in historical_avc_rows:
             hist = _build_avc_draft(
@@ -643,7 +698,12 @@ def find_unpaired_avc(
                 hevc_presence_types=hevc_presence_types,
                 hevc_exact=hevc_exact,
             )
-            _contribute_overdue_anchor(anchor_by_presence, hist)
+            _contribute_overdue_anchor(anchor_candidates, hist)
+        anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]] = {}
+        for presence, candidates in anchor_candidates.items():
+            picked = _pick_overdue_anchor(candidates)
+            if picked is not None:
+                anchor_by_presence[presence] = picked
 
         for draft in drafts:
             sla_created = draft.sla_created

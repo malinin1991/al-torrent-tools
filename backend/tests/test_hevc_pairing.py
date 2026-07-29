@@ -1521,6 +1521,111 @@ def test_overdue_continues_on_avc_successor_after_supersede() -> None:
     assert find_unpaired_avc(without_hist, now=now) == []
 
 
+def test_local_only_historical_anchor_does_not_override_active_api() -> None:
+    """Gaikotsu-like: local-only якорь истории не даёт «просрочка 289ч» против свежего AL.
+
+    Superseded AVC без api_created_at (torrent_id уже нет в list → backfill невозможен)
+    + активный AVC с api ~3ч назад + частичный HEVC → age/бейдж от AL активного,
+    внутри SLA → без overdue.
+    """
+    now = datetime(2026, 7, 29, 14, 0, 0)
+    hist_local = now - timedelta(hours=289 + HEVC_SLA_HOURS)
+    active_api = now - timedelta(hours=3)
+    rows = [
+        _row(
+            archive_id=3295,
+            release_id=10228,
+            torrent_id=39000,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=hist_local,
+            api_created_at=None,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=3463,
+            release_id=10228,
+            torrent_id=39239,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=active_api,
+            api_created_at=active_api,
+            info_hash="d64ab556b4a03a643f4dd809036845b92ef3efd9",
+        ),
+        _row(
+            archive_id=3300,
+            release_id=10228,
+            torrent_id=39128,
+            episodes="1-2",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=now - timedelta(hours=60),
+            api_created_at=now - timedelta(hours=60),
+            info_hash="d1f4cef6e730d7a6d5245a74bc568b549b111163",
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    # age от active api (3ч) < SLA → catch-up есть, но бейджа overdue ещё нет.
+    assert unpaired == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+
+    # После SLA от AL активного — overdue с красным бейджем, не 289ч.
+    later = active_api + timedelta(hours=HEVC_SLA_HOURS + 5)
+    unpaired_later = find_unpaired_avc(rows, now=later)
+    assert len(unpaired_later) == 1
+    u = unpaired_later[0]
+    assert u.overdue is True
+    assert u.age_from_api is True
+    assert u.age_hours == pytest.approx(float(HEVC_SLA_HOURS + 5))
+    assert int(overdue_hours_past_sla(u.age_hours) or 0) == 5
+
+
+def test_api_historical_anchor_still_preferred_over_fresher_active_api() -> None:
+    """Оба с api_created_at — earliest API (история 1-3), не свежий активный 1-4."""
+    now = datetime(2026, 7, 29, 12, 0, 0)
+    hist_api = now - timedelta(hours=50)
+    active_api = now - timedelta(hours=6)
+    rows = [
+        _row(
+            archive_id=10,
+            torrent_id=100,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=hist_api,
+            api_created_at=hist_api,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=20,
+            torrent_id=200,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=active_api,
+            api_created_at=active_api,
+        ),
+        _row(
+            archive_id=30,
+            torrent_id=90,
+            episodes="1-2",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=now - timedelta(hours=60),
+            api_created_at=now - timedelta(hours=60),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].age_hours == pytest.approx(50.0)
+    assert unpaired[0].age_from_api is True
+    assert unpaired[0].overdue is True
+
+
 def test_overdue_anchor_from_superseded_ignore_hevc() -> None:
     """Superseded AVC с ignore_hevc=True всё равно якорит активного преемника."""
     now = datetime(2026, 7, 29, 12, 0, 0)

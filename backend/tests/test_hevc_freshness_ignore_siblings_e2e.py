@@ -32,7 +32,11 @@ def _row(
     torrent_id: int,
     episodes: str = "1-12",
     codec: str,
+    rip_type: str = "BDRip",
     created_at: datetime | None = None,
+    api_created_at: datetime | None = None,
+    api_present: bool = True,
+    superseded: bool = False,
     ignore_hevc: bool = False,
     info_hash: str | None = None,
 ) -> SimpleNamespace:
@@ -41,11 +45,12 @@ def _row(
         release_id=release_id,
         torrent_id=torrent_id,
         torrent_description=episodes,
-        torrent_type=f"BDRip 1080p {codec}",
-        quality_json=_qj(codec=codec),
+        torrent_type=f"{rip_type} 1080p {codec}",
+        quality_json=_qj(rip_type=rip_type, codec=codec),
         created_at=created_at,
-        api_present=True,
-        superseded=False,
+        api_created_at=api_created_at,
+        api_present=api_present,
+        superseded=superseded,
         ignore_hevc=ignore_hevc,
         info_hash=info_hash or f"{archive_id:040x}",
     )
@@ -88,6 +93,88 @@ def test_hevc_lower_torrent_id_overdue_after_sla() -> None:
     assert unpaired[0].status == "overdue"
     assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {1}
     assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+
+
+def test_paired_hevc_then_avc_within_grace_not_overdue() -> None:
+    """Grand Blue-like: HEVC tid+1 AVC через ~1ч — парная заливка, не overdue.
+
+    Без grace меньший hevc.torrent_id + якорь со старого AVC 1-3 давали
+    ложные «просрочка 288ч» при свежей exact-паре 1-4.
+    """
+    now = datetime(2026, 7, 29, 14, 0, 0)
+    hevc_api = now - timedelta(hours=2)
+    avc_api = now - timedelta(hours=1)
+    old_avc_api = now - timedelta(hours=288 + HEVC_SLA_HOURS)
+    rows = [
+        _row(
+            archive_id=3303,
+            release_id=10241,
+            torrent_id=39000,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=old_avc_api,
+            api_created_at=old_avc_api,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=3469,
+            release_id=10241,
+            torrent_id=39245,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=hevc_api,
+            api_created_at=hevc_api,
+            info_hash="557b30427f11584b7ae94f10c0b163efd2dd376f",
+        ),
+        _row(
+            archive_id=3470,
+            release_id=10241,
+            torrent_id=39246,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=avc_api,
+            api_created_at=avc_api,
+            info_hash="96181d505c06e355bf14adb7354ba482197baa8d",
+        ),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+
+
+def test_avc_reupload_after_grace_still_overdue() -> None:
+    """AVC перезалит спустя >grace после exact-HEVC → catch-up/overdue."""
+    now = datetime(2026, 7, 29, 14, 0, 0)
+    hevc_api = now - timedelta(hours=48)
+    avc_api = now - timedelta(hours=HEVC_SLA_HOURS + 2)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=39246,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=avc_api,
+            api_created_at=avc_api,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=39245,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=hevc_api,
+            api_created_at=hevc_api,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].hevc_outdated is True
+    assert unpaired[0].overdue is True
+    assert unpaired[0].status == "overdue"
 
 
 def test_hevc_lower_torrent_id_not_overdue_within_sla() -> None:
