@@ -1,4 +1,8 @@
-<div class="card" data-selected-job-status="{% if selected_job %}{{ selected_job.status }}{% endif %}">
+<div
+  class="card"
+  data-selected-job-status="{% if selected_job %}{{ selected_job.status }}{% endif %}"
+  data-selected-job-id="{% if selected_job %}{{ selected_job.id }}{% endif %}"
+>
   <div class="row log-toolbar">
     <h3>Логи джоба {% if selected_job %}#{{ selected_job.id }}{% endif %}
       {% if selected_job and selected_job.status in ("pending", "running", "stopping") %}

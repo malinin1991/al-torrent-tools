@@ -21,7 +21,13 @@
       <div class="job-card-meta">
         {% if job %}
         <div class="job-meta-line">
-          <a href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}">#{{ job.id }}</a>
+          <a
+            href="/jobs?job_type={{ d.type|urlencode }}&job_id={{ job.id }}"
+            hx-get="/jobs/select/live?job_type={{ d.type|urlencode }}&job_id={{ job.id }}"
+            hx-target="#job-detail-live"
+            hx-swap="innerHTML settle:0 show:none"
+            hx-push-url="/jobs?job_type={{ d.type|urlencode }}&job_id={{ job.id }}"
+          >#{{ job.id }}</a>
         </div>
         <div class="job-meta-line">
           <span class="job-meta-icon" title="Начало" aria-label="Начало">
@@ -102,7 +108,16 @@
         </button>
 
         {% if job %}
-        <a class="btn btn-secondary btn-icon" href="/jobs?job_type={{ d.type }}&job_id={{ job.id }}" title="Логи" aria-label="Логи">
+        <a
+          class="btn btn-secondary btn-icon"
+          href="/jobs?job_type={{ d.type|urlencode }}&job_id={{ job.id }}"
+          title="Логи"
+          aria-label="Логи"
+          hx-get="/jobs/select/live?job_type={{ d.type|urlencode }}&job_id={{ job.id }}"
+          hx-target="#job-detail-live"
+          hx-swap="innerHTML settle:0 show:none"
+          hx-push-url="/jobs?job_type={{ d.type|urlencode }}&job_id={{ job.id }}"
+        >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v2H4zm0 5h16v2H4zm0 5h10v2H4zm0 5h16v2H4z"/></svg>
         </a>
         {% else %}

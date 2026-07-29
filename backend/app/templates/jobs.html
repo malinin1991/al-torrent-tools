@@ -85,16 +85,48 @@ function fallbackCopy(text, onSuccess) {
   if (!root) return;
   let savedScroll = 0;
   let stickToNewest = true;
-  root.addEventListener("htmx:beforeRequest", () => {
+  let selectedJobId = root.querySelector("[data-selected-job-id]")?.getAttribute("data-selected-job-id") || "";
+
+  function syncJobsLiveUrlsFromLocation() {
+    const qs = new URLSearchParams(window.location.search);
+    const liveQs = new URLSearchParams();
+    liveQs.set("job_type", qs.get("job_type") || "");
+    liveQs.set("status", qs.get("status") || "");
+    const jobId = qs.get("job_id");
+    if (jobId) liveQs.set("job_id", jobId);
+    const listEl = document.getElementById("jobs-list-live");
+    const detailEl = document.getElementById("job-detail-live");
+    if (listEl) listEl.setAttribute("data-ui-sse-url", `/jobs/list/live?${liveQs}`);
+    if (detailEl) detailEl.setAttribute("data-ui-sse-url", `/jobs/detail/live?${liveQs}`);
+    const typeInput = document.querySelector('form[action="/jobs"] input[name="job_type"]');
+    const statusInput = document.querySelector('form[action="/jobs"] input[name="status"]');
+    if (typeInput) typeInput.value = qs.get("job_type") || "";
+    if (statusInput) statusInput.value = qs.get("status") || "";
+  }
+
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    if (event.detail.target !== root) return;
     const panel = document.getElementById("job-logs-panel");
     if (!panel) return;
     savedScroll = panel.scrollTop;
     stickToNewest = panel.scrollTop < 48;
   });
-  root.addEventListener("htmx:afterSwap", () => {
+
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target !== root) return;
+    const marker = root.querySelector("[data-selected-job-id]");
+    const nextJobId = marker?.getAttribute("data-selected-job-id") || "";
+    const jobChanged = nextJobId !== selectedJobId;
+    selectedJobId = nextJobId;
     const panel = document.getElementById("job-logs-panel");
     if (!panel) return;
-    panel.scrollTop = stickToNewest ? 0 : savedScroll;
+    panel.scrollTop = jobChanged || stickToNewest ? 0 : savedScroll;
+  });
+
+  // hx-push-url обновляет location после swap — SSE-URL берём уже из адресной строки.
+  document.body.addEventListener("htmx:afterSettle", (event) => {
+    if (event.detail.target !== root) return;
+    syncJobsLiveUrlsFromLocation();
   });
 })();
 </script>

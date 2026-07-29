@@ -191,6 +191,7 @@ def test_jobs_page_no_hx_every_trigger() -> None:
     assert "data-ui-sse-active-only" in text
     assert "job_detail_live" in text or "job-detail-live" in text
     assert "job_type|urlencode" in text.replace(" ", "") or "job_type|urlencode" in text
+    assert "syncJobsLiveUrlsFromLocation" in text
 
 
 def test_job_detail_live_marks_status_for_active_only() -> None:
@@ -214,7 +215,55 @@ def test_job_detail_live_marks_status_for_active_only() -> None:
         },
     ).body.decode("utf-8")
     assert 'data-selected-job-status="success"' in html
+    assert 'data-selected-job-id="7"' in html
     assert 'font-size:0.85rem;">live</span>' not in html
+
+
+def test_jobs_list_select_uses_htmx() -> None:
+    templates = _templates()
+    request = MagicMock()
+    job = SimpleNamespace(id=12, type="ongoing", status="running")
+    html = templates.TemplateResponse(
+        request,
+        "partials/jobs_list_live.html",
+        {
+            "request": request,
+            "jobs": [job],
+            "selected_job": job,
+            "job_type": "",
+            "status": "",
+        },
+    ).body.decode("utf-8")
+    assert 'hx-get="/jobs/select/live?' in html
+    assert 'hx-target="#job-detail-live"' in html
+    assert "hx-push-url=" in html
+
+
+def test_jobs_select_live_partial_has_oob_list() -> None:
+    templates = _templates()
+    request = MagicMock()
+    job = SimpleNamespace(
+        id=3,
+        type="ongoing",
+        status="success",
+        started_at=None,
+        finished_at=None,
+        error=None,
+    )
+    html = templates.TemplateResponse(
+        request,
+        "partials/jobs_select_live.html",
+        {
+            "request": request,
+            "jobs": [job],
+            "selected_job": job,
+            "logs": [],
+            "job_type": "",
+            "status": "",
+        },
+    ).body.decode("utf-8")
+    assert 'data-selected-job-id="3"' in html
+    assert 'id="jobs-list-live" hx-swap-oob="innerHTML"' in html
 
 
 def test_pipeline_page_no_hx_every_trigger() -> None:
