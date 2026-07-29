@@ -16,6 +16,8 @@ overdue         — на слоте уже есть HEVC (тот же batch_star
                   age от earliest upload среди нуждающихся в catch-up.
                   Якорь наследует superseded/исторические AVC того же слота:
                   смена AVC 1-3→1-4 не сбрасывает отсчёт, пока HEVC не догнал.
+                  HEVC с более широким диапазоном (1-17) закрывает catch-up у
+                  более коротких исторических AVC (1-16) — не только exact.
                   Среди кандидатов якоря предпочитаем api_created_at; local-only
                   ALTT created_at не перебивает свежий AL-clock (нет backfill
                   api у torrent_id, исчезнувших из list API).
@@ -77,8 +79,8 @@ _FILM_RE = re.compile(
     re.IGNORECASE,
 )
 _OVA_ALONE_RE = re.compile(r"^ova$", re.IGNORECASE)
-_OVA_RANGE_RE = re.compile(r"^ova\s+(\d+)(?:\s*-\s*\d+)?$", re.IGNORECASE)
-_REGULAR_RE = re.compile(r"^(\d+)(?:\s*-\s*\d+)?$")
+_OVA_RANGE_RE = re.compile(r"^ova\s+(\d+)(?:\s*-\s*(\d+))?$", re.IGNORECASE)
+_REGULAR_RE = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?$")
 
 # Неполный ключ: не кладём в множества HEVC и не считаем «есть пара».
 BatchStartKey = tuple[Any, ...]
@@ -108,25 +110,59 @@ def normalize_episodes(description: str | None) -> str:
 
 def batch_start_key(description: str | None) -> BatchStartKey | None:
     """Ключ старта батча эпизодов; None — неразобранное / пустое (не пара)."""
+    span = episode_span(description)
+    if span is None:
+        return None
+    return span[0]
+
+
+def episode_span(
+    description: str | None,
+) -> tuple[BatchStartKey, int, int] | None:
+    """(batch_start, first_ep, last_ep); None если не разобрали."""
     folded = normalize_episodes(description)
     if not folded:
         return None
 
     if _FILM_RE.match(folded):
-        return ("film",)
+        return (("film",), 1, 1)
 
     if _OVA_ALONE_RE.match(folded):
-        return ("ova", 1)
+        return (("ova", 1), 1, 1)
 
     ova_m = _OVA_RANGE_RE.match(folded)
     if ova_m:
-        return ("ova", int(ova_m.group(1)))
+        start = int(ova_m.group(1))
+        end = int(ova_m.group(2) or start)
+        lo, hi = (start, end) if end >= start else (end, start)
+        return (("ova", start), lo, hi)
 
     regular_m = _REGULAR_RE.match(folded)
     if regular_m:
-        return ("regular", int(regular_m.group(1)))
+        start = int(regular_m.group(1))
+        end = int(regular_m.group(2) or start)
+        lo, hi = (start, end) if end >= start else (end, start)
+        return (("regular", start), lo, hi)
 
     return None
+
+
+def hevc_covers_avc_episodes(
+    hevc_description: str | None, avc_description: str | None
+) -> bool:
+    """True если диапазон HEVC полностью покрывает AVC (тот же batch_start).
+
+    HEVC 1-17 закрывает catch-up у исторического AVC 1-16 (не только exact).
+    """
+    hevc = episode_span(hevc_description)
+    avc = episode_span(avc_description)
+    if hevc is None or avc is None:
+        return False
+    hevc_key, hevc_lo, hevc_hi = hevc
+    avc_key, avc_lo, avc_hi = avc
+    if hevc_key != avc_key:
+        return False
+    return hevc_lo <= avc_lo and hevc_hi >= avc_hi
 
 
 def _strip_codec_tokens(raw: str) -> str:
@@ -477,12 +513,37 @@ def _archive_is_active(row: Any) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _HevcCoverRef:
+    """HEVC для проверки покрытия диапазона эпизодов (не только exact)."""
+
+    family: str
+    episodes: str
+
+
+def _hevc_covers_family_episodes(
+    covers: Sequence[_HevcCoverRef],
+    *,
+    family: str,
+    avc_episodes: str,
+) -> bool:
+    if not family or not avc_episodes:
+        return False
+    for item in covers:
+        if item.family != family:
+            continue
+        if hevc_covers_avc_episodes(item.episodes, avc_episodes):
+            return True
+    return False
+
+
 def _build_avc_draft(
     row: Any,
     *,
     hevc_presence: dict[PresenceKey, _HevcPairRef],
     hevc_presence_types: dict[PresenceKey, set[str]],
     hevc_exact: dict[tuple[str, str], _HevcPairRef],
+    hevc_covers: Sequence[_HevcCoverRef],
 ) -> _AvcDraft:
     qj = _archive_attr(row, "quality_json")
     qj = qj if isinstance(qj, dict) else None
@@ -524,13 +585,17 @@ def _build_avc_draft(
     )
     exact_ref = hevc_exact.get(exact_key) if exact_key is not None else None
     has_exact = exact_ref is not None
+    # Exact или более широкий HEVC (1-17 ⊇ 1-16) — диапазон закрыт.
+    has_covering = has_exact or _hevc_covers_family_episodes(
+        hevc_covers, family=family, avc_episodes=episodes
+    )
     avc_newer_exact = has_exact and _avc_is_newer_than_hevc(
         avc_torrent_id=avc_torrent_id,
         avc_created_at=system_created,
         avc_api_created_at=avc_api_created,
         hevc=exact_ref,
     )
-    needs_exact_catchup = (not has_exact) or avc_newer_exact
+    needs_exact_catchup = (not has_covering) or avc_newer_exact
     return _AvcDraft(
         row=row,
         family=family,
@@ -611,6 +676,7 @@ def find_unpaired_avc(
         hevc_presence: dict[PresenceKey, _HevcPairRef] = {}
         hevc_presence_types: dict[PresenceKey, set[str]] = {}
         hevc_exact: dict[tuple[str, str], _HevcPairRef] = {}
+        hevc_covers: list[_HevcCoverRef] = []
         active_avc_rows: list[Any] = []
         historical_avc_rows: list[Any] = []
 
@@ -665,6 +731,10 @@ def find_unpaired_avc(
                 )
                 if exact_key is not None:
                     hevc_exact[exact_key] = _pick_latest_hevc(hevc_exact.get(exact_key), ref)
+                family = rip_family_key(quality_json=qj, torrent_type=torrent_type)
+                episodes = normalize_episodes(desc)
+                if family and episodes:
+                    hevc_covers.append(_HevcCoverRef(family=family, episodes=episodes))
             elif codec == "AVC":
                 active_avc_rows.append(row)
 
@@ -680,6 +750,7 @@ def find_unpaired_avc(
                     hevc_presence=hevc_presence,
                     hevc_presence_types=hevc_presence_types,
                     hevc_exact=hevc_exact,
+                    hevc_covers=hevc_covers,
                 )
             )
 
@@ -697,6 +768,7 @@ def find_unpaired_avc(
                 hevc_presence=hevc_presence,
                 hevc_presence_types=hevc_presence_types,
                 hevc_exact=hevc_exact,
+                hevc_covers=hevc_covers,
             )
             _contribute_overdue_anchor(anchor_candidates, hist)
         anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]] = {}
@@ -712,7 +784,14 @@ def find_unpaired_avc(
             catchup_pending = (
                 not draft.is_missing and draft.needs_exact_catchup and draft.presence is not None
             )
-            if catchup_pending and draft.presence in anchor_by_presence:
+            if (
+                catchup_pending
+                and draft.presence in anchor_by_presence
+                # Перезаливка exact (AVC новее HEVC): часы от этого AVC, не от
+                # закрытого долга расширения (1-16→1-17), иначе «просрочка 147ч»
+                # при свежем re-upload.
+                and not draft.avc_newer_exact
+            ):
                 sla_created, age_from_api = anchor_by_presence[draft.presence]
                 hours = age_hours(sla_created, now=current)
             # overdue только если HEVC уже был на этом batch_start (частичный/старый).

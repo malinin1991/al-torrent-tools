@@ -11,7 +11,9 @@ from app.services.hevc_pairing import (
     age_hours,
     batch_start_key,
     classify_archive_codec,
+    episode_span,
     find_unpaired_avc,
+    hevc_covers_avc_episodes,
     normalize_rip_type,
     overdue_hours_past_sla,
     release_ids_matching_hevc_filter,
@@ -100,6 +102,19 @@ def test_batch_start_key_regular_ova_film() -> None:
     assert batch_start_key("OVA") == batch_start_key("ova") == ("ova", 1)
 
 
+def test_episode_span_and_hevc_covers_range() -> None:
+    assert episode_span("1-17") == (("regular", 1), 1, 17)
+    assert episode_span("1-16") == (("regular", 1), 1, 16)
+    assert episode_span("OVA 1-2") == (("ova", 1), 1, 2)
+    assert episode_span("Фильм") == (("film",), 1, 1)
+    # Инвертированный хвост: start-key как раньше от первого числа, lo/hi упорядочены.
+    assert episode_span("10-5") == (("regular", 10), 5, 10)
+    assert hevc_covers_avc_episodes("1-17", "1-16") is True
+    assert hevc_covers_avc_episodes("1-16", "1-17") is False
+    assert hevc_covers_avc_episodes("1-17", "1-17") is True
+    assert hevc_covers_avc_episodes("OVA 1-2", "1-2") is False
+
+
 def test_film_case_avc_hevc_not_missing() -> None:
     """AVC «ФИЛЬМ» + HEVC «Фильм» — один film start; не missing и не overdue."""
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
@@ -141,7 +156,7 @@ def test_pf_film_avc_hevc_not_missing() -> None:
 
 
 def test_pf_film_pairs_with_film_label() -> None:
-    """«П/ф фильм» и «Фильм» — один film start-key для presence."""
+    """«П/ф фильм» и «Фильм» — один film start; покрытие диапазона закрывает catch-up."""
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     rows = [
         _row(archive_id=1, episodes="П/ф фильм", codec="AVC", created_at=now),
@@ -149,17 +164,19 @@ def test_pf_film_pairs_with_film_label() -> None:
     ]
     unpaired = find_unpaired_avc(rows, now=now)
     assert unpaired == []
-    # overdue: exact description всё ещё разный — при age > SLA overdue, не missing.
+    # Раньше exact description различался → overdue после SLA; теперь film⊇film.
     old = now - timedelta(hours=HEVC_SLA_HOURS + 1)
-    overdue_rows = [
+    covered_rows = [
         _row(archive_id=10, episodes="П/ф фильм", codec="AVC", created_at=old),
         _row(archive_id=11, episodes="Фильм", codec="HEVC", created_at=old),
     ]
-    overdue_unpaired = find_unpaired_avc(overdue_rows, now=now)
-    assert len(overdue_unpaired) == 1
-    assert overdue_unpaired[0].archive_id == 10
-    assert overdue_unpaired[0].missing is False
-    assert overdue_unpaired[0].overdue is True
+    assert find_unpaired_avc(covered_rows, now=now) == []
+    assert release_ids_matching_hevc_filter(
+        covered_rows, hevc_filter="overdue", now=now
+    ) == set()
+    assert release_ids_matching_hevc_filter(
+        covered_rows, hevc_filter="missing", now=now
+    ) == set()
 
 
 def test_rip_family_from_quality_json() -> None:
@@ -1624,6 +1641,121 @@ def test_api_historical_anchor_still_preferred_over_fresher_active_api() -> None
     assert unpaired[0].age_hours == pytest.approx(50.0)
     assert unpaired[0].age_from_api is True
     assert unpaired[0].overdue is True
+
+
+def test_iruma_avc_reupload_after_hevc_not_inherit_old_anchor() -> None:
+    """Iruma-like: AVC→HEVC 1-17, затем re-upload AVC (>grace) — SLA от re-upload.
+
+    Старый долг 1-16 (api ~171ч) не должен давать «просрочка 147ч», пока exact
+    HEVC 1-17 есть и catch-up только из‑за более нового AVC torrent_id.
+    """
+    now = datetime(2026, 7, 29, 14, 30, 0)
+    old_gap_api = now - timedelta(hours=147 + HEVC_SLA_HOURS)
+    hevc_api = now - timedelta(hours=15)
+    reupload_api = now - timedelta(hours=3)
+    rows = [
+        _row(
+            archive_id=100,
+            release_id=10161,
+            torrent_id=39000,
+            episodes="1-16",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=old_gap_api,
+            api_created_at=old_gap_api,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=3457,
+            release_id=10161,
+            torrent_id=39234,
+            episodes="1-17",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=hevc_api - timedelta(hours=1),
+            api_created_at=hevc_api - timedelta(hours=1),
+            api_present=False,
+            superseded=True,
+            info_hash="17896fe1472af7c0f9d017bd1f78d8d6de2b5c42",
+        ),
+        _row(
+            archive_id=3458,
+            release_id=10161,
+            torrent_id=39235,
+            episodes="1-17",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=hevc_api,
+            api_created_at=hevc_api,
+            info_hash="7d0613ba35bd5ac8fc85ddf3a81a14612d9013f3",
+        ),
+        _row(
+            archive_id=3464,
+            release_id=10161,
+            torrent_id=39240,
+            episodes="1-17",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=reupload_api,
+            api_created_at=reupload_api,
+            info_hash="278c9f5f8a642457177ee341c1f1bbba95e283e4",
+        ),
+    ]
+    # 3ч < SLA — catch-up (hevc_outdated), но без бейджа overdue / без 147ч.
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert unpaired == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+
+    later = reupload_api + timedelta(hours=HEVC_SLA_HOURS + 4)
+    unpaired_later = find_unpaired_avc(rows, now=later)
+    assert len(unpaired_later) == 1
+    u = unpaired_later[0]
+    assert u.hevc_outdated is True
+    assert u.overdue is True
+    assert u.age_from_api is True
+    assert u.age_hours == pytest.approx(float(HEVC_SLA_HOURS + 4))
+    assert int(overdue_hours_past_sla(u.age_hours) or 0) == 4
+
+
+def test_hevc_wider_range_clears_shorter_historical_catchup() -> None:
+    """HEVC 1-17 покрывает исторический AVC 1-16 — без якоря от 1-16."""
+    now = datetime(2026, 7, 29, 14, 0, 0)
+    old = now - timedelta(hours=50)
+    fresh = now - timedelta(hours=2)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=10,
+            episodes="1-16",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=old,
+            api_created_at=old,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=20,
+            episodes="1-17",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=fresh,
+            api_created_at=fresh,
+        ),
+        _row(
+            archive_id=3,
+            torrent_id=30,
+            episodes="1-17",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=fresh,
+            api_created_at=fresh,
+        ),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
 
 
 def test_overdue_anchor_from_superseded_ignore_hevc() -> None:
