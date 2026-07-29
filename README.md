@@ -17,6 +17,21 @@
 
 Страницы `/settings` и `/extra-urls` остаются без live (только действия пользователя).
 
+Перед прокси (OpenResty/nginx) для `/ui/events` нужны streaming-настройки, иначе тело буферизуется и браузер видит «висящий» EventSource (в HAR часто `status: 0`, 0 bytes):
+
+```nginx
+location /ui/events {
+    proxy_pass http://altt_upstream;  # ваш upstream API
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    chunked_transfer_encoding on;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+```
+
 ## Требования
 
 - Python `3.14`

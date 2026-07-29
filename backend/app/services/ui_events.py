@@ -253,6 +253,11 @@ async def sse_event_stream(
         yield ": no-channels\n\n"
         return
 
+    # Сразу первый байт: иначе nginx/OpenResty буферит пустой stream,
+    # EventSource/HAR видят status 0 / 0 bytes до первого heartbeat (~15 с).
+    yield "retry: 3000\n"
+    yield ": connected\n\n"
+
     last: dict[str, str | None] = {ch: None for ch in channel_list}
     last_hb = time.monotonic()
 

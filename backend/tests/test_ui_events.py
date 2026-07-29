@@ -112,3 +112,33 @@ def test_sse_empty_channels_comment() -> None:
         return "".join(parts)
 
     assert "no-channels" in asyncio.run(_run())
+
+
+def test_sse_stream_sends_connected_immediately() -> None:
+    """Первый chunk до poll — иначе OpenResty буферит пустой body (HAR status 0)."""
+    request = MagicMock()
+    request.is_disconnected = AsyncMock(return_value=True)
+
+    async def _run() -> list[str]:
+        with (
+            patch("app.services.ui_events.SessionLocal") as session_cls,
+            patch("app.services.ui_events.channel_token", return_value="t0"),
+            patch("app.services.ui_events.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            session_cls.return_value.__enter__.return_value = MagicMock()
+            session_cls.return_value.__exit__.return_value = None
+            chunks: list[str] = []
+            async for chunk in sse_event_stream(
+                request,
+                ["info"],
+                poll_interval=0.01,
+                heartbeat_sec=999,
+            ):
+                chunks.append(chunk)
+                if len(chunks) >= 2:
+                    break
+            return chunks
+
+    chunks = asyncio.run(_run())
+    assert any("retry:" in c for c in chunks)
+    assert any("connected" in c for c in chunks)
