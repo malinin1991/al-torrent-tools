@@ -12,6 +12,8 @@ overdue         — на слоте уже есть HEVC (тот же batch_star
                   есть, иначе system created_at. Pure missing никогда не overdue.
                   Несколько overdue AVC в одном presence-слоте (тот же start) —
                   age от earliest upload среди нуждающихся в catch-up.
+                  Якорь наследует superseded/исторические AVC того же слота:
+                  смена AVC 1-3→1-4 не сбрасывает отсчёт, пока HEVC не догнал.
 type_mismatch   — HEVC есть (тот же start+quality в web-классе), но тип рипа
                   WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
 
@@ -19,9 +21,12 @@ type_mismatch   — HEVC есть (тот же start+quality в web-классе
   WEBRip↔WEB-DL — допустимое presence (не missing); бирка «расхождение типов»
   важнее просрочки, даже если exact-пары нет и age > SLA.
 Число на бейдже «просрочка Nч» — часы сверх SLA: max(0, age − 24), не полный age.
-Фильтры независимы: один AVC может быть overdue и type_mismatch сразу;
-overdue и missing взаимоисключающи (overdue ⇒ has_hevc_for_batch_start).
-ignore_hevc на архиве AVC закрывает missing/overdue/type_mismatch.
+Бакеты фильтров раздельные: type_mismatch исключает overdue (флаг и фильтр
+  «Просрочка»). overdue и missing взаимоисключающи
+  (overdue ⇒ has_hevc_for_batch_start).
+ignore_hevc на активном AVC закрывает missing/overdue/type_mismatch
+  (бейджи/события/фильтры). На superseded/исторических строках флаг не
+  стирает якорь overdue слота — преемник наследует catch-up timeline.
 """
 
 from __future__ import annotations
@@ -433,6 +438,97 @@ def _archive_attr(row: Any, name: str, default: Any = None) -> Any:
     return getattr(row, name, default)
 
 
+def _archive_is_active(row: Any) -> bool:
+    return bool(_archive_attr(row, "api_present", True)) and not bool(
+        _archive_attr(row, "superseded", False)
+    )
+
+
+def _build_avc_draft(
+    row: Any,
+    *,
+    hevc_presence: dict[PresenceKey, _HevcPairRef],
+    hevc_presence_types: dict[PresenceKey, set[str]],
+    hevc_exact: dict[tuple[str, str], _HevcPairRef],
+) -> _AvcDraft:
+    qj = _archive_attr(row, "quality_json")
+    qj = qj if isinstance(qj, dict) else None
+    torrent_type = _archive_attr(row, "torrent_type")
+    desc = _archive_attr(row, "torrent_description")
+    family = rip_family_key(quality_json=qj, torrent_type=torrent_type)
+    episodes = normalize_episodes(desc)
+    # SLA clock (бейдж age): api_created_at|system created_at.
+    # Catch-up freshness: torrent_id + tie-break system created_at (не api).
+    sla_created, age_from_api = sla_age_source(row)
+    system_created = _archive_attr(row, "created_at")
+    avc_rip_type = rip_type_key(quality_json=qj, torrent_type=torrent_type)
+    avc_torrent_id = int(_archive_attr(row, "torrent_id") or 0)
+
+    presence = presence_pair_key(
+        quality_json=qj,
+        torrent_type=torrent_type,
+        torrent_description=desc,
+    )
+    presence_ref = hevc_presence.get(presence) if presence is not None else None
+    has_presence = presence_ref is not None
+    # Неполный ключ / нет HEVC в слоте → missing. Устаревший HEVC — не missing.
+    is_missing = presence is None or not has_presence
+
+    types_at = hevc_presence_types.get(presence, set()) if presence else set()
+    is_type_mismatch = (
+        not is_missing
+        and is_web_rip_type(avc_rip_type)
+        and avc_rip_type not in types_at
+        and any(is_web_rip_type(t) for t in types_at)
+    )
+
+    exact_key = exact_pair_key(
+        quality_json=qj,
+        torrent_type=torrent_type,
+        torrent_description=desc,
+    )
+    exact_ref = hevc_exact.get(exact_key) if exact_key is not None else None
+    has_exact = exact_ref is not None
+    avc_newer_exact = has_exact and _avc_is_newer_than_hevc(
+        avc_torrent_id=avc_torrent_id,
+        avc_created_at=system_created,
+        hevc=exact_ref,
+    )
+    needs_exact_catchup = (not has_exact) or avc_newer_exact
+    return _AvcDraft(
+        row=row,
+        family=family,
+        episodes=episodes,
+        sla_created=sla_created,
+        age_from_api=age_from_api,
+        avc_torrent_id=avc_torrent_id,
+        presence=presence,
+        presence_ref=presence_ref,
+        exact_ref=exact_ref,
+        is_missing=is_missing,
+        is_type_mismatch=is_type_mismatch,
+        needs_exact_catchup=needs_exact_catchup,
+        avc_newer_exact=bool(avc_newer_exact),
+    )
+
+
+def _contribute_overdue_anchor(
+    anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]],
+    draft: _AvcDraft,
+) -> None:
+    """Якорь слота = earliest SLA-upload среди AVC с pending exact catch-up."""
+    if (
+        draft.is_missing
+        or not draft.needs_exact_catchup
+        or draft.presence is None
+        or draft.sla_created is None
+    ):
+        return
+    prev = anchor_by_presence.get(draft.presence)
+    if prev is None or _as_naive_utc(draft.sla_created) < _as_naive_utc(prev[0]):
+        anchor_by_presence[draft.presence] = (draft.sla_created, draft.age_from_api)
+
+
 def find_unpaired_avc(
     archives: Sequence[Any],
     *,
@@ -443,17 +539,17 @@ def find_unpaired_avc(
 ) -> list[UnpairedAvc]:
     """AVC с проблемой HEVC: missing / overdue / type_mismatch.
 
-    include_ignored=True — учитывать AVC с ignore_hevc (для фильтра «Отображать скрытое»).
-    По умолчанию такие AVC пропускаются (пара «закрыта» для фильтров/бейджей).
+    include_ignored=True — учитывать активные AVC с ignore_hevc (фильтр
+    «Отображать скрытое»). По умолчанию активные с флагом пропускаются
+    (пара «закрыта» для фильтров/бейджей).
+
+    При require_active=True inactive/superseded строки не дают бейджей, но их
+    AVC всё равно участвуют в якоре overdue (непрерывность 1-3→1-4), даже
+    если на истории стоит ignore_hevc=True.
     """
     current = now or utcnow()
     by_release: dict[int, list[Any]] = {}
     for row in archives:
-        if require_active:
-            if not bool(_archive_attr(row, "api_present", True)):
-                continue
-            if bool(_archive_attr(row, "superseded", False)):
-                continue
         release_id = int(_archive_attr(row, "release_id"))
         by_release.setdefault(release_id, []).append(row)
 
@@ -462,9 +558,22 @@ def find_unpaired_avc(
         hevc_presence: dict[PresenceKey, _HevcPairRef] = {}
         hevc_presence_types: dict[PresenceKey, set[str]] = {}
         hevc_exact: dict[tuple[str, str], _HevcPairRef] = {}
-        avc_rows: list[Any] = []
+        active_avc_rows: list[Any] = []
+        historical_avc_rows: list[Any] = []
 
         for row in rows:
+            is_active = _archive_is_active(row)
+            if require_active and not is_active:
+                # Исторический AVC — только для якоря overdue; HEVC inactive не пара.
+                qj_h = _archive_attr(row, "quality_json")
+                qj_h = qj_h if isinstance(qj_h, dict) else None
+                codec_h = classify_archive_codec(
+                    quality_json=qj_h, torrent_type=_archive_attr(row, "torrent_type")
+                )
+                if codec_h == "AVC":
+                    historical_avc_rows.append(row)
+                continue
+
             qj = _archive_attr(row, "quality_json")
             qj = qj if isinstance(qj, dict) else None
             torrent_type = _archive_attr(row, "torrent_type")
@@ -503,93 +612,38 @@ def find_unpaired_avc(
                 if exact_key is not None:
                     hevc_exact[exact_key] = _pick_latest_hevc(hevc_exact.get(exact_key), ref)
             elif codec == "AVC":
-                avc_rows.append(row)
+                active_avc_rows.append(row)
 
-        # Черновики AVC: сначала флаги/presence, затем якорь overdue по слоту.
+        # Черновики активных AVC: флаги/presence; якорь — с учётом истории слота.
         drafts: list[_AvcDraft] = []
-        for row in avc_rows:
+        for row in active_avc_rows:
             # Ручной «Игнорировать HEVC» — считаем пару закрытой для фильтров/бейджей.
             if bool(_archive_attr(row, "ignore_hevc", False)) and not include_ignored:
                 continue
-            qj = _archive_attr(row, "quality_json")
-            qj = qj if isinstance(qj, dict) else None
-            torrent_type = _archive_attr(row, "torrent_type")
-            desc = _archive_attr(row, "torrent_description")
-            family = rip_family_key(quality_json=qj, torrent_type=torrent_type)
-            episodes = normalize_episodes(desc)
-            # SLA clock (бейдж age): api_created_at|system created_at.
-            # Catch-up freshness: torrent_id + tie-break system created_at (не api).
-            sla_created, age_from_api = sla_age_source(row)
-            system_created = _archive_attr(row, "created_at")
-            avc_rip_type = rip_type_key(quality_json=qj, torrent_type=torrent_type)
-            avc_torrent_id = int(_archive_attr(row, "torrent_id") or 0)
-
-            presence = presence_pair_key(
-                quality_json=qj,
-                torrent_type=torrent_type,
-                torrent_description=desc,
-            )
-            presence_ref = hevc_presence.get(presence) if presence is not None else None
-            has_presence = presence_ref is not None
-            # Неполный ключ / нет HEVC в слоте → missing. Устаревший HEVC — не missing.
-            is_missing = presence is None or not has_presence
-
-            types_at = hevc_presence_types.get(presence, set()) if presence else set()
-            is_type_mismatch = (
-                not is_missing
-                and is_web_rip_type(avc_rip_type)
-                and avc_rip_type not in types_at
-                and any(is_web_rip_type(t) for t in types_at)
-            )
-
-            exact_key = exact_pair_key(
-                quality_json=qj,
-                torrent_type=torrent_type,
-                torrent_description=desc,
-            )
-            exact_ref = hevc_exact.get(exact_key) if exact_key is not None else None
-            has_exact = exact_ref is not None
-            avc_newer_exact = has_exact and _avc_is_newer_than_hevc(
-                avc_torrent_id=avc_torrent_id,
-                avc_created_at=system_created,
-                hevc=exact_ref,
-            )
-            needs_exact_catchup = (not has_exact) or avc_newer_exact
             drafts.append(
-                _AvcDraft(
-                    row=row,
-                    family=family,
-                    episodes=episodes,
-                    sla_created=sla_created,
-                    age_from_api=age_from_api,
-                    avc_torrent_id=avc_torrent_id,
-                    presence=presence,
-                    presence_ref=presence_ref,
-                    exact_ref=exact_ref,
-                    is_missing=is_missing,
-                    is_type_mismatch=is_type_mismatch,
-                    needs_exact_catchup=needs_exact_catchup,
-                    avc_newer_exact=bool(avc_newer_exact),
+                _build_avc_draft(
+                    row,
+                    hevc_presence=hevc_presence,
+                    hevc_presence_types=hevc_presence_types,
+                    hevc_exact=hevc_exact,
                 )
             )
 
         # Presence-слот: якорь = earliest upload среди AVC, которым нужен exact catch-up.
         # 1-2 exact OK + 1-3/1-4 catch-up → часы от 1-3, не от более нового 1-4.
+        # Superseded 1-3 тоже якорит активный 1-4, пока HEVC не догнал.
         anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]] = {}
         for draft in drafts:
-            if (
-                draft.is_missing
-                or not draft.needs_exact_catchup
-                or draft.presence is None
-                or draft.sla_created is None
-            ):
-                continue
-            prev = anchor_by_presence.get(draft.presence)
-            if prev is None or _as_naive_utc(draft.sla_created) < _as_naive_utc(prev[0]):
-                anchor_by_presence[draft.presence] = (
-                    draft.sla_created,
-                    draft.age_from_api,
-                )
+            _contribute_overdue_anchor(anchor_by_presence, draft)
+        # История слота: ignore_hevc не отсекает — якорь catch-up от earliest upload.
+        for row in historical_avc_rows:
+            hist = _build_avc_draft(
+                row,
+                hevc_presence=hevc_presence,
+                hevc_presence_types=hevc_presence_types,
+                hevc_exact=hevc_exact,
+            )
+            _contribute_overdue_anchor(anchor_by_presence, hist)
 
         for draft in drafts:
             sla_created = draft.sla_created
@@ -603,9 +657,11 @@ def find_unpaired_avc(
                 hours = age_hours(sla_created, now=current)
             # overdue только если HEVC уже был на этом batch_start (частичный/старый).
             # Pure missing (нет presence) — только missing, даже при age > SLA.
-            # Age для бейджа — от якоря слота (earliest catch-up AVC).
+            # Age для бейджа — от якоря слота (earliest catch-up AVC, в т.ч. superseded).
+            # type_mismatch — отдельный бакет: не overdue и не в фильтре «Просрочка».
             is_overdue = (
                 catchup_pending
+                and not draft.is_type_mismatch
                 and hours is not None
                 and hours > sla_hours
             )
@@ -662,14 +718,15 @@ def release_ids_matching_hevc_filter(
     sla_hours: float = HEVC_SLA_HOURS,
     include_ignored: bool = False,
 ) -> set[int]:
-    """release_id с ≥1 AVC под фильтр; missing / overdue / type_mismatch независимы."""
+    """release_id с ≥1 AVC под фильтр; overdue и type_mismatch — разные бакеты."""
     if hevc_filter not in ("missing", "overdue", "type_mismatch"):
         return set()
     unmatched = find_unpaired_avc(
         archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
     )
     if hevc_filter == "overdue":
-        return {item.release_id for item in unmatched if item.overdue}
+        # status==overdue: type_mismatch не попадает в «Просрочка».
+        return {item.release_id for item in unmatched if item.status == "overdue"}
     if hevc_filter == "type_mismatch":
         return {item.release_id for item in unmatched if item.type_mismatch}
     return {item.release_id for item in unmatched if item.missing}
@@ -682,13 +739,13 @@ def max_overdue_hours_by_release_id(
     sla_hours: float = HEVC_SLA_HOURS,
     include_ignored: bool = False,
 ) -> dict[int, float]:
-    """release_id → max часов сверх SLA среди overdue AVC релиза."""
+    """release_id → max часов сверх SLA среди overdue AVC релиза (без type_mismatch)."""
     unmatched = find_unpaired_avc(
         archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
     )
     result: dict[int, float] = {}
     for item in unmatched:
-        if not item.overdue:
+        if item.status != "overdue":
             continue
         past = overdue_hours_past_sla(item.age_hours, sla_hours=sla_hours)
         if past is None:
@@ -737,13 +794,10 @@ def sync_hevc_pair_events_for_release(
     from app.db.models import PipelineEvent, TorrentArchive, TorrentPipeline
     from app.services.pipeline import record_pipeline_event
 
+    # Все строки релиза: active для бейджей/событий, superseded — для якоря overdue.
     archives = list(
         db.scalars(
-            select(TorrentArchive).where(
-                TorrentArchive.release_id == release_id,
-                TorrentArchive.api_present.is_(True),
-                TorrentArchive.superseded.is_(False),
-            )
+            select(TorrentArchive).where(TorrentArchive.release_id == release_id)
         ).all()
     )
     if not archives:
@@ -752,6 +806,8 @@ def sync_hevc_pair_events_for_release(
     unpaired = unpaired_by_archive_id(archives, now=now, sla_hours=sla_hours)
     avc_archives: list[Any] = []
     for row in archives:
+        if not _archive_is_active(row):
+            continue
         qj = row.quality_json if isinstance(row.quality_json, dict) else None
         codec = classify_archive_codec(quality_json=qj, torrent_type=row.torrent_type)
         if codec == "AVC":

@@ -894,12 +894,11 @@ def toggle_ignore_hevc(
         )
 
     # Пересчитаем бейдж для HTMX-ячейки (без полного list_release_groups).
+    # Все строки релиза: superseded нужны для якоря overdue у преемника.
     siblings = list(
         db.scalars(
             select(TorrentArchive).where(
                 TorrentArchive.release_id == archive.release_id,
-                TorrentArchive.api_present.is_(True),
-                TorrentArchive.superseded.is_(False),
             )
         ).all()
     )

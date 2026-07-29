@@ -355,7 +355,11 @@ def _normalize_hevc_filter(value: str | None) -> HevcFilter:
 
 
 def _active_archives_for_hevc_pairing(db: Session) -> list[Any]:
-    """Лёгкий SELECT актуальных архивов для фильтров HEVC (до пагинации)."""
+    """SELECT архивов для фильтров HEVC (до пагинации).
+
+    Включает superseded/api_absent — find_unpaired_avc использует их только
+    как якорь overdue для преемников AVC; бейджи строит по active.
+    """
     return list(
         db.execute(
             select(
@@ -371,9 +375,6 @@ def _active_archives_for_hevc_pairing(db: Session) -> list[Any]:
                 TorrentArchive.api_present,
                 TorrentArchive.superseded,
                 TorrentArchive.ignore_hevc,
-            ).where(
-                TorrentArchive.api_present.is_(True),
-                TorrentArchive.superseded.is_(False),
             )
         ).all()
     )

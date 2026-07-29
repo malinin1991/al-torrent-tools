@@ -40,6 +40,7 @@ def _archive(
     release_alias: str = "one-piece",
     api_present: bool = True,
     superseded: bool = False,
+    ignore_hevc: bool = False,
     info_hash: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -58,7 +59,7 @@ def _archive(
         quality_json=_qj(rip_type=rip_type, quality=quality, codec=codec),
         api_present=api_present,
         superseded=superseded,
-        ignore_hevc=False,
+        ignore_hevc=ignore_hevc,
     )
 
 
@@ -677,8 +678,9 @@ def test_multi_avc_overdue_earliest_anchor_hours_e2e(
 
 
 def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
-    """WEBRip AVC + WEB-DL HEVC → type_mismatch filter, не missing."""
+    """WEBRip AVC + WEB-DL HEVC → type_mismatch filter; age>SLA не в «Просрочка»."""
     now = utcnow()
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 5)
     avc = _archive(
         archive_id=1,
         release_id=10278,
@@ -686,7 +688,7 @@ def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
         episodes="1-4",
         codec="AVC",
         rip_type="WEBRip",
-        created_at=now - timedelta(hours=3),
+        created_at=old,
     )
     hevc = _archive(
         archive_id=2,
@@ -695,7 +697,7 @@ def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
         episodes="1-4",
         codec="HEVC",
         rip_type="WEB-DL",
-        created_at=now,
+        created_at=old,
     )
     pairing = [avc, hevc]
     stats = [SimpleNamespace(release_id=10278, last_updated=now, torrent_count=2)]
@@ -714,6 +716,16 @@ def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
     assert by_id[1].hevc_pair_status == "type_mismatch"
     assert by_id[2].hevc_pair_status is None
 
+    db_overdue = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=[],
+        stats_rows=[],
+        total=0,
+    )
+    overdue = list_release_groups(db_overdue, hevc_filter="overdue", page=1, per_page=30)
+    assert overdue["groups"] == []
+    assert overdue["total"] == 0
+
     db_missing = _setup_list_db(
         pairing_rows=pairing,
         page_archives=[],
@@ -723,6 +735,136 @@ def test_webrip_webdl_type_mismatch_filter_e2e() -> None:
     missing = list_release_groups(db_missing, hevc_filter="missing", page=1, per_page=30)
     assert missing["groups"] == []
     assert missing["total"] == 0
+
+
+def test_overdue_inherits_anchor_from_superseded_avc_e2e(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Superseded AVC 1-3 якорит overdue на активном AVC 1-4 (10277-like)."""
+    frozen_now = datetime(2026, 7, 29, 12, 0, 0)
+    monkeypatch.setattr("app.services.hevc_pairing.utcnow", lambda: frozen_now)
+    avc_13 = _archive(
+        archive_id=10,
+        release_id=10277,
+        torrent_id=39129,
+        episodes="1-3",
+        codec="AVC",
+        rip_type="WEB-DL",
+        created_at=frozen_now - timedelta(hours=50),
+        api_created_at=frozen_now - timedelta(hours=50),
+        api_present=False,
+        superseded=True,
+        anime_name="Mystics",
+        release_alias="mystics",
+    )
+    avc_14 = _archive(
+        archive_id=20,
+        release_id=10277,
+        torrent_id=39237,
+        episodes="1-4",
+        codec="AVC",
+        rip_type="WEB-DL",
+        created_at=frozen_now - timedelta(hours=6),
+        api_created_at=frozen_now - timedelta(hours=6),
+        anime_name="Mystics",
+        release_alias="mystics",
+    )
+    hevc_12 = _archive(
+        archive_id=30,
+        release_id=10277,
+        torrent_id=39081,
+        episodes="1-2",
+        codec="HEVC",
+        rip_type="WEB-DL",
+        created_at=frozen_now - timedelta(hours=60),
+        anime_name="Mystics",
+        release_alias="mystics",
+    )
+    pairing = [avc_13, avc_14, hevc_12]
+    # Listing грузит все archive релиза (в т.ч. superseded) — якорь из истории.
+    page = [avc_13, avc_14, hevc_12]
+    stats = [
+        SimpleNamespace(release_id=10277, last_updated=frozen_now, torrent_count=2)
+    ]
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=page,
+        stats_rows=stats,
+        total=1,
+    )
+    result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+    assert len(result["groups"]) == 1
+    by_id = {t.archive_id: t for t in result["groups"][0].torrents}
+    assert by_id[20].hevc_pair_status == "overdue"
+    assert by_id[20].hevc_pair_age_hours == pytest.approx(26.0)
+    assert by_id[30].hevc_pair_status is None
+    # Superseded 1-3 уходит в archived, без бейджа на inactive.
+    archived_ids = {t.archive_id for t in result["groups"][0].archived_torrents}
+    assert 10 in archived_ids
+
+
+def test_overdue_inherits_anchor_from_superseded_ignore_hevc_e2e(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ignore_hevc на superseded 1-3 не сбрасывает overdue якорь у активного 1-4."""
+    frozen_now = datetime(2026, 7, 29, 12, 0, 0)
+    monkeypatch.setattr("app.services.hevc_pairing.utcnow", lambda: frozen_now)
+    avc_13 = _archive(
+        archive_id=10,
+        release_id=10277,
+        torrent_id=39129,
+        episodes="1-3",
+        codec="AVC",
+        rip_type="WEB-DL",
+        created_at=frozen_now - timedelta(hours=50),
+        api_created_at=frozen_now - timedelta(hours=50),
+        api_present=False,
+        superseded=True,
+        ignore_hevc=True,
+        anime_name="Mystics",
+        release_alias="mystics",
+    )
+    avc_14 = _archive(
+        archive_id=20,
+        release_id=10277,
+        torrent_id=39237,
+        episodes="1-4",
+        codec="AVC",
+        rip_type="WEB-DL",
+        created_at=frozen_now - timedelta(hours=6),
+        api_created_at=frozen_now - timedelta(hours=6),
+        ignore_hevc=False,
+        anime_name="Mystics",
+        release_alias="mystics",
+    )
+    hevc_12 = _archive(
+        archive_id=30,
+        release_id=10277,
+        torrent_id=39081,
+        episodes="1-2",
+        codec="HEVC",
+        rip_type="WEB-DL",
+        created_at=frozen_now - timedelta(hours=60),
+        anime_name="Mystics",
+        release_alias="mystics",
+    )
+    pairing = [avc_13, avc_14, hevc_12]
+    page = [avc_13, avc_14, hevc_12]
+    stats = [
+        SimpleNamespace(release_id=10277, last_updated=frozen_now, torrent_count=2)
+    ]
+    db = _setup_list_db(
+        pairing_rows=pairing,
+        page_archives=page,
+        stats_rows=stats,
+        total=1,
+    )
+    result = list_release_groups(db, hevc_filter="overdue", page=1, per_page=30)
+    assert len(result["groups"]) == 1
+    by_id = {t.archive_id: t for t in result["groups"][0].torrents}
+    assert by_id[20].hevc_pair_status == "overdue"
+    assert by_id[20].hevc_pair_age_hours == pytest.approx(26.0)
+    assert by_id[20].ignore_hevc is False
 
 
 def test_webrip_does_not_pair_with_bdrip_across_families() -> None:

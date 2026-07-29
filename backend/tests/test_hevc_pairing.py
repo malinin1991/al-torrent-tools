@@ -266,7 +266,7 @@ def test_saijo_webrip_avc_webdl_hevc_type_mismatch_not_missing() -> None:
 
 
 def test_webrip_webdl_type_mismatch_and_overdue_after_sla() -> None:
-    """WEBRip AVC + WEB-DL HEVC age>24h → бейдж type_mismatch; оба флага в фильтрах."""
+    """WEBRip AVC + WEB-DL HEVC age>24h → только type_mismatch, не overdue-фильтр."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
     rows = [
@@ -289,9 +289,9 @@ def test_webrip_webdl_type_mismatch_and_overdue_after_sla() -> None:
     assert len(unpaired) == 1
     assert unpaired[0].missing is False
     assert unpaired[0].type_mismatch is True
-    assert unpaired[0].overdue is True
+    assert unpaired[0].overdue is False
     assert unpaired[0].status == "type_mismatch"
-    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {1}
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
     assert release_ids_matching_hevc_filter(
         rows, hevc_filter="type_mismatch", now=now
     ) == {1}
@@ -1189,7 +1189,7 @@ def test_sync_emits_when_flags_change_same_badge(
     assert recorded[0]["to_status"] == "type_mismatch"
     assert recorded[0]["details"]["missing"] is False
     assert recorded[0]["details"]["type_mismatch"] is True
-    assert recorded[0]["details"]["overdue"] is True
+    assert recorded[0]["details"]["overdue"] is False
     assert recorded[0]["details"]["paired_hevc_info_hash"] == "bb" * 20
 
 
@@ -1457,3 +1457,182 @@ def test_webrip_avc_webdl_hevc_type_mismatch_not_missing_filter() -> None:
     assert release_ids_matching_hevc_filter(
         rows, hevc_filter="type_mismatch", now=now
     ) == {1}
+
+
+def test_overdue_continues_on_avc_successor_after_supersede() -> None:
+    """Release 10277-like: superseded AVC 1-3 overdue → активный 1-4 наследует якорь."""
+    now = datetime(2026, 7, 29, 12, 0, 0)
+    # AVC 1-3 вышел >SLA назад и опередил HEVC 1-2; затем заменён на 1-4 (<SLA сам).
+    avc_13_upload = now - timedelta(hours=50)
+    avc_14_upload = now - timedelta(hours=6)
+    rows = [
+        _row(
+            archive_id=10,
+            release_id=10277,
+            torrent_id=39129,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=avc_13_upload,
+            api_created_at=avc_13_upload,
+            api_present=False,
+            superseded=True,
+            info_hash="564175cafffd110e54c1e630360a323b82515ee7",
+        ),
+        _row(
+            archive_id=20,
+            release_id=10277,
+            torrent_id=39237,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=avc_14_upload,
+            api_created_at=avc_14_upload,
+            info_hash="8cc19487916545547330a25761e4ac34fb6c453f",
+        ),
+        _row(
+            archive_id=30,
+            release_id=10277,
+            torrent_id=39081,
+            episodes="1-2",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=now - timedelta(hours=60),
+            api_created_at=now - timedelta(hours=60),
+            info_hash="741cf2d4df9e208fe3cfeec1b5472be9a61ef12d",
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    u = unpaired[0]
+    assert u.archive_id == 20
+    assert u.episodes == "1-4"
+    assert u.missing is False
+    assert u.overdue is True
+    assert u.status == "overdue"
+    # Якорь от дня эпизода 3 (50ч), не от свежего 1-4 (6ч).
+    assert u.age_hours == pytest.approx(50.0)
+    assert u.created_at == avc_13_upload
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {
+        10277
+    }
+    # Без истории 1-3 активный 1-4 ещё в SLA — не overdue.
+    without_hist = [r for r in rows if r.id != 10]
+    assert find_unpaired_avc(without_hist, now=now) == []
+
+
+def test_overdue_anchor_from_superseded_ignore_hevc() -> None:
+    """Superseded AVC с ignore_hevc=True всё равно якорит активного преемника."""
+    now = datetime(2026, 7, 29, 12, 0, 0)
+    avc_13_upload = now - timedelta(hours=50)
+    avc_14_upload = now - timedelta(hours=6)
+    rows = [
+        _row(
+            archive_id=10,
+            release_id=10277,
+            torrent_id=39129,
+            episodes="1-3",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=avc_13_upload,
+            api_created_at=avc_13_upload,
+            api_present=False,
+            superseded=True,
+            ignore_hevc=True,
+            info_hash="564175cafffd110e54c1e630360a323b82515ee7",
+        ),
+        _row(
+            archive_id=20,
+            release_id=10277,
+            torrent_id=39237,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=avc_14_upload,
+            api_created_at=avc_14_upload,
+            ignore_hevc=False,
+            info_hash="8cc19487916545547330a25761e4ac34fb6c453f",
+        ),
+        _row(
+            archive_id=30,
+            release_id=10277,
+            torrent_id=39081,
+            episodes="1-2",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=now - timedelta(hours=60),
+            api_created_at=now - timedelta(hours=60),
+            info_hash="741cf2d4df9e208fe3cfeec1b5472be9a61ef12d",
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    u = unpaired[0]
+    assert u.archive_id == 20
+    assert u.ignore_hevc is False
+    assert u.overdue is True
+    assert u.status == "overdue"
+    assert u.age_hours == pytest.approx(50.0)
+    assert u.created_at == avc_13_upload
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {
+        10277
+    }
+    # Активный с ignore — бейдж/фильтр закрыты; история по-прежнему не эмитит.
+    rows[1].ignore_hevc = True
+    assert find_unpaired_avc(rows, now=now) == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+
+
+def test_type_mismatch_not_in_overdue_filter_bucket() -> None:
+    """type_mismatch и overdue — разные бакеты фильтра; age>SLA не тянет в «Просрочка»."""
+    now = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 10)
+    mismatch_rows = [
+        _row(
+            archive_id=1,
+            release_id=10278,
+            torrent_id=39192,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=old,
+        ),
+        _row(
+            archive_id=2,
+            release_id=10278,
+            torrent_id=39199,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=old,
+        ),
+    ]
+    pure_overdue = [
+        _row(
+            archive_id=3,
+            release_id=50,
+            torrent_id=10,
+            episodes="1-12",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=old,
+        ),
+        _row(
+            archive_id=4,
+            release_id=50,
+            torrent_id=9,
+            episodes="1-11",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            created_at=old,
+        ),
+    ]
+    rows = mismatch_rows + pure_overdue
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {50}
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="type_mismatch", now=now
+    ) == {10278}
+    mismatch = find_unpaired_avc(mismatch_rows, now=now)[0]
+    assert mismatch.status == "type_mismatch"
+    assert mismatch.overdue is False
+    assert mismatch.type_mismatch is True
