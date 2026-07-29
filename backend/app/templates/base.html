@@ -367,6 +367,15 @@
     formatLocalTimes(event.detail.target);
     enqueueDownloadableChecks(event.detail.target);
     const target = event.detail.target;
+    if (target && target.id === "job-detail-live") {
+      const marker = target.querySelector("[data-selected-job-status]");
+      if (marker) {
+        target.setAttribute(
+          "data-job-status",
+          marker.getAttribute("data-selected-job-status") || ""
+        );
+      }
+    }
     const sel = target && target.id ? `#${target.id}` : null;
     if (sel && _uiSsePreserveByTarget.has(sel)) {
       restoreUiSsePreserve(target, _uiSsePreserveByTarget.get(sel));
@@ -407,7 +416,13 @@
   function refreshUiSseTargets(channel) {
     if (document.visibilityState !== "visible") return;
     const scrollY = window.scrollY;
+    const activeJobStatuses = new Set(["pending", "running", "stopping"]);
     document.querySelectorAll(`[data-ui-sse-channel="${cssAttrQuote(channel)}"]`).forEach((el) => {
+      if (el.getAttribute("data-ui-sse-active-only") === "1") {
+        const jobStatus = (el.getAttribute("data-job-status") || "").toLowerCase();
+        // Финальный джоб: не тянем логи/детали на каждый jobs-event.
+        if (!activeJobStatuses.has(jobStatus)) return;
+      }
       const url = el.getAttribute("data-ui-sse-url");
       const targetSel = el.getAttribute("data-ui-sse-target") || (el.id ? `#${el.id}` : null);
       if (!url || !targetSel) return;

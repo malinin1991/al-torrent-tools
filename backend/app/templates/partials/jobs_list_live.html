@@ -1,0 +1,17 @@
+<div class="card">
+  <h3>Список <span class="muted" style="font-weight:normal;font-size:0.85rem;">live</span></h3>
+  <table>
+    <thead><tr><th style="width:64px;">ID</th><th style="width:110px;">Тип</th><th>Статус</th></tr></thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr{% if selected_job and job.id == selected_job.id %} class="row-selected"{% endif %}>
+        <td><a href="/jobs?job_type={{ job_type|urlencode }}&status={{ status|urlencode }}&job_id={{ job.id }}">{{ job.id }}</a></td>
+        <td>{{ job.type }}</td>
+        <td><span class="job-status job-status-{{ job.status }}">{{ job.status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Нет записей</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

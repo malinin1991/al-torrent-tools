@@ -19,13 +19,27 @@
     <span class="muted" id="jobs-poll-hint">история ниже · live · SSE</span>
   </form>
 </div>
-<div
-  id="jobs-live"
-  data-ui-sse-channel="jobs"
-  data-ui-sse-url="/jobs/live?job_type={{ job_type|urlencode }}&status={{ status|urlencode }}{% if selected_job %}&job_id={{ selected_job.id }}{% endif %}"
-  data-ui-sse-target="#jobs-live"
->
-  {% include "partials/jobs_live.html" %}
+{% set jobs_qs = "job_type=" ~ (job_type|urlencode) ~ "&status=" ~ (status|urlencode) %}
+{% if selected_job %}{% set jobs_qs = jobs_qs ~ "&job_id=" ~ selected_job.id %}{% endif %}
+<div class="jobs-live-grid">
+  <div
+    id="jobs-list-live"
+    data-ui-sse-channel="jobs"
+    data-ui-sse-url="/jobs/list/live?{{ jobs_qs }}"
+    data-ui-sse-target="#jobs-list-live"
+  >
+    {% include "partials/jobs_list_live.html" %}
+  </div>
+  <div
+    id="job-detail-live"
+    data-ui-sse-channel="jobs"
+    data-ui-sse-url="/jobs/detail/live?{{ jobs_qs }}"
+    data-ui-sse-target="#job-detail-live"
+    {% if selected_job %}data-job-status="{{ selected_job.status }}"{% endif %}
+    data-ui-sse-active-only="1"
+  >
+    {% include "partials/job_detail_live.html" %}
+  </div>
 </div>
 <script>
 function copyJobLogs() {
@@ -67,7 +81,7 @@ function fallbackCopy(text, onSuccess) {
 }
 
 (function () {
-  const root = document.getElementById("jobs-live");
+  const root = document.getElementById("job-detail-live");
   if (!root) return;
   let savedScroll = 0;
   let stickToNewest = true;

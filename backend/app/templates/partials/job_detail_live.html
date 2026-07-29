@@ -1,0 +1,41 @@
+<div class="card" data-selected-job-status="{% if selected_job %}{{ selected_job.status }}{% endif %}">
+  <div class="row log-toolbar">
+    <h3>Логи джоба {% if selected_job %}#{{ selected_job.id }}{% endif %}
+      {% if selected_job and selected_job.status in ("pending", "running", "stopping") %}
+      <span class="muted" style="font-weight:normal;font-size:0.85rem;">live</span>
+      {% endif %}
+    </h3>
+    {% if logs %}
+    <div class="row">
+      <button class="btn btn-secondary" type="button" id="copy-logs-btn" onclick="copyJobLogs()">Копировать логи</button>
+      <span id="copy-logs-status" class="copy-status" hidden>Скопировано</span>
+    </div>
+    {% endif %}
+  </div>
+  {% if selected_job %}
+  <p class="muted" style="margin-top:0;">
+    Тип: {{ selected_job.type }}
+    | Статус: <span class="job-status job-status-{{ selected_job.status }}">{{ selected_job.status }}</span>
+    | Старт:
+    {% if selected_job.started_at %}
+    <time class="local-time" datetime="{{ selected_job.started_at|as_utc_iso }}">{{ selected_job.started_at }}</time>
+    {% else %}-{% endif %}
+    | Финиш:
+    {% if selected_job.finished_at %}
+    <time class="local-time" datetime="{{ selected_job.finished_at|as_utc_iso }}">{{ selected_job.finished_at }}</time>
+    {% else %}-{% endif %}
+    | Ошибка: {{ selected_job.error or "-" }}
+  </p>
+  {% endif %}
+  <div class="log-panel" id="job-logs-panel">
+    {% for line in logs %}
+    <div class="log-line">
+      <span class="log-ts">{% if line.created_at %}<time class="local-time" datetime="{{ line.created_at|as_utc_iso }}">{{ line.created_at }}</time>{% else %}-{% endif %}</span>
+      <span class="log-level log-level-{{ line.level }}">{{ line.level }}</span>
+      <span class="log-msg">{{ line.message }}</span>
+    </div>
+    {% else %}
+    <div class="muted">Логов нет</div>
+    {% endfor %}
+  </div>
+</div>

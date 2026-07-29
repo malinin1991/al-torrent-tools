@@ -553,6 +553,30 @@ def jobs_live(
     return templates.TemplateResponse(request, "partials/jobs_live.html", context)
 
 
+@app.get("/jobs/list/live", response_class=HTMLResponse)
+def jobs_list_live(
+    request: Request,
+    job_type: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    job_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = _jobs_page_context(db, job_type=job_type, status=status, job_id=job_id)
+    return templates.TemplateResponse(request, "partials/jobs_list_live.html", context)
+
+
+@app.get("/jobs/detail/live", response_class=HTMLResponse)
+def jobs_detail_live(
+    request: Request,
+    job_type: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    job_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = _jobs_page_context(db, job_type=job_type, status=status, job_id=job_id)
+    return templates.TemplateResponse(request, "partials/job_detail_live.html", context)
+
+
 def _jobs_page_context(
     db: Session,
     *,

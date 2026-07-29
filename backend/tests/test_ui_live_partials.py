@@ -188,7 +188,33 @@ def test_jobs_page_no_hx_every_trigger() -> None:
     text = (_TEMPLATES_DIR / "jobs.html").read_text(encoding="utf-8")
     assert "every 2s" not in text
     assert 'data-ui-sse-channel="jobs"' in text
+    assert "data-ui-sse-active-only" in text
+    assert "job_detail_live" in text or "job-detail-live" in text
     assert "job_type|urlencode" in text.replace(" ", "") or "job_type|urlencode" in text
+
+
+def test_job_detail_live_marks_status_for_active_only() -> None:
+    templates = _templates()
+    request = MagicMock()
+    job = SimpleNamespace(
+        id=7,
+        type="ongoing",
+        status="success",
+        started_at=None,
+        finished_at=None,
+        error=None,
+    )
+    html = templates.TemplateResponse(
+        request,
+        "partials/job_detail_live.html",
+        {
+            "request": request,
+            "selected_job": job,
+            "logs": [],
+        },
+    ).body.decode("utf-8")
+    assert 'data-selected-job-status="success"' in html
+    assert 'font-size:0.85rem;">live</span>' not in html
 
 
 def test_pipeline_page_no_hx_every_trigger() -> None:
