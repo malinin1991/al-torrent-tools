@@ -22,6 +22,7 @@ from app.services.telegram_notify import (
     mark_outbox_sent,
 )
 from app.utils.datetime_fmt import as_utc_iso, utcnow
+from app.services.releases_view import format_torrent_files_summary
 
 _TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "app" / "templates"
 
@@ -439,6 +440,7 @@ def test_pipeline_detail_prefers_archive_by_info_hash(monkeypatch: pytest.Monkey
 def test_pipeline_detail_html_renders_timeline() -> None:
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.filters["as_utc_iso"] = as_utc_iso
+    templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     pipeline = _pipeline(status="done", pipeline_id=3)
     event = SimpleNamespace(

@@ -1,5 +1,5 @@
 <details class="torrent-files"{% if allow_file_downloads and info_hash %} data-download-check="{{ info_hash }}"{% endif %}>
-  <summary class="muted">{{ files|length }} файл.</summary>
+  <summary class="muted">{{ files|torrent_files_summary }}</summary>
   <ul class="file-list">
     {% for f in files %}
     <li{% if f.file_id %} data-file-id="{{ f.file_id }}"{% endif %}>

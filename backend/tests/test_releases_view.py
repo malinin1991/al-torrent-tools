@@ -7,6 +7,7 @@ from app.services.releases_view import (
     _info_hashes_with_active_hash_job,
     _recent_events_by_info_hash,
     format_bytes,
+    format_torrent_files_summary,
     list_release_groups,
 )
 
@@ -893,3 +894,65 @@ def test_latest_pipeline_by_hash_falls_back_to_failed() -> None:
     ]
     result = _latest_pipeline_by_hash(db, [h])
     assert result[h] == ("failed", "boom", 5)
+
+
+def test_format_torrent_files_summary_mixed_with_removed() -> None:
+    files = [
+        SimpleNamespace(status="removed"),
+        SimpleNamespace(status="new"),
+        SimpleNamespace(status="ok"),
+        SimpleNamespace(status="ok"),
+        SimpleNamespace(status="ok"),
+    ]
+    assert (
+        format_torrent_files_summary(files)
+        == "4 файла (1 новый, 3 старые), 1 удалён."
+    )
+
+
+def test_format_torrent_files_summary_user_example_new_changed_ok_removed() -> None:
+    files = [
+        SimpleNamespace(status="new"),
+        SimpleNamespace(status="changed"),
+        SimpleNamespace(status="ok"),
+        SimpleNamespace(status="ok"),
+        SimpleNamespace(status="removed"),
+    ]
+    assert (
+        format_torrent_files_summary(files)
+        == "4 файла (1 новый, 1 изменён, 2 старые), 1 удалён."
+    )
+
+
+def test_format_torrent_files_summary_all_ok_plain() -> None:
+    files = [SimpleNamespace(status="ok") for _ in range(4)]
+    assert format_torrent_files_summary(files) == "4 файла."
+
+
+def test_format_torrent_files_summary_only_removed() -> None:
+    files = [SimpleNamespace(status="removed"), SimpleNamespace(status="removed")]
+    assert format_torrent_files_summary(files) == "2 удалённых."
+
+
+def test_format_torrent_files_summary_plural_forms() -> None:
+    assert format_torrent_files_summary([SimpleNamespace(status="ok")]) == "1 файл."
+    assert (
+        format_torrent_files_summary(
+            [SimpleNamespace(status="new") for _ in range(5)]
+        )
+        == "5 файлов (5 новых)."
+    )
+    assert (
+        format_torrent_files_summary(
+            [SimpleNamespace(status="ok") for _ in range(3)]
+            + [SimpleNamespace(status="removed")]
+        )
+        == "3 файла (3 старые), 1 удалён."
+    )
+    assert (
+        format_torrent_files_summary(
+            [SimpleNamespace(status="ok") for _ in range(5)]
+            + [SimpleNamespace(status="removed")]
+        )
+        == "5 файлов (5 старых), 1 удалён."
+    )

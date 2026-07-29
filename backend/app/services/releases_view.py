@@ -74,6 +74,65 @@ class ReleaseFileRow:
 
 _DOWNLOADABLE_STATUSES = frozenset({"ok", "new", "changed"})
 
+# Порядок в сводке: новый → изменён → проверка → старый; удалён — отдельно.
+_FILE_SUMMARY_ACTIVE_ORDER: tuple[tuple[str, tuple[str, str, str]], ...] = (
+    ("new", ("новый", "новые", "новых")),
+    ("changed", ("изменён", "изменённые", "изменённых")),
+    ("checking", ("проверка", "проверки", "проверок")),
+    ("ok", ("старый", "старые", "старых")),
+)
+
+
+def _ru_plural(n: int, one: str, few: str, many: str) -> str:
+    """Русское склонение для числительных: 1/2–4/5–20/21…"""
+    n_abs = abs(n) % 100
+    n1 = n_abs % 10
+    if 11 <= n_abs <= 19:
+        return many
+    if n1 == 1:
+        return one
+    if 2 <= n1 <= 4:
+        return few
+    return many
+
+
+def format_torrent_files_summary(files: Sequence[Any] | None) -> str:
+    """Сводка без разворота: «4 файла (1 новый, 3 старые), 1 удалён.»"""
+    counts = {"new": 0, "changed": 0, "checking": 0, "ok": 0, "removed": 0}
+    for item in files or ():
+        status = (getattr(item, "status", None) or "ok").strip().lower()
+        if status not in counts:
+            status = "ok"
+        counts[status] += 1
+
+    active = counts["new"] + counts["changed"] + counts["checking"] + counts["ok"]
+    removed = counts["removed"]
+
+    if active == 0:
+        if removed == 0:
+            return "0 файлов."
+        return (
+            f"{removed} {_ru_plural(removed, 'удалён', 'удалённых', 'удалённых')}."
+        )
+
+    head = f"{active} {_ru_plural(active, 'файл', 'файла', 'файлов')}"
+    detail_parts = [
+        f"{counts[key]} {_ru_plural(counts[key], one, few, many)}"
+        for key, (one, few, many) in _FILE_SUMMARY_ACTIVE_ORDER
+        if counts[key]
+    ]
+    # Детализация, если есть отличия от «все старые» или есть удалённые.
+    interesting = bool(
+        counts["new"] or counts["changed"] or counts["checking"] or removed
+    )
+    if interesting and detail_parts:
+        head += f" ({', '.join(detail_parts)})"
+    if removed:
+        head += (
+            f", {removed} {_ru_plural(removed, 'удалён', 'удалённых', 'удалённых')}"
+        )
+    return f"{head}."
+
 
 def _natural_name_key(name: str) -> tuple:
     """Ключ natural sort: ep2 < ep10 (не лексикографически)."""

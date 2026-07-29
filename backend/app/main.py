@@ -49,7 +49,11 @@ from app.services.hevc_pairing import (
     sla_age_source,
     sync_hevc_pair_events_for_release,
 )
-from app.services.releases_view import build_archive_page_rows, list_release_groups
+from app.services.releases_view import (
+    build_archive_page_rows,
+    format_torrent_files_summary,
+    list_release_groups,
+)
 from app.services.system_status import collect_system_status
 from app.services.telegram_notify import (
     SOURCE_UI,
@@ -100,6 +104,7 @@ app.include_router(api_router)
 base_path = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(base_path / "templates"))
 templates.env.filters["as_utc_iso"] = as_utc_iso
+templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
 app.mount("/static", StaticFiles(directory=str(base_path / "static")), name="static")
 
 

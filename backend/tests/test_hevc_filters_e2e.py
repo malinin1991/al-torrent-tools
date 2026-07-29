@@ -11,7 +11,7 @@ import pytest
 from fastapi.templating import Jinja2Templates
 
 from app.services.hevc_pairing import HEVC_SLA_HOURS
-from app.services.releases_view import list_release_groups
+from app.services.releases_view import format_torrent_files_summary, list_release_groups
 from app.utils.datetime_fmt import as_utc_iso, utcnow
 
 _TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "app" / "templates"
@@ -956,6 +956,7 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.filters["as_utc_iso"] = as_utc_iso
+    templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
 
     group = ReleaseGroup(
@@ -1097,6 +1098,7 @@ def test_overdue_badge_orange_vs_red_in_type_cell() -> None:
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.filters["as_utc_iso"] = as_utc_iso
+    templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
     request = MagicMock()
 
     red = ReleaseTorrentRow(
@@ -1305,6 +1307,7 @@ def test_releases_html_show_hidden_members_and_blocks() -> None:
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.filters["as_utc_iso"] = as_utc_iso
+    templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     group = ReleaseGroup(
         release_id=1,
