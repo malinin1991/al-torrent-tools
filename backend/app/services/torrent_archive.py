@@ -359,6 +359,149 @@ class TorrentArchiveService:
         self._db.refresh(archive)
         return archive
 
+    def _find_active_archive(
+        self,
+        *,
+        torrent_id: int | None = None,
+        info_hash: str | None = None,
+    ) -> TorrentArchive | None:
+        """Активная (не superseded) запись по torrent_id и/или info_hash."""
+        if info_hash:
+            try:
+                normalized = sanitize_info_hash(info_hash)
+            except ValueError:
+                normalized = None
+            if normalized:
+                row = self._db.scalar(
+                    select(TorrentArchive)
+                    .where(
+                        TorrentArchive.info_hash == normalized,
+                        TorrentArchive.superseded.is_(False),
+                    )
+                    .order_by(TorrentArchive.id.desc())
+                    .limit(1)
+                )
+                if row is not None:
+                    return row
+        if torrent_id is not None:
+            return self._db.scalar(
+                select(TorrentArchive)
+                .where(
+                    TorrentArchive.torrent_id == torrent_id,
+                    TorrentArchive.superseded.is_(False),
+                )
+                .order_by(TorrentArchive.id.desc())
+                .limit(1)
+            )
+        return None
+
+    def update_archive_meta_from_api_payload(
+        self,
+        *,
+        release_id: int,
+        torrent_payload: dict[str, Any],
+        release_payload: dict[str, Any] | None = None,
+        release_alias: str | None = None,
+    ) -> str:
+        """Meta-only обновление архива из list/get payload без скачивания .torrent.
+
+        Returns:
+            ``updated`` — поля записаны;
+            ``noop`` — изменений нет;
+            ``missing`` — нет активной строки архива;
+            ``hash_mismatch`` — info_hash в API ≠ архив (нужен обычный sync/handoff).
+        """
+        raw_id = torrent_payload.get("id") or torrent_payload.get("torrent_id")
+        try:
+            torrent_id = int(raw_id) if raw_id is not None else None
+        except (TypeError, ValueError):
+            torrent_id = None
+        if torrent_id is None:
+            return "missing"
+
+        raw_hash = torrent_payload.get("info_hash") or torrent_payload.get("hash")
+        api_hash: str | None = None
+        if raw_hash is not None and str(raw_hash).strip():
+            try:
+                api_hash = sanitize_info_hash(str(raw_hash).strip())
+            except ValueError:
+                api_hash = None
+
+        archive = self._find_active_archive(torrent_id=torrent_id, info_hash=api_hash)
+        if archive is None:
+            return "missing"
+
+        archived_hash = (archive.info_hash or "").strip().lower()
+        if api_hash and archived_hash and archived_hash != api_hash:
+            return "hash_mismatch"
+
+        changed = False
+        torrent_description = self._extract_torrent_description(torrent_payload)
+        if torrent_description is not None and archive.torrent_description != torrent_description:
+            archive.torrent_description = torrent_description
+            changed = True
+
+        torrent_type = self._extract_torrent_type(torrent_payload)
+        if torrent_type is not None and archive.torrent_type != torrent_type:
+            archive.torrent_type = torrent_type
+            changed = True
+
+        tech = self._build_quality_json(torrent_payload)
+        quality = dict(archive.quality_json) if isinstance(archive.quality_json, dict) else {}
+        # Tech-поля из list; genres/members/names/blocks не затираем сырым list.
+        for key, value in tech.items():
+            if quality.get(key) != value:
+                quality[key] = value
+                changed = True
+
+        if isinstance(release_payload, dict) and release_payload:
+            anime_name = self._extract_anime_name(release_payload)
+            if anime_name is not None and archive.anime_name != anime_name:
+                archive.anime_name = anime_name
+                changed = True
+            category = self._build_category(release_payload)
+            if category and archive.category != category:
+                archive.category = category
+                changed = True
+            description = self._clean_text(release_payload.get("description"))
+            if description is not None and archive.description != description:
+                archive.description = description
+                changed = True
+            before_attach = dict(quality)
+            quality = self._attach_release_names(quality, release_payload)
+            if quality != before_attach:
+                changed = True
+
+        if release_alias:
+            cleaned_alias = release_alias.strip().strip("/") or None
+            if cleaned_alias and archive.release_alias != cleaned_alias:
+                archive.release_alias = cleaned_alias
+                changed = True
+
+        if archive.release_id != release_id:
+            archive.release_id = release_id
+            changed = True
+
+        api_created_at = self._extract_api_created_at(torrent_payload)
+        if api_created_at is not None:
+            current = archive.api_created_at
+            if current is None or current < api_created_at:
+                archive.api_created_at = api_created_at
+                changed = True
+
+        if archive.quality_json != quality:
+            archive.quality_json = quality
+            changed = True
+
+        if not archive.api_present:
+            archive.api_present = True
+            changed = True
+
+        if changed:
+            self._db.commit()
+            return "updated"
+        return "noop"
+
     def fill_missing_api_created_at(
         self,
         release_id: int,

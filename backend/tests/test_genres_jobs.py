@@ -116,16 +116,33 @@ def test_full_sync_refresh_applies_tags_for_seen(monkeypatch) -> None:
         "app.services.torrent_processor.mark_release_processed",
         lambda *a, **k: None,
     )
+    monkeypatch.setattr(
+        "app.services.torrent_processor.update_api_present_for_release",
+        lambda *a, **k: None,
+    )
+    monkeypatch.setattr(processor, "_sync_hevc_pair_events", lambda *_: None)
+    monkeypatch.setattr(processor, "_archive_hash_mismatches", lambda *_: False)
+
+    archive_svc = MagicMock()
+    archive_svc.fill_missing_api_created_at.return_value = 0
+    archive_svc.update_archive_meta_from_api_payload.return_value = "noop"
+    monkeypatch.setattr(
+        "app.services.torrent_processor.TorrentArchiveService",
+        lambda *_a, **_k: archive_svc,
+    )
 
     refresh_comments = MagicMock(return_value=1)
     refresh_tags = MagicMock(return_value=2)
+    refresh_renames = MagicMock(return_value=0)
     monkeypatch.setattr(processor, "_refresh_qb_comments", refresh_comments)
     monkeypatch.setattr(processor, "_refresh_qb_tags", refresh_tags)
+    monkeypatch.setattr(processor, "_refresh_qb_renames", refresh_renames)
     monkeypatch.setattr(
         processor,
         "_resolve_genres_for_meta",
         AsyncMock(return_value=["Драма"]),
     )
+    monkeypatch.setattr(processor, "_persist_release_ui_meta_from_payload", MagicMock())
 
     stats = asyncio.run(
         processor.process_release(20, "seen-show", refresh_qb_meta=True)

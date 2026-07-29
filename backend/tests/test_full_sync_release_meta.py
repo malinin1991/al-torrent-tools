@@ -87,13 +87,20 @@ def test_full_sync_all_seen_calls_get_release_for_ui_meta(monkeypatch) -> None:
         "app.services.torrent_processor.update_api_present_for_release",
         lambda *a, **k: None,
     )
+    archive_svc = SimpleNamespace(
+        fill_missing_api_created_at=lambda *a, **k: 0,
+        update_archive_meta_from_api_payload=lambda *a, **k: "noop",
+        _find_active_archive=lambda *a, **k: None,
+    )
     monkeypatch.setattr(
         "app.services.torrent_processor.TorrentArchiveService",
-        lambda *_a, **_k: SimpleNamespace(fill_missing_api_created_at=lambda *a, **k: 0),
+        lambda *_a, **_k: archive_svc,
     )
     monkeypatch.setattr(processor, "_refresh_qb_comments", MagicMock(return_value=0))
     monkeypatch.setattr(processor, "_refresh_qb_tags", MagicMock(return_value=0))
+    monkeypatch.setattr(processor, "_refresh_qb_renames", MagicMock(return_value=0))
     monkeypatch.setattr(processor, "_sync_hevc_pair_events", lambda *_: None)
+    monkeypatch.setattr(processor, "_archive_hash_mismatches", lambda *_: False)
     # Жанры уже в архиве — раньше это блокировало get_release.
     monkeypatch.setattr(processor, "_genres_from_archives", lambda *_: ["Драма"])
     persist = MagicMock()

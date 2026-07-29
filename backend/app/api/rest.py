@@ -11,6 +11,7 @@ from app.jobs.cleanup_logs import run_cleanup_logs
 from app.jobs.full_sync import run_full_sync
 from app.jobs.hash_backfill import run_hash_backfill
 from app.jobs.hash_torrent import run_hash_torrent
+from app.jobs.meta_sync import run_full_meta_sync, run_meta_sync
 from app.jobs.ongoing import run_ongoing
 from app.jobs.orphan_cleanup import run_orphan_cleanup
 from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback, run_pipeline_reconcile
@@ -37,6 +38,8 @@ router = APIRouter(prefix="/api")
 job_runner = JobRunner()
 job_runner.register("ongoing", run_ongoing)
 job_runner.register("full_sync", run_full_sync)
+job_runner.register("meta_sync", run_meta_sync)
+job_runner.register("full_meta_sync", run_full_meta_sync)
 job_runner.register("cleanup_master", run_cleanup)
 job_runner.register("cleanup_slave", run_cleanup)
 job_runner.register("cleanup_logs", run_cleanup_logs)
@@ -358,6 +361,34 @@ async def run_ongoing_job(db: Session = Depends(get_db)) -> dict:
 @router.post("/jobs/full-sync/run")
 async def run_full_sync_job(db: Session = Depends(get_db)) -> dict:
     job = _create_and_run_job(db, "full_sync", {})
+    job_runner.schedule_job(job.id)
+    return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
+
+
+@router.post("/jobs/meta-sync/run")
+async def run_meta_sync_job(
+    release_id: int | None = Query(default=None),
+    torrent_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    params: dict = {}
+    if release_id is not None:
+        params["release_id"] = release_id
+    if torrent_id is not None:
+        params["torrent_id"] = torrent_id
+    if not params:
+        raise HTTPException(
+            status_code=400,
+            detail="meta_sync: укажите release_id и/или torrent_id",
+        )
+    job = _create_and_run_job(db, "meta_sync", params)
+    job_runner.schedule_job(job.id)
+    return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
+
+
+@router.post("/jobs/full-meta-sync/run")
+async def run_full_meta_sync_job(db: Session = Depends(get_db)) -> dict:
+    job = _create_and_run_job(db, "full_meta_sync", {})
     job_runner.schedule_job(job.id)
     return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
 

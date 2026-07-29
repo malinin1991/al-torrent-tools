@@ -64,7 +64,8 @@ def upsert_release_meta(
     """Создаёт/обновляет ``releases`` + ``release_members`` из payload get_release.
 
     Sparse include: пишем только присутствующие ключи (не затираем соседей).
-    ``members: []`` при ключе в payload очищает состав.
+    ``members: []`` при ключе-списке в payload очищает состав;
+    ``members: null`` / не-list — пропускаем (не затираем).
     """
     rid = int(release_id)
     row = db.get(Release, rid)
@@ -94,10 +95,13 @@ def upsert_release_meta(
             row.is_blocked_by_copyrights = False if parsed is None else parsed
 
     if "members" in release_payload:
-        members = extract_release_members(release_payload)
-        db.execute(delete(ReleaseMember).where(ReleaseMember.release_id == rid))
-        for member in _member_rows_from_dicts(rid, members):
-            db.add(member)
+        raw_members = release_payload.get("members")
+        # Только list (в т.ч. []) обновляет состав; null/битый тип — не затираем.
+        if isinstance(raw_members, list):
+            members = extract_release_members(release_payload)
+            db.execute(delete(ReleaseMember).where(ReleaseMember.release_id == rid))
+            for member in _member_rows_from_dicts(rid, members):
+                db.add(member)
 
     row.updated_at = utcnow()
     if commit:

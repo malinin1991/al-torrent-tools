@@ -150,10 +150,17 @@ def test_qb_add_torrent_sets_comment_even_when_already_present(monkeypatch: pyte
 
 def test_ensure_torrent_tags_adds_and_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
     client = MagicMock()
-    t = MagicMock()
-    t.tags = "Комедия, Повседневность"
-    client.torrents_info.return_value = [t]
     monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        qb_mod,
+        "_read_torrent_tag_list",
+        MagicMock(side_effect=[[], ["Комедия", "Повседневность"]]),
+    )
+    monkeypatch.setattr(
+        qb_mod,
+        "_read_torrent_tags",
+        MagicMock(side_effect=[set(), {"комедия", "повседневность"}]),
+    )
 
     ok = qb_mod._ensure_torrent_tags(
         client,
@@ -163,3 +170,4 @@ def test_ensure_torrent_tags_adds_and_verifies(monkeypatch: pytest.MonkeyPatch) 
 
     assert ok is True
     client.torrents_add_tags.assert_called_once()
+    client.torrents_remove_tags.assert_not_called()

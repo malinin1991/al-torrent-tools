@@ -350,6 +350,57 @@ def _apply_torrent_rename(client: qbittorrentapi.Client, info_hash: str, rename:
         logger.warning("Не удалось переименовать торрент %s: %s", info_hash[:8], exc)
 
 
+def _read_torrent_name(client: qbittorrentapi.Client, info_hash: str) -> str | None:
+    try:
+        items = list(client.torrents_info(torrent_hashes=info_hash) or [])
+    except Exception:
+        return None
+    if not items:
+        return None
+    raw = getattr(items[0], "name", None)
+    if raw is None and isinstance(items[0], dict):
+        raw = items[0].get("name")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text or None
+
+
+def ensure_torrent_rename(
+    client: qbittorrentapi.Client,
+    info_hash: str,
+    rename: str,
+    *,
+    require_present: bool = False,
+) -> bool:
+    """Переименовать торрент по infohash; no-op если имя уже совпадает.
+
+    Returns:
+        True если rename реально вызван (имя отличалось), False при no-op / ошибке / отсутствии.
+    """
+    desired = (rename or "").strip()
+    if not desired:
+        return False
+    try:
+        safe_hash = sanitize_info_hash(info_hash)
+    except ValueError:
+        return False
+
+    if require_present:
+        try:
+            present = bool(client.torrents_info(torrent_hashes=safe_hash))
+        except Exception:
+            present = True
+        if not present:
+            return False
+
+    current = _read_torrent_name(client, safe_hash)
+    if current is not None and current == desired:
+        return False
+    _apply_torrent_rename(client, safe_hash, desired)
+    return True
+
+
 def _torrent_hash_fields(torrent: object) -> list[str]:
     """Все известные hash-поля записи torrents/info (v1/v2/hybrid)."""
     keys = ("hash", "infohash_v1", "infohash_v2")
@@ -440,19 +491,24 @@ def _set_torrent_comment_after_add(
     return False
 
 
-def _read_torrent_tags(client: qbittorrentapi.Client, info_hash: str) -> set[str]:
+def _read_torrent_tag_list(client: qbittorrentapi.Client, info_hash: str) -> list[str]:
+    """Текущие tags торрента с исходным регистром (для removeTags)."""
     try:
         items = list(client.torrents_info(torrent_hashes=info_hash) or [])
     except Exception:
-        return set()
+        return []
     if not items:
-        return set()
+        return []
     raw = getattr(items[0], "tags", None)
     if raw is None and isinstance(items[0], dict):
         raw = items[0].get("tags")
     if not isinstance(raw, str) or not raw.strip():
-        return set()
-    return {part.strip().casefold() for part in raw.split(",") if part.strip()}
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _read_torrent_tags(client: qbittorrentapi.Client, info_hash: str) -> set[str]:
+    return {part.casefold() for part in _read_torrent_tag_list(client, info_hash)}
 
 
 def _ensure_torrent_tags(
@@ -464,7 +520,11 @@ def _ensure_torrent_tags(
     delay_sec: float = 0.3,
     require_present: bool = False,
 ) -> bool:
-    """Добавляет tags (addTags), с ретраями; успех если все desired есть у торрента."""
+    """Reconcile genre tags: addTags для недостающих + removeTags для лишних.
+
+    Успех если набор tags торрента совпадает с desired (без учёта регистра).
+    Пустой desired — no-op (не сносим теги, когда жанры неизвестны).
+    """
     desired = _normalize_tags(tags)
     if not desired:
         return True
@@ -485,11 +545,18 @@ def _ensure_torrent_tags(
     last_exc: BaseException | None = None
     for attempt in range(1, attempts + 1):
         try:
-            client.torrents_add_tags(tags=desired, torrent_hashes=safe_hash)
+            current_list = _read_torrent_tag_list(client, safe_hash)
+            current_keys = {t.casefold() for t in current_list}
+            to_add = [t for t in desired if t.casefold() not in current_keys]
+            to_remove = [t for t in current_list if t.casefold() not in desired_keys]
+            if to_add:
+                client.torrents_add_tags(tags=to_add, torrent_hashes=safe_hash)
+            if to_remove:
+                client.torrents_remove_tags(tags=to_remove, torrent_hashes=safe_hash)
             current = _read_torrent_tags(client, safe_hash)
-            if desired_keys.issubset(current):
+            if current == desired_keys:
                 return True
-            last_exc = RuntimeError(f"tags не обновились (сейчас={sorted(current)!r})")
+            last_exc = RuntimeError(f"tags не совпали (сейчас={sorted(current)!r})")
         except (
             qb_exc.UnsupportedQbittorrentVersion,
             qb_exc.NotFound404Error,

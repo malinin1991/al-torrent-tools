@@ -93,6 +93,14 @@ def test_upsert_empty_members_clears_composition() -> None:
     db.execute.assert_called_once()
 
 
+def test_upsert_null_members_does_not_wipe() -> None:
+    existing = Release(release_id=7, updated_at=datetime(2026, 1, 1))
+    db = MagicMock()
+    db.get.return_value = existing
+    upsert_release_meta(db, 7, {"id": 7, "members": None}, commit=False)
+    db.execute.assert_not_called()
+
+
 def test_load_release_meta_by_ids_maps_members() -> None:
     release = Release(
         release_id=5,

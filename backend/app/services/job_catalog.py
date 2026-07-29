@@ -44,6 +44,17 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
         description="Полный проход по каталогу/расписанию: сверка торрентов с API, api_present, архив.",
     ),
     JobTypeDef(
+        type="full_meta_sync",
+        title="Full meta sync",
+        description="Лёгкий проход по каталогу: только meta архива и qB (rename/comment/tags), без финального backfill.",
+    ),
+    JobTypeDef(
+        type="meta_sync",
+        title="Meta sync",
+        description="Scoped meta refresh по release_id и/или torrent_id (архив + rename/comment/tags).",
+        manual_hint="Нужны params: release_id и/или torrent_id.",
+    ),
+    JobTypeDef(
         type="cleanup_master",
         title="Cleanup Master",
         description="Очистка раздач в master qB по правилам (незарегистрированные и т.п.). По умолчанию dry-run.",

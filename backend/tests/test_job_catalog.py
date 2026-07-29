@@ -19,6 +19,8 @@ def test_job_catalog_covers_known_manual_types() -> None:
     assert "cleanup_logs" in types
     assert "cleanup" not in types
     assert "hash_torrent" in types
+    assert "meta_sync" in types
+    assert "full_meta_sync" in types
     hash_def = next(item for item in JOB_TYPE_DEFS if item.type == "hash_torrent")
     assert hash_def.manual_run is False
     orphan = next(item for item in JOB_TYPE_DEFS if item.type == "orphan_cleanup")
