@@ -361,10 +361,96 @@
   document.addEventListener("DOMContentLoaded", () => {
     formatLocalTimes();
     enqueueDownloadableChecks();
+    initUiSse();
   });
   document.body.addEventListener("htmx:afterSwap", (event) => {
     formatLocalTimes(event.detail.target);
     enqueueDownloadableChecks(event.detail.target);
+    const target = event.detail.target;
+    const sel = target && target.id ? `#${target.id}` : null;
+    if (sel && _uiSsePreserveByTarget.has(sel)) {
+      restoreUiSsePreserve(target, _uiSsePreserveByTarget.get(sel));
+      _uiSsePreserveByTarget.delete(sel);
+    }
+  });
+
+  let _uiSseSource = null;
+  let _uiSseChannels = [];
+  let _uiSseRefreshing = new Set();
+  const _uiSsePreserveByTarget = new Map();
+
+  function captureUiSsePreserve(root) {
+    const scope = root || document;
+    const openKeys = [...scope.querySelectorAll("details[open][data-sse-key]")].map(
+      (el) => el.getAttribute("data-sse-key")
+    );
+    return {
+      scrollY: window.scrollY,
+      openKeys,
+    };
+  }
+
+  function restoreUiSsePreserve(root, state) {
+    if (!state) return;
+    const scope = root || document;
+    (state.openKeys || []).forEach((key) => {
+      const el = scope.querySelector(`details[data-sse-key="${cssAttrQuote(key)}"]`);
+      if (el) el.open = true;
+    });
+    window.scrollTo(0, state.scrollY || 0);
+  }
+
+  function cssAttrQuote(value) {
+    return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function refreshUiSseTargets(channel) {
+    if (document.visibilityState !== "visible") return;
+    const scrollY = window.scrollY;
+    document.querySelectorAll(`[data-ui-sse-channel="${cssAttrQuote(channel)}"]`).forEach((el) => {
+      const url = el.getAttribute("data-ui-sse-url");
+      const targetSel = el.getAttribute("data-ui-sse-target") || (el.id ? `#${el.id}` : null);
+      if (!url || !targetSel) return;
+      const key = `${channel}|${targetSel}|${url}`;
+      if (_uiSseRefreshing.has(key)) return;
+      _uiSseRefreshing.add(key);
+      const preserved = captureUiSsePreserve(el);
+      preserved.scrollY = scrollY;
+      _uiSsePreserveByTarget.set(targetSel, preserved);
+      htmx.ajax("GET", url, {
+        target: targetSel,
+        swap: "innerHTML settle:0 show:none",
+      });
+      // htmx 1.9 ajax не возвращает Promise
+      setTimeout(() => _uiSseRefreshing.delete(key), 1500);
+    });
+  }
+
+  function initUiSse() {
+    const nodes = [...document.querySelectorAll("[data-ui-sse-channel]")];
+    if (!nodes.length || typeof EventSource === "undefined") return;
+    const channels = [...new Set(nodes.map((n) => n.getAttribute("data-ui-sse-channel")).filter(Boolean))];
+    if (!channels.length) return;
+    _uiSseChannels = channels;
+    const url = `/ui/events?channels=${encodeURIComponent(channels.join(","))}`;
+    if (_uiSseSource) {
+      _uiSseSource.close();
+      _uiSseSource = null;
+    }
+    const es = new EventSource(url);
+    _uiSseSource = es;
+    channels.forEach((ch) => {
+      es.addEventListener(ch, () => refreshUiSseTargets(ch));
+    });
+    es.onerror = () => {
+      /* браузер сам переподключится */
+    };
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !_uiSseChannels.length) return;
+    // Пока вкладка была скрыта, события могли пройти мимо — один refresh при возврате.
+    _uiSseChannels.forEach((ch) => refreshUiSseTargets(ch));
   });
   </script>
 </body>

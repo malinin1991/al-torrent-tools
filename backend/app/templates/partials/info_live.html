@@ -1,0 +1,192 @@
+<div class="grid">
+  <section class="card">
+    <h2 style="margin-top:0;">Приложение</h2>
+    <table class="info-table">
+      <tr><th>Имя</th><td>{{ status.app.name }}</td></tr>
+      <tr><th>Окружение</th><td>{{ status.app.env }}</td></tr>
+      <tr><th>Сборка</th>
+        <td>
+          {% if status.app.build_time %}
+          <time class="local-time" datetime="{{ status.app.build_time }}">{{ status.app.build_time }}</time>
+          {% else %}
+          <span class="muted">не задана (локальный запуск / старый образ)</span>
+          {% endif %}
+          {% if status.app.git_sha %}
+          <span class="muted">·</span> <code>{{ status.app.git_sha[:12] }}</code>
+          {% endif %}
+        </td>
+      </tr>
+      <tr><th>Python</th><td>{{ status.app.python }}</td></tr>
+      <tr><th>Платформа</th><td class="muted">{{ status.app.platform }}</td></tr>
+      <tr><th>Хранилище .torrent</th>
+        <td>
+          <code>{{ status.storage.path }}</code>
+          {% if status.storage.exists %}
+          <span class="badge badge-ok">есть</span>
+          {% else %}
+          <span class="badge badge-warn">нет</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr><th>Медиа /anilibria</th>
+        <td>
+          <code>{{ status.media.path }}</code>
+          {% if status.media.exists %}
+          <span class="badge badge-ok">есть</span>
+          {% else %}
+          <span class="badge badge-warn">нет</span>
+          {% endif %}
+          {% if status.media.writable %}
+          <span class="badge badge-ok">rw</span>
+          {% else %}
+          <span class="badge badge-warn">не пишется</span>
+          {% endif %}
+          <div class="muted" style="margin-top:4px;">{{ status.media.detail }}</div>
+        </td>
+      </tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2 style="margin-top:0;">База данных</h2>
+    <table class="info-table">
+      <tr>
+        <th>Статус</th>
+        <td>
+          {% if status.database.ok %}
+          <span class="badge badge-ok">{{ status.database.detail }}</span>
+          {% else %}
+          <span class="badge badge-warn">{{ status.database.detail }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr><th>Alembic</th><td><code>{{ status.database.alembic_revision }}</code></td></tr>
+    </table>
+  </section>
+</div>
+
+<section class="card">
+  <h2 style="margin-top:0;">AniLibria API</h2>
+  <table class="info-table">
+    <tr><th>URL</th><td><code>{{ status.anilibria.base_url }}</code></td></tr>
+    <tr><th>Fallback</th><td><code>{{ status.anilibria.fallback_base_url }}</code></td></tr>
+    <tr>
+      <th>API</th>
+      <td>
+        {% if status.anilibria.ok %}
+        <span class="badge badge-ok">{{ status.anilibria.detail }}</span>
+        {% else %}
+        <span class="badge badge-warn">{{ status.anilibria.detail }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Учётные данные</th>
+      <td class="row" style="flex-wrap:wrap; gap:8px;">
+        {% if status.anilibria.has_login %}<span class="badge badge-ok">логин</span>{% else %}<span class="badge badge-warn">логин</span>{% endif %}
+        {% if status.anilibria.has_password %}<span class="badge badge-ok">пароль</span>{% else %}<span class="badge badge-warn">пароль</span>{% endif %}
+        {% if status.anilibria.has_token %}<span class="badge badge-ok">bearer token</span>{% else %}<span class="badge badge-warn">bearer token</span>{% endif %}
+        {% if status.anilibria.has_passkey %}<span class="badge badge-ok">passkey</span>{% else %}<span class="badge badge-warn">passkey</span>{% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>Токен живой</th>
+      <td>
+        {% if status.anilibria.token_valid is none %}
+        <span class="muted">не проверялся (нет token)</span>
+        {% elif status.anilibria.token_valid %}
+        <span class="badge badge-ok">да</span>
+        {% if status.anilibria.profile_login %}<span class="muted">{{ status.anilibria.profile_login }}</span>{% endif %}
+        {% else %}
+        <span class="badge badge-warn">нет</span>
+        {% if status.anilibria.token_error %}<div class="muted">{{ status.anilibria.token_error }}</div>{% endif %}
+        {% endif %}
+      </td>
+    </tr>
+  </table>
+</section>
+
+<section class="card">
+  <h2 style="margin-top:0;">Telegram</h2>
+  <table class="info-table">
+    <tr>
+      <th>Бот (сервис)</th>
+      <td>
+        {% if status.telegram.bot.ok %}
+        <span class="badge badge-ok">{{ status.telegram.bot.detail }}</span>
+        {% else %}
+        <span class="badge badge-warn">{{ status.telegram.bot.detail }}</span>
+        {% endif %}
+        {% if status.telegram.bot.heartbeat_age_sec is not none %}
+        <span class="muted">heartbeat {{ status.telegram.bot.heartbeat_age_sec }}с назад</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>API Telegram</th>
+      <td>
+        {% if status.telegram.api.ok %}
+        <span class="badge badge-ok">{{ status.telegram.api.detail }}</span>
+        {% if status.telegram.api.username %}<span class="muted">{{ status.telegram.api.username }}</span>{% endif %}
+        {% else %}
+        <span class="badge badge-warn">{{ status.telegram.api.detail }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr><th>Bot API URL</th><td><code>{{ status.telegram.base_url }}</code></td></tr>
+    <tr>
+      <th>Конфиг</th>
+      <td class="row" style="flex-wrap:wrap; gap:8px;">
+        {% if status.telegram.enabled %}<span class="badge badge-ok">включен</span>{% else %}<span class="badge badge-warn">выключен</span>{% endif %}
+        {% if status.telegram.has_token %}<span class="badge badge-ok">токен</span>{% else %}<span class="badge badge-warn">токен</span>{% endif %}
+        {% if status.telegram.has_chat_id %}<span class="badge badge-ok">chat_id</span>{% else %}<span class="badge badge-warn">chat_id</span>{% endif %}
+      </td>
+    </tr>
+    <tr><th>Отслеживаемых</th><td>{{ status.telegram.tracked_count }}</td></tr>
+    <tr><th>Очередь TG</th><td>{{ status.telegram.pending_outbox }} pending</td></tr>
+  </table>
+</section>
+
+<div class="grid">
+  {% for role, qb in [("master", status.qb.master), ("slave", status.qb.slave)] %}
+  <section class="card">
+    <h2 style="margin-top:0;">qBittorrent — {{ role }}</h2>
+    <table class="info-table">
+      <tr>
+        <th>Статус</th>
+        <td>
+          {% if qb.ok %}
+          <span class="badge badge-ok">{{ qb.detail }}</span>
+          {% elif not qb.configured %}
+          <span class="badge badge-warn">{{ qb.detail }}</span>
+          {% else %}
+          <span class="badge badge-warn">{{ qb.detail }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% if qb.name %}<tr><th>Имя</th><td>{{ qb.name }}</td></tr>{% endif %}
+      <tr><th>Хост</th><td>{% if qb.host %}<code>{{ qb.host }}:{{ qb.port }}</code>{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      <tr><th>Версия qB</th><td>{{ qb.version }}</td></tr>
+      <tr><th>WebAPI</th><td>{{ qb.webapi }}</td></tr>
+      <tr><th>Торрентов</th><td>{% if qb.torrents is not none %}{{ qb.torrents }}{% else %}—{% endif %}</td></tr>
+    </table>
+  </section>
+  {% endfor %}
+</div>
+
+<section class="card">
+  <h2 style="margin-top:0;">Библиотеки</h2>
+  <table>
+    <thead>
+      <tr><th>Пакет</th><th>Версия</th></tr>
+    </thead>
+    <tbody>
+      {% for lib in status.libraries %}
+      <tr>
+        <td><code>{{ lib.name }}</code></td>
+        <td>{{ lib.version }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>

@@ -13,16 +13,16 @@
       hx-swap="innerHTML"
       hx-confirm="Опросить master по всем pipeline без slave? Завершённые уйдут на slave, отсутствующие — cancelled."
     >Сверить с master</button>
-    <span class="muted">обновление каждые 3 с · авто-сверка раз в сутки</span>
+    <span class="muted">live · SSE · авто-сверка раз в сутки</span>
   </form>
   <div id="pipeline-reconcile-result" style="margin-top:8px;"></div>
 </div>
 <div class="card">
   <div
     id="pipeline-live"
-    hx-get="/pipeline/live?status={{ status }}"
-    hx-trigger="every 3s [document.visibilityState=='visible']"
-    hx-swap="innerHTML"
+    data-ui-sse-channel="pipeline"
+    data-ui-sse-url="/pipeline/live?status={{ status|urlencode }}"
+    data-ui-sse-target="#pipeline-live"
   >
     {% include "partials/pipeline_live.html" %}
   </div>

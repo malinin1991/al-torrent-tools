@@ -40,12 +40,12 @@
   <div id="action-result" class="muted" style="margin-top: 10px;"></div>
 </div>
 <div class="card">
-  <h3>Последние джобы <span class="muted" style="font-weight:normal;font-size:0.85rem;">автообновление</span></h3>
+  <h3>Последние джобы <span class="muted" style="font-weight:normal;font-size:0.85rem;">live · SSE</span></h3>
   <div
     id="dashboard-jobs-live"
-    hx-get="/dashboard/jobs-live"
-    hx-trigger="every 3s [document.visibilityState=='visible']"
-    hx-swap="innerHTML"
+    data-ui-sse-channel="dashboard"
+    data-ui-sse-url="/dashboard/jobs-live"
+    data-ui-sse-target="#dashboard-jobs-live"
   >
     {% include "partials/dashboard_jobs.html" %}
   </div>

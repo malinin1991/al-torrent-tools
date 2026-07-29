@@ -1,0 +1,60 @@
+<p class="muted">Всего записей: {{ total }}. Страница {{ page }} из {{ total_pages }}. <span class="muted">· live</span></p>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Название</th>
+      <th>Категория</th>
+      <th>Тип</th>
+      <th>Серии</th>
+      <th>Статус</th>
+      <th>Hash</th>
+      <th>Размер</th>
+      <th>Создан</th>
+      <th>Скачать</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.id }}</td>
+      <td>
+        <div>{{ row.anime_name or "-" }}</div>
+        <div class="muted">{{ row.release_alias or "-" }} · release {{ row.release_id }} · torrent {{ row.torrent_id }}</div>
+      </td>
+      <td>{{ row.category or "-" }}</td>
+      <td>{{ row.torrent_type or "-" }}</td>
+      <td>{{ row.torrent_description or "-" }}</td>
+      <td>
+        {% if row.superseded %}<span class="badge badge-muted" title="Заменён новой версией того же torrent_id">история</span>
+        {% elif row.api_present %}<span class="badge badge-ok" title="Есть в API AniLibria">актуален</span>
+        {% else %}<span class="badge badge-warn" title="Снят с API">архив</span>{% endif %}
+      </td>
+      <td><code>{{ row.info_hash[:12] }}…</code></td>
+      <td>{{ row.file_size_label }}</td>
+      <td>{% if row.created_at %}<time class="local-time" datetime="{{ row.created_at|as_utc_iso }}">{{ row.created_at }}</time>{% else %}-{% endif %}</td>
+      <td><a class="btn" href="/api/archive/{{ row.id }}/download">Скачать</a></td>
+    </tr>
+    {% if row.files %}
+    <tr class="torrent-files-row">
+      <td colspan="10">
+        {% set allow_dl = row.api_present and not row.superseded %}
+        {% with files=row.files, allow_file_downloads=allow_dl, info_hash=row.info_hash %}
+        {% include "partials/torrent_file_list.html" %}
+        {% endwith %}
+      </td>
+    </tr>
+    {% endif %}
+    {% else %}
+    <tr><td colspan="10" class="muted">Записей пока нет</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<div class="row" style="margin-top:12px;">
+  {% if page > 1 %}
+  <a class="btn" href="/archive?search={{ search|urlencode }}&page={{ page - 1 }}">Назад</a>
+  {% endif %}
+  {% if page < total_pages %}
+  <a class="btn" href="/archive?search={{ search|urlencode }}&page={{ page + 1 }}">Вперёд</a>
+  {% endif %}
+</div>

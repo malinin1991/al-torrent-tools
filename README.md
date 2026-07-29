@@ -8,7 +8,14 @@
 - джобы `ongoing`, `full_sync`, `cleanup`;
 - архив `.torrent` с таблицей `torrent_archive`;
 - pipeline `master -> slave` с webhook и fallback polling;
-- базовый UI для главной, джобов, настроек, архива, доп. релизов и пайплайна.
+- базовый UI для главной, джобов, настроек, архива, доп. релизов и пайплайна;
+- live-обновление UI через **SSE** (`GET /ui/events`) + HTMX partials (без interval-poll).
+
+### UI live (SSE)
+
+Открытые страницы (`/`, `/jobs`, `/pipeline`, `/pipeline/{id}`, `/releases`, `/archive`, `/info`) подписываются на `EventSource /ui/events?channels=…`. Сервер раз в ~1 с считает лёгкие change-token’ы по БД и шлёт именованное событие только при изменении; клиент тогда точечно подтягивает HTML-partial (`show:none`, сохранение скролла и `<details>`). Inbound webhook qBittorrent (`/api/webhooks/qb/complete`) к браузеру не пушит — он меняет БД, после чего срабатывает SSE-токен канала `pipeline`.
+
+Страницы `/settings` и `/extra-urls` остаются без live (только действия пользователя).
 
 ## Требования
 

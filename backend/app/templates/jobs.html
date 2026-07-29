@@ -4,9 +4,9 @@
 <div id="jobs-action-result" class="muted" style="margin-bottom:8px;"></div>
 <div
   id="jobs-catalog-live"
-  hx-get="/jobs/catalog/live"
-  hx-trigger="every 2s [document.visibilityState=='visible']"
-  hx-swap="innerHTML"
+  data-ui-sse-channel="jobs"
+  data-ui-sse-url="/jobs/catalog/live"
+  data-ui-sse-target="#jobs-catalog-live"
 >
   {% include "partials/jobs_catalog.html" %}
 </div>
@@ -16,14 +16,14 @@
     <input class="input" style="max-width:180px;" name="job_type" placeholder="type" value="{{ job_type }}" />
     <input class="input" style="max-width:180px;" name="status" placeholder="status" value="{{ status }}" />
     <button class="btn" type="submit">Фильтр</button>
-    <span class="muted" id="jobs-poll-hint">история ниже · обновление каждые 2 с</span>
+    <span class="muted" id="jobs-poll-hint">история ниже · live · SSE</span>
   </form>
 </div>
 <div
   id="jobs-live"
-  hx-get="/jobs/live?job_type={{ job_type }}&status={{ status }}{% if selected_job %}&job_id={{ selected_job.id }}{% endif %}"
-  hx-trigger="every 2s [document.visibilityState=='visible']"
-  hx-swap="innerHTML"
+  data-ui-sse-channel="jobs"
+  data-ui-sse-url="/jobs/live?job_type={{ job_type|urlencode }}&status={{ status|urlencode }}{% if selected_job %}&job_id={{ selected_job.id }}{% endif %}"
+  data-ui-sse-target="#jobs-live"
 >
   {% include "partials/jobs_live.html" %}
 </div>

@@ -462,6 +462,7 @@ def test_pipeline_detail_html_renders_timeline() -> None:
             "release_name": "Show",
             "torrent_label": "BDRip · 1-2",
             "master_state": {},
+            "life_path_text": "path text",
             "timeline": [
                 {
                     "event": event,
@@ -478,6 +479,8 @@ def test_pipeline_detail_html_renders_timeline() -> None:
     assert "actor=poll" in html
     assert 'href="/jobs?job_id=7"' in html
     assert "на slave" in html
+    assert 'data-ui-sse-channel="pipeline_detail:3"' in html
+    assert "live · SSE" in html
 
 
 def test_cleanup_logs_retains_recent_jobs_and_events() -> None:

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select, text
@@ -55,6 +55,7 @@ from app.services.releases_view import (
     list_release_groups,
 )
 from app.services.system_status import collect_system_status
+from app.services.ui_events import parse_channels, sse_event_stream
 from app.services.telegram_notify import (
     SOURCE_UI,
     enqueue_tracking_toggle_notification,
@@ -190,10 +191,34 @@ async def health(db: Session = Depends(get_db)) -> dict:
     return {"status": "ok", "anilibria": await client.health()}
 
 
+@app.get("/ui/events")
+async def ui_events(
+    request: Request,
+    channels: str = Query(default=""),
+) -> StreamingResponse:
+    """SSE: именованные события каналов при смене change-token (без HTML в payload)."""
+    channel_list = parse_channels(channels)
+    return StreamingResponse(
+        sse_event_stream(request, channel_list),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/info", response_class=HTMLResponse)
 async def info_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     status = await collect_system_status(db)
     return templates.TemplateResponse(request, "info.html", {"status": status})
+
+
+@app.get("/info/live", response_class=HTMLResponse)
+async def info_live(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    status = await collect_system_status(db)
+    return templates.TemplateResponse(request, "partials/info_live.html", {"status": status})
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -605,6 +630,21 @@ async def pipeline_detail_page(
     pipeline_id: int,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    context = await _pipeline_detail_context_async(db, pipeline_id)
+    return templates.TemplateResponse(request, "pipeline_detail.html", context)
+
+
+@app.get("/pipeline/{pipeline_id}/live", response_class=HTMLResponse)
+async def pipeline_detail_live(
+    request: Request,
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = await _pipeline_detail_context_async(db, pipeline_id)
+    return templates.TemplateResponse(request, "partials/pipeline_detail_live.html", context)
+
+
+async def _pipeline_detail_context_async(db: Session, pipeline_id: int) -> dict:
     pipeline = db.get(TorrentPipeline, pipeline_id)
     if pipeline is None:
         raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} не найден")
@@ -685,18 +725,14 @@ async def pipeline_detail_page(
     except Exception:
         master_states = {}
 
-    return templates.TemplateResponse(
-        request,
-        "pipeline_detail.html",
-        {
-            "pipeline": pipeline,
-            "timeline": timeline,
-            "life_path_text": "\n\n".join(life_path_chunks),
-            "release_name": release_name or f"Release #{pipeline.release_id}",
-            "torrent_label": torrent_label or f"Torrent #{pipeline.torrent_id}",
-            "master_state": master_states.get((pipeline.info_hash or "").lower(), {}),
-        },
-    )
+    return {
+        "pipeline": pipeline,
+        "timeline": timeline,
+        "life_path_text": "\n\n".join(life_path_chunks),
+        "release_name": release_name or f"Release #{pipeline.release_id}",
+        "torrent_label": torrent_label or f"Torrent #{pipeline.torrent_id}",
+        "master_state": master_states.get((pipeline.info_hash or "").lower(), {}),
+    }
 
 
 def _load_master_ui_states(info_hashes: list[str]) -> dict:
@@ -800,6 +836,29 @@ def releases_page(
         per_page=30,
     )
     return templates.TemplateResponse(request, "releases.html", context)
+
+
+@app.get("/releases/live", response_class=HTMLResponse)
+def releases_live(
+    request: Request,
+    search: str | None = Query(default=None),
+    tracked_only: str | None = Query(default=None),
+    hevc_filter: str | None = Query(default=None),
+    show_hidden: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    only_tracked = tracked_only == "on"
+    context = list_release_groups(
+        db,
+        search=search,
+        tracked_only=only_tracked,
+        hevc_filter=hevc_filter,
+        show_hidden=show_hidden == "on",
+        page=page,
+        per_page=30,
+    )
+    return templates.TemplateResponse(request, "partials/releases_live.html", context)
 
 
 @app.post("/releases/{release_id}/track", response_class=HTMLResponse)
@@ -939,6 +998,27 @@ def archive_page(
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    context = _archive_page_context(db, search=search, page=page)
+    return templates.TemplateResponse(request, "archive.html", context)
+
+
+@app.get("/archive/live", response_class=HTMLResponse)
+def archive_live(
+    request: Request,
+    search: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = _archive_page_context(db, search=search, page=page)
+    return templates.TemplateResponse(request, "partials/archive_live.html", context)
+
+
+def _archive_page_context(
+    db: Session,
+    *,
+    search: str | None,
+    page: int,
+) -> dict:
     per_page = 20
     query = select(TorrentArchive)
     count_query = select(TorrentArchive)
@@ -952,18 +1032,14 @@ def archive_page(
     total = db.scalar(select(func.count()).select_from(count_query.subquery())) or 0
     total_pages = max(1, (total + per_page - 1) // per_page)
     rows = build_archive_page_rows(db, list(archives))
-    return templates.TemplateResponse(
-        request,
-        "archive.html",
-        {
-            "rows": rows,
-            "search": search or "",
-            "page": page,
-            "per_page": per_page,
-            "total": total,
-            "total_pages": total_pages,
-        },
-    )
+    return {
+        "rows": rows,
+        "search": search or "",
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "total_pages": total_pages,
+    }
 
 
 @app.post("/actions/run/{job_type}", response_class=HTMLResponse)
