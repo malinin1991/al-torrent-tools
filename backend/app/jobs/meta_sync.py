@@ -163,14 +163,11 @@ async def _process_release_or_meta(
             torrents,
             torrent_id_filter=torrent_id_filter,
         )
-        touch = int(meta.get("comments", 0) or 0) + int(meta.get("tags", 0) or 0) + int(
-            meta.get("renames", 0) or 0
-        )
         return {
             **TorrentProcessor.empty_release_stats(),
             "total": 1,
-            "updated": touch,
-            "new": touch,
+            "updated": 0,
+            "new": 0,
             "skipped": 1,
             "comments": int(meta.get("comments", 0) or 0),
             "tags": int(meta.get("tags", 0) or 0),

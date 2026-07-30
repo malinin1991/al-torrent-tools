@@ -22,16 +22,16 @@ def test_ensure_comment_retries_404_then_overwrites(monkeypatch: pytest.MonkeyPa
         HTTP404Error("not ready"),
         None,
     ]
-    props = MagicMock()
-    props.comment = "https://www.anilibria.top/anime/releases/release/x/torrents"
-    client.torrents_properties.return_value = props
+    desired = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    props_old = MagicMock()
+    props_old.comment = "old-from-torrent"
+    props_new = MagicMock()
+    props_new.comment = desired
+    # pre-read (no-op check) → after first set fail → after second set
+    client.torrents_properties.side_effect = [props_old, props_new]
     monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
 
-    ok = _ensure_torrent_comment(
-        client,
-        "a" * 40,
-        "https://www.anilibria.top/anime/releases/release/x/torrents",
-    )
+    ok = _ensure_torrent_comment(client, "a" * 40, desired)
 
     assert ok is True
     assert client.torrents_set_comment.call_count == 2
@@ -40,22 +40,35 @@ def test_ensure_comment_retries_404_then_overwrites(monkeypatch: pytest.MonkeyPa
 def test_ensure_comment_overwrites_existing_nonempty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Уже заполненный comment из .torrent должен быть перезаписан URL релиза."""
     client = MagicMock()
+    desired = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    props_old = MagicMock()
+    props_old.comment = "comment from .torrent file"
     props_new = MagicMock()
-    props_new.comment = "https://www.anilibria.top/anime/releases/release/x/torrents"
-    client.torrents_properties.side_effect = [props_new]
+    props_new.comment = desired
+    client.torrents_properties.side_effect = [props_old, props_new]
     monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
 
-    ok = _ensure_torrent_comment(
-        client,
-        "b" * 40,
-        "https://www.anilibria.top/anime/releases/release/x/torrents",
-    )
+    ok = _ensure_torrent_comment(client, "b" * 40, desired)
 
     assert ok is True
     client.torrents_set_comment.assert_called_once_with(
-        comment="https://www.anilibria.top/anime/releases/release/x/torrents",
+        comment=desired,
         torrent_hashes="b" * 40,
     )
+
+
+def test_ensure_comment_noop_when_already_desired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Уже верный URL — без setComment, False как у rename no-op."""
+    client = MagicMock()
+    desired = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    props = MagicMock()
+    props.comment = desired
+    client.torrents_properties.return_value = props
+
+    ok = _ensure_torrent_comment(client, "b" * 40, desired)
+
+    assert ok is False
+    client.torrents_set_comment.assert_not_called()
 
 
 def test_ensure_comment_unsupported_version() -> None:
@@ -88,13 +101,33 @@ def test_ensure_comment_retries_when_properties_unavailable(monkeypatch: pytest.
     client.torrents_set_comment.return_value = None
     props_ok = MagicMock()
     props_ok.comment = "https://example/x"
-    client.torrents_properties.side_effect = [Exception("not ready"), props_ok]
+    # pre-read fail → after set fail → after set ok
+    client.torrents_properties.side_effect = [
+        Exception("not ready"),
+        Exception("not ready"),
+        props_ok,
+    ]
     monkeypatch.setattr(qb_mod.time, "sleep", lambda *_: None)
 
     ok = _ensure_torrent_comment(client, "e" * 40, "https://example/x")
 
     assert ok is True
     assert client.torrents_set_comment.call_count == 2
+
+
+def test_ensure_torrent_tags_noop_when_already_desired(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    monkeypatch.setattr(
+        qb_mod,
+        "_read_torrent_tag_list",
+        MagicMock(return_value=["Комедия", "Драма"]),
+    )
+
+    ok = qb_mod._ensure_torrent_tags(client, "a" * 40, ["Комедия", "Драма"])
+
+    assert ok is False
+    client.torrents_add_tags.assert_not_called()
+    client.torrents_remove_tags.assert_not_called()
 
 
 def test_set_comment_after_add_waits_for_torrent(monkeypatch: pytest.MonkeyPatch) -> None:

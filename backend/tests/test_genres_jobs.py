@@ -150,7 +150,8 @@ def test_full_sync_refresh_applies_tags_for_seen(monkeypatch) -> None:
 
     assert stats["comments"] == 1
     assert stats["tags"] == 2
-    assert stats["updated"] == 3
+    # updated — только торренты, meta учитывается в comments/tags/renames
+    assert stats["updated"] == 0
     refresh_comments.assert_called_once()
     refresh_tags.assert_called_once()
     assert refresh_tags.call_args.kwargs["genre_tags"] == ["Драма"]

@@ -205,7 +205,8 @@ def test_full_sync_refresh_renames_and_updates_archive(monkeypatch) -> None:
     assert stats["renames"] == 2
     assert stats["comments"] == 1
     assert stats["tags"] == 1
-    assert stats["updated"] == 4
+    # updated — только торренты (force/Conflict), не сумма comments+tags+renames
+    assert stats["updated"] == 0
     archive_svc.update_archive_meta_from_api_payload.assert_called()
     assert (
         archive_svc.update_archive_meta_from_api_payload.call_args.kwargs["torrent_payload"][

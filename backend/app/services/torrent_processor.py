@@ -821,6 +821,7 @@ class TorrentProcessor:
 
     @staticmethod
     def format_batch_summary(prefix: str, batch: dict[str, int], *, releases: int) -> str:
+        """Сводка: added/updated/skipped — торренты; comments/tags/renames — qB meta (по клиентам)."""
         return (
             f"{prefix}: релизов={releases}, "
             f"добавлено={batch.get('added', 0)}, обновлено={batch.get('updated', 0)}, "
@@ -1101,7 +1102,7 @@ class TorrentProcessor:
                 )
                 force_added = int(force.get("added", 0) or 0)
                 force_updated = int(force.get("updated", 0) or 0)
-            meta_touch = comments_updated + tags_updated + renames_updated + force_updated
+            # updated/new — только торренты (force_qb / Conflict), не сумма meta-ops.
             unchanged = 1 if should_skip_by_torrents_fingerprint(self._db, release_id, fingerprint) else 0
             if unchanged and not refresh_qb_meta and not force_qb_load:
                 self._add_log(
@@ -1144,8 +1145,8 @@ class TorrentProcessor:
             return {
                 "total": len(torrents),
                 "added": force_added,
-                "updated": meta_touch,
-                "new": meta_touch + force_added,
+                "updated": force_updated,
+                "new": force_added + force_updated,
                 "skipped": 0 if force_qb_load else len(torrents),
                 "waiting_master": 0,
                 "unchanged": unchanged,
@@ -1251,8 +1252,6 @@ class TorrentProcessor:
                                         require_present=True,
                                     ):
                                         stats["renames"] += 1
-                                        stats["updated"] += 1
-                                        stats["new"] += 1
                                         break
                             if release_url:
                                 for hash_for_qb in hashes:
@@ -1265,8 +1264,6 @@ class TorrentProcessor:
                                         require_present=True,
                                     ):
                                         stats["comments"] += 1
-                                        stats["updated"] += 1
-                                        stats["new"] += 1
                                         break
                             if genre_tags:
                                 for hash_for_qb in hashes:
@@ -1279,8 +1276,6 @@ class TorrentProcessor:
                                         require_present=True,
                                     ):
                                         stats["tags"] += 1
-                                        stats["updated"] += 1
-                                        stats["new"] += 1
                                         break
                 if force_qb_load:
                     force = await self._force_load_release_torrents(

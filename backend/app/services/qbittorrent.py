@@ -479,6 +479,9 @@ def _set_torrent_comment_after_add(
     comment: str,
 ) -> bool:
     """После add/Conflict ждёт торрент и ставит comment по всем известным hash."""
+    desired = (comment or "").strip()
+    if not desired:
+        return False
     candidates = _wait_torrent_hash_candidates(client, info_hash)
     if not candidates:
         try:
@@ -486,6 +489,9 @@ def _set_torrent_comment_after_add(
         except ValueError:
             return False
     for candidate in candidates:
+        current = _read_torrent_comment(client, candidate)
+        if current == desired:
+            return True
         if _ensure_torrent_comment(client, candidate, comment, attempts=8, delay_sec=0.3):
             return True
     return False
@@ -522,8 +528,9 @@ def _ensure_torrent_tags(
 ) -> bool:
     """Reconcile genre tags: addTags для недостающих + removeTags для лишних.
 
-    Успех если набор tags торрента совпадает с desired (без учёта регистра).
-    Пустой desired — no-op (не сносим теги, когда жанры неизвестны).
+    True только если tags реально менялись и итог совпал с desired.
+    Уже совпадающий набор — False (no-op), как у ensure_torrent_rename.
+    Пустой desired — True (не сносим теги, когда жанры неизвестны).
     """
     desired = _normalize_tags(tags)
     if not desired:
@@ -543,16 +550,22 @@ def _ensure_torrent_tags(
 
     desired_keys = {t.casefold() for t in desired}
     last_exc: BaseException | None = None
+    changed_any = False
     for attempt in range(1, attempts + 1):
         try:
             current_list = _read_torrent_tag_list(client, safe_hash)
             current_keys = {t.casefold() for t in current_list}
             to_add = [t for t in desired if t.casefold() not in current_keys]
             to_remove = [t for t in current_list if t.casefold() not in desired_keys]
+            if not to_add and not to_remove:
+                # Уже совпадает: no-op на первом заходе; True если писали ранее в этом вызове.
+                return changed_any
             if to_add:
                 client.torrents_add_tags(tags=to_add, torrent_hashes=safe_hash)
+                changed_any = True
             if to_remove:
                 client.torrents_remove_tags(tags=to_remove, torrent_hashes=safe_hash)
+                changed_any = True
             current = _read_torrent_tags(client, safe_hash)
             if current == desired_keys:
                 return True
@@ -593,6 +606,7 @@ def _set_torrent_tags_after_add(
     desired = _normalize_tags(tags)
     if not desired:
         return True
+    desired_keys = {t.casefold() for t in desired}
     candidates = _wait_torrent_hash_candidates(client, info_hash)
     if not candidates:
         try:
@@ -600,6 +614,8 @@ def _set_torrent_tags_after_add(
         except ValueError:
             return False
     for candidate in candidates:
+        if _read_torrent_tags(client, candidate) == desired_keys:
+            return True
         if _ensure_torrent_tags(client, candidate, desired, attempts=6, delay_sec=0.25):
             return True
     return False
@@ -614,9 +630,9 @@ def _ensure_torrent_comment(
     delay_sec: float = 0.35,
     require_present: bool = False,
 ) -> bool:
-    """Принудительно ставит comment (перезапись), с ретраями на 404 сразу после add.
+    """Ставит comment; no-op если уже совпадает (как ensure_torrent_rename).
 
-    Успех только если properties.comment совпал с desired.
+    True только если comment реально менялся и properties совпал с desired.
     require_present=True — сразу False, если торрента нет в клиенте (для массового backfill).
     """
     global _comment_unsupported_warned
@@ -636,6 +652,10 @@ def _ensure_torrent_comment(
             present = True
         if not present:
             return False
+
+    current = _read_torrent_comment(client, safe_hash)
+    if current == desired:
+        return False
 
     last_exc: BaseException | None = None
     for attempt in range(1, attempts + 1):

@@ -126,11 +126,25 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     from app.services.qbittorrent import torrent_info_hash
 
     info_hash = torrent_info_hash(_sample_torrent_bytes())
-    present = MagicMock(hash=info_hash, infohash_v1=info_hash, infohash_v2=None)
+    present = MagicMock(hash=info_hash, infohash_v1=info_hash, infohash_v2=None, tags="")
     qb.torrents_info.return_value = [present]
-    props = MagicMock()
-    props.comment = comment_url
-    qb.torrents_properties.return_value = props
+    comment_state = {"value": "comment-from-torrent"}
+
+    def _properties(**_kwargs):
+        props = MagicMock()
+        props.comment = comment_state["value"]
+        return props
+
+    def _set_comment(**kwargs):
+        comment_state["value"] = kwargs.get("comment", "")
+
+    def _add_tags(**kwargs):
+        tags = kwargs.get("tags") or []
+        present.tags = ",".join(tags)
+
+    qb.torrents_properties.side_effect = _properties
+    qb.torrents_set_comment.side_effect = _set_comment
+    qb.torrents_add_tags.side_effect = _add_tags
     fake_client_cls = MagicMock(return_value=qb)
     monkeypatch.setattr("app.services.pipeline.qbittorrentapi.Client", fake_client_cls)
     monkeypatch.setattr("app.services.pipeline.get_setting_value", lambda *a, **k: "testpk")
@@ -155,6 +169,7 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     qb.torrents_add.assert_called_once()
     assert qb.torrents_add.call_args.kwargs.get("rename") == "Name / Orig (1-2) [HEVC]"
     assert qb.torrents_set_comment.called
+    assert comment_state["value"] == comment_url
     service.mark_slave_added.assert_called_once()
     slave_details = service.mark_slave_added.call_args.kwargs.get("details") or {}
     assert slave_details.get("qb_name") == "Name / Orig (1-2) [HEVC]"
