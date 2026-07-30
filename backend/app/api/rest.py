@@ -359,8 +359,11 @@ async def run_ongoing_job(db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/jobs/full-sync/run")
-async def run_full_sync_job(db: Session = Depends(get_db)) -> dict:
-    job = _create_and_run_job(db, "full_sync", {})
+async def run_full_sync_job(
+    force_qb_load: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> dict:
+    job = _create_and_run_job(db, "full_sync", {"force_qb_load": force_qb_load})
     job_runner.schedule_job(job.id)
     return {"id": job.id, "type": job.type, "status": job.status, "error": job.error, "queued": True}
 

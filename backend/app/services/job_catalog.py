@@ -41,7 +41,10 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
     JobTypeDef(
         type="full_sync",
         title="Full sync",
-        description="Полный проход по каталогу/расписанию: сверка торрентов с API, api_present, архив.",
+        description=(
+            "Полный проход по каталогу/расписанию: сверка торрентов с API, api_present, архив. "
+            "Опция force_qb_load — повторно загрузить .torrent на master и slave."
+        ),
     ),
     JobTypeDef(
         type="full_meta_sync",

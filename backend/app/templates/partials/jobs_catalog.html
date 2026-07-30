@@ -67,21 +67,48 @@
         {% endif %}
       </div>
 
+      {% if d.type == "full_sync" and d.manual_run %}
+      <label class="row job-card-option" style="align-items:center;gap:8px;margin:0 0 4px;font-size:0.85rem;">
+        <input type="checkbox" name="force_qb_load" value="true" form="job-run-full_sync" {% if entry.is_active %}disabled{% endif %} />
+        Принудительно загрузить на master и slave
+      </label>
+      {% endif %}
+
       <div class="row job-card-actions" style="margin-top:12px;flex-wrap:wrap;">
         {% if d.manual_run %}
           {% if "default" in d.run_modes %}
-          <button
-            class="btn btn-icon"
-            type="button"
-            title="Запустить"
-            aria-label="Запустить"
-            hx-post="/actions/run/{{ d.type }}"
-            hx-target="#jobs-action-result"
-            hx-swap="innerHTML"
-            {% if entry.is_active %}disabled title="Уже выполняется"{% endif %}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-          </button>
+            {% if d.type == "full_sync" %}
+            <form
+              id="job-run-full_sync"
+              hx-post="/actions/run/{{ d.type }}"
+              hx-target="#jobs-action-result"
+              hx-swap="innerHTML"
+              style="display:inline;"
+            >
+              <button
+                class="btn btn-icon"
+                type="submit"
+                title="Запустить"
+                aria-label="Запустить"
+                {% if entry.is_active %}disabled title="Уже выполняется"{% endif %}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+              </button>
+            </form>
+            {% else %}
+            <button
+              class="btn btn-icon"
+              type="button"
+              title="Запустить"
+              aria-label="Запустить"
+              hx-post="/actions/run/{{ d.type }}"
+              hx-target="#jobs-action-result"
+              hx-swap="innerHTML"
+              {% if entry.is_active %}disabled title="Уже выполняется"{% endif %}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            {% endif %}
           {% endif %}
           {% if "dry_run" in d.run_modes %}
           <form hx-post="/actions/run/{{ d.type }}" hx-target="#jobs-action-result" hx-swap="innerHTML" style="display:inline;">

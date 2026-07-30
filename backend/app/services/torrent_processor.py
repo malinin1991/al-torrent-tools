@@ -848,6 +848,174 @@ class TorrentProcessor:
         self._sync_hevc_pair_events(release_id)
         return stats
 
+    async def _force_load_release_torrents(
+        self,
+        release_id: int,
+        release_alias: str | None,
+        torrents: list[dict[str, Any]],
+        *,
+        release_payload: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
+        """Принудительно добавляет .torrent на master и slave (архив, иначе download).
+
+        Не трогает pipeline/seen — только ensure present в qB (Conflict → meta update).
+        """
+        clients = self._qb_clients_for_meta()
+        if not clients:
+            self._add_log(
+                f"Релиз {release_id}: force_qb_load — нет доступных qB (master/slave)",
+                "warning",
+            )
+            return {"added": 0, "updated": 0, "skipped": len(torrents)}
+
+        passkey = await ensure_passkey_stored(self._db)
+        if passkey:
+            self._al_client.passkey = passkey
+        effective_passkey = self._al_client.passkey
+
+        archive_service = TorrentArchiveService(self._db)
+        site_url = resolve_anilibria_site_url(self._al_client.base_url)
+        payload = release_payload
+        if payload is None:
+            try:
+                fetched = await self._al_client.get_release(
+                    release_id,
+                    include=[
+                        "id",
+                        "alias",
+                        "name",
+                        "season",
+                        "year",
+                        "description",
+                        "genres",
+                    ],
+                )
+                if isinstance(fetched, dict):
+                    payload = fetched
+            except Exception as exc:
+                self._add_log(
+                    f"Релиз {release_id}: force_qb_load — get_release не удался: {exc}",
+                    "warning",
+                )
+
+        genre_tags = extract_release_genres(payload) if isinstance(payload, dict) else []
+        category = (
+            archive_service._build_category(payload) if isinstance(payload, dict) else None
+        )
+
+        added = 0
+        updated = 0
+        skipped = 0
+        for torrent in torrents:
+            torrent_id = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
+            if torrent_id is None:
+                skipped += 1
+                continue
+
+            raw_hash = torrent.get("info_hash") or torrent.get("hash")
+            api_hash = self._normalize_api_info_hash(raw_hash)
+            archive = archive_service._find_active_archive(
+                torrent_id=torrent_id,
+                info_hash=api_hash,
+            )
+
+            torrent_bytes: bytes | None = None
+            if archive is not None:
+                path = archive_service.resolve_file_path(archive)
+                if path.exists():
+                    torrent_bytes = ensure_announce_passkey(
+                        path.read_bytes(),
+                        effective_passkey,
+                    )
+                if not category and archive.category:
+                    category = archive.category
+                if not genre_tags:
+                    genre_tags = genres_from_quality_json(
+                        archive.quality_json if isinstance(archive.quality_json, dict) else None
+                    )
+
+            if torrent_bytes is None:
+                try:
+                    torrent_bytes = await self._al_client.download_torrent_file(torrent_id)
+                    torrent_bytes = ensure_announce_passkey(torrent_bytes, effective_passkey)
+                except Exception as exc:
+                    self._add_log(
+                        f"Релиз {release_id}: force_qb_load торрент {torrent_id}: "
+                        f"нет файла в архиве и download failed: {exc}",
+                        "error",
+                    )
+                    skipped += 1
+                    continue
+
+            display_name = self._display_name_for_torrent(
+                {**torrent, "id": torrent_id},
+                release_payload=payload if isinstance(payload, dict) else None,
+            )
+            if not display_name and isinstance(payload, dict):
+                display_name = build_qb_torrent_name_from_payloads(
+                    payload,
+                    {**torrent, "id": torrent_id},
+                )
+            alias_value = self._alias_for_release(
+                release_id,
+                release_alias
+                or (
+                    self._clean_release_alias(payload)
+                    if isinstance(payload, dict)
+                    else None
+                )
+                or (archive.release_alias if archive is not None else None),
+            )
+            release_url = build_release_torrents_url(alias_value, site_url=site_url)
+            torrent_category = category or (archive.category if archive is not None else None)
+
+            for role, client in clients:
+                try:
+                    added_new, comment_ok, tags_ok = qb_add_torrent(
+                        client,
+                        torrent_bytes,
+                        rename=display_name,
+                        comment=release_url,
+                        category=torrent_category,
+                        tags=genre_tags,
+                    )
+                except Exception as exc:
+                    self._add_log(
+                        f"Релиз {release_id}: force_qb_load торрент {torrent_id} → {role}: {exc}",
+                        "error",
+                    )
+                    skipped += 1
+                    continue
+                if added_new:
+                    added += 1
+                    self._add_log(
+                        f"force_qb_load: торрент {torrent_id} добавлен на {role}",
+                        "debug",
+                    )
+                else:
+                    updated += 1
+                    self._add_log(
+                        f"force_qb_load: торрент {torrent_id} уже на {role} (Conflict/meta)",
+                        "debug",
+                    )
+                if release_url and not comment_ok:
+                    self._add_log(
+                        f"force_qb_load: торрент {torrent_id} comment не установлен на {role}",
+                        "warning",
+                    )
+                if genre_tags and not tags_ok:
+                    self._add_log(
+                        f"force_qb_load: торрент {torrent_id} tags не установлены на {role}",
+                        "warning",
+                    )
+
+        self._add_log(
+            f"Релиз {release_id}: force_qb_load готово — "
+            f"added={added}, updated={updated}, skipped={skipped}",
+            "info",
+        )
+        return {"added": added, "updated": updated, "skipped": skipped}
+
     async def process_release(
         self,
         release_id: int,
@@ -856,6 +1024,7 @@ class TorrentProcessor:
         list_updated_at: str | None = None,
         list_fresh_at: str | None = None,
         refresh_qb_meta: bool = False,
+        force_qb_load: bool = False,
     ) -> dict[str, int]:
         torrents_payload = await self._al_client.get_torrents_for_release(
             release_id,
@@ -922,19 +1091,30 @@ class TorrentProcessor:
                 comments_updated = int(meta.get("comments", 0) or 0)
                 tags_updated = int(meta.get("tags", 0) or 0)
                 renames_updated = int(meta.get("renames", 0) or 0)
-            meta_touch = comments_updated + tags_updated + renames_updated
+            force_added = 0
+            force_updated = 0
+            if force_qb_load:
+                force = await self._force_load_release_torrents(
+                    release_id,
+                    release_alias,
+                    torrents,
+                )
+                force_added = int(force.get("added", 0) or 0)
+                force_updated = int(force.get("updated", 0) or 0)
+            meta_touch = comments_updated + tags_updated + renames_updated + force_updated
             unchanged = 1 if should_skip_by_torrents_fingerprint(self._db, release_id, fingerprint) else 0
-            if unchanged and not refresh_qb_meta:
+            if unchanged and not refresh_qb_meta and not force_qb_load:
                 self._add_log(
                     f"Релиз {release_id}: без изменений (fingerprint торрентов), "
                     "пропуск get_release/скачивания",
                     "debug",
                 )
-            elif unchanged and refresh_qb_meta:
+            elif unchanged and (refresh_qb_meta or force_qb_load):
                 self._add_log(
                     f"Релиз {release_id}: fingerprint без изменений, "
                     f"обновлены comments={comments_updated}, tags={tags_updated}, "
-                    f"renames={renames_updated}",
+                    f"renames={renames_updated}"
+                    + (f", force_qb added={force_added}/updated={force_updated}" if force_qb_load else ""),
                     "debug",
                 )
             else:
@@ -944,6 +1124,11 @@ class TorrentProcessor:
                         f", comments={comments_updated}, tags={tags_updated}, "
                         f"renames={renames_updated}"
                         if refresh_qb_meta
+                        else ""
+                    )
+                    + (
+                        f", force_qb added={force_added}/updated={force_updated}"
+                        if force_qb_load
                         else ""
                     ),
                     "debug",
@@ -958,10 +1143,10 @@ class TorrentProcessor:
             self._sync_hevc_pair_events(release_id)
             return {
                 "total": len(torrents),
-                "added": 0,
+                "added": force_added,
                 "updated": meta_touch,
-                "new": meta_touch,
-                "skipped": len(torrents),
+                "new": meta_touch + force_added,
+                "skipped": 0 if force_qb_load else len(torrents),
                 "waiting_master": 0,
                 "unchanged": unchanged,
                 "comments": comments_updated,
@@ -1097,6 +1282,19 @@ class TorrentProcessor:
                                         stats["updated"] += 1
                                         stats["new"] += 1
                                         break
+                if force_qb_load:
+                    force = await self._force_load_release_torrents(
+                        release_id,
+                        release_alias,
+                        [{**torrent, "id": torrent_id}],
+                        release_payload=release_payload,
+                    )
+                    stats["added"] += int(force.get("added", 0) or 0)
+                    stats["updated"] += int(force.get("updated", 0) or 0)
+                    stats["new"] += int(force.get("added", 0) or 0) + int(
+                        force.get("updated", 0) or 0
+                    )
+                    continue
                 self._add_log(f"Релиз {release_id}: торрент {torrent_id} уже обработан, пропуск", "debug")
                 stats["skipped"] += 1
                 continue

@@ -1085,6 +1085,7 @@ async def run_job_action(
     job_type: str,
     dry_run: bool = Form(default=True),
     apply: bool = Form(default=False),
+    force_qb_load: bool = Form(default=False),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     if job_type == "orphan_cleanup":
@@ -1096,6 +1097,8 @@ async def run_job_action(
         # Legacy URL: направляем на master.
         params = {"dry_run": dry_run, "target_role": "master"}
         job_type = "cleanup_master"
+    elif job_type == "full_sync":
+        params = {"force_qb_load": force_qb_load}
     else:
         params = {}
     try:

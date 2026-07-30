@@ -88,8 +88,15 @@ def _flush_batch_summary(
 
 
 async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> None:
-    _ = params
+    force_qb_load = bool(params.get("force_qb_load", False))
     _add_log(db, job_id, "Full sync: инициализация клиента AniLibria и TorrentProcessor")
+    if force_qb_load:
+        _add_log(
+            db,
+            job_id,
+            "Full sync: включён force_qb_load — повторная загрузка .torrent на master и slave",
+            "warning",
+        )
     al_client = build_anilibria_client(db)
     processor = TorrentProcessor(db=db, job_id=job_id, client=al_client)
     pause_every = _setting_int(db, "scrape_pause_every", settings.scrape_pause_every)
@@ -99,7 +106,8 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
         db,
         job_id,
         f"Full sync: каталог limit={catalog_limit}, "
-        f"пауза каждые {pause_every} релизов по {pause_sec} сек",
+        f"пауза каждые {pause_every} релизов по {pause_sec} сек"
+        + (", force_qb_load=on" if force_qb_load else ""),
     )
 
     page = 1
@@ -161,6 +169,7 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 list_updated_at=updated_at,
                 list_fresh_at=fresh_at,
                 refresh_qb_meta=True,
+                force_qb_load=force_qb_load,
             )
             # present torrent_ids уже выставлены в process_release; собираем для финального sweep
             present = db.scalars(

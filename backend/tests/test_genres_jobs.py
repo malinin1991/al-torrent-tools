@@ -227,4 +227,5 @@ def test_full_sync_job_calls_process_with_refresh(monkeypatch) -> None:
     asyncio.run(full_sync_mod.run_full_sync(MagicMock(), job_id=1, params={}))
 
     assert called["kwargs"]["refresh_qb_meta"] is True
+    assert called["kwargs"].get("force_qb_load") is False
     assert called["kwargs"]["release_id"] == 7
