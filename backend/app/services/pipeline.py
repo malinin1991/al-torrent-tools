@@ -38,23 +38,25 @@ PipelineActor = Literal["job", "webhook", "poll", "manual"]
 _CI_STAGE_DEFS: tuple[tuple[str, str], ...] = (
     ("discover", "discover"),
     ("master", "master"),
+    ("tg", "tg"),
     ("slave", "slave"),
     ("done", "done"),
+    ("files", "Δtg"),  # TG при проверке изменений файлов (после hash_torrent)
 )
 
-# Статус pipeline → индекс «текущей» стадии (running) или None если все success / terminal.
+# Статус pipeline → индекс «текущей» стадии (running) или None если terminal.
+# TG(torrent) — сразу после add на master; Δtg — после hash/file check.
 _CI_RUNNING_STAGE: dict[str, int | None] = {
     "discovered": 0,
     "waiting_master": 0,
     "master_added": 1,
-    # master скачал; идёт (или вот-вот) досылка на slave
-    "master_complete": 2,
-    "waiting_slave": 2,
-    "slave_added": 2,
+    "master_complete": 3,
+    "waiting_slave": 3,
+    "slave_added": 3,
     "done": None,
 }
 
-# Сколько стадий уже success (не включая running).
+# Сколько стадий success до running (без tg/Δtg — они отдельно).
 _CI_SUCCESS_BEFORE: dict[str, int] = {
     "discovered": 0,
     "waiting_master": 0,
@@ -62,8 +64,93 @@ _CI_SUCCESS_BEFORE: dict[str, int] = {
     "master_complete": 2,
     "waiting_slave": 2,
     "slave_added": 2,
-    "done": 4,
+    "done": 5,
 }
+
+_TG_STAGE_INDEX = 2
+_SLAVE_STAGE_INDEX = 3
+_FILES_STAGE_INDEX = 5
+
+_HASH_EVENT_TYPES = frozenset({"hash_enqueued", "hash_progress", "hash_done", "hash_fail"})
+
+
+def _ci_tg_state(tg_status: str | None) -> CiStageState:
+    raw = (tg_status or "skipped").strip().lower()
+    if raw == "sent":
+        return "success"
+    if raw in {"pending", "queued"}:
+        return "running"
+    return "pending"
+
+
+def _ci_files_state(files_status: str | None) -> CiStageState:
+    """Δtg: pending|running|success|failed|skipped."""
+    raw = (files_status or "pending").strip().lower()
+    if raw in {"success", "sent", "skipped"}:
+        return "success"
+    if raw in {"running", "queued", "pending_job"}:
+        return "running"
+    if raw in {"failed", "fail"}:
+        return "failed"
+    return "pending"
+
+
+def _ci_fail_stage_index(
+    *,
+    master_added_at: Any,
+    slave_added_at: Any,
+    error: str | None,
+) -> int:
+    """Индекс стадии с ошибкой: discover(0) / master(1) / slave(3)."""
+    err = (error or "").lower()
+    if slave_added_at is not None:
+        return _SLAVE_STAGE_INDEX
+    if master_added_at is not None:
+        if any(token in err for token in ("slave", "waiting_slave", "на slave")):
+            return _SLAVE_STAGE_INDEX
+        return 1
+    return 0
+
+
+def _apply_tg_stage(
+    states: list[CiStageState],
+    *,
+    tg_state: CiStageState,
+    pipeline_status: str,
+    tg_status: str | None,
+) -> None:
+    """TG после master: на discover — pending; после master_added — по tg_status."""
+    raw = pipeline_status
+    tg_raw = (tg_status or "skipped").strip().lower()
+    if raw == "discovered":
+        return
+    if raw == "waiting_master":
+        if tg_state != "pending":
+            states[_TG_STAGE_INDEX] = tg_state
+        return
+    if raw == "done":
+        states[_TG_STAGE_INDEX] = "success" if tg_raw == "skipped" else tg_state
+        return
+    states[_TG_STAGE_INDEX] = tg_state
+
+
+def _apply_files_stage(
+    states: list[CiStageState],
+    *,
+    files_state: CiStageState,
+    pipeline_status: str,
+) -> None:
+    """Δtg после done/slave: hash + TG по изменениям файлов."""
+    raw = pipeline_status
+    if raw in {"discovered", "waiting_master", "master_added", "master_complete", "waiting_slave"}:
+        return
+    if raw == "failed" or raw == "cancelled":
+        # только если уже дошли до slave/hash
+        if states[_SLAVE_STAGE_INDEX] in {"success", "failed", "cancelled", "running"}:
+            if files_state != "pending":
+                states[_FILES_STAGE_INDEX] = files_state
+        return
+    states[_FILES_STAGE_INDEX] = files_state
 
 
 def pipeline_ci_stages(
@@ -71,28 +158,51 @@ def pipeline_ci_stages(
     *,
     master_added_at: Any = None,
     slave_added_at: Any = None,
+    tg_status: str | None = None,
+    files_status: str | None = None,
+    error: str | None = None,
 ) -> list[dict[str, str]]:
-    """Горизонтальный CI stage-graph: [{id, label, state}, …]."""
+    """Горизонтальный CI stage-graph: [{id, label, state}, …].
+
+    Порядок: discover → master → tg → slave → done → Δtg
+    - tg: уведомление о новом торренте (master_added)
+    - Δtg: уведомление/проверка изменений файлов (hash_torrent)
+    """
     raw = (status or "").strip().lower()
     n = len(_CI_STAGE_DEFS)
     states: list[CiStageState] = ["pending"] * n
+    tg_state = _ci_tg_state(tg_status)
+    files_state = _ci_files_state(files_status)
 
     if raw == "done":
         states = ["success"] * n
+        _apply_tg_stage(states, tg_state=tg_state, pipeline_status=raw, tg_status=tg_status)
+        _apply_files_stage(states, files_state=files_state, pipeline_status=raw)
     elif raw in {"failed", "cancelled"}:
         terminal: CiStageState = "failed" if raw == "failed" else "cancelled"
-        if slave_added_at is not None:
-            fail_idx = 2
-            success_before = 2
-        elif master_added_at is not None:
-            fail_idx = 1
-            success_before = 1
-        else:
-            fail_idx = 0
-            success_before = 0
-        for i in range(success_before):
+        fail_idx = _ci_fail_stage_index(
+            master_added_at=master_added_at,
+            slave_added_at=slave_added_at,
+            error=error,
+        )
+        for i in range(fail_idx):
             states[i] = "success"
         states[fail_idx] = terminal
+        if fail_idx > _TG_STAGE_INDEX:
+            _apply_tg_stage(
+                states,
+                tg_state=tg_state,
+                pipeline_status="slave_added",
+                tg_status=tg_status,
+            )
+        elif fail_idx == 1 and master_added_at is not None:
+            _apply_tg_stage(
+                states,
+                tg_state=tg_state,
+                pipeline_status="master_added",
+                tg_status=tg_status,
+            )
+        _apply_files_stage(states, files_state=files_state, pipeline_status=raw)
     elif raw in _CI_RUNNING_STAGE:
         running_idx = _CI_RUNNING_STAGE[raw]
         success_before = _CI_SUCCESS_BEFORE.get(raw, 0)
@@ -100,12 +210,62 @@ def pipeline_ci_stages(
             states[i] = "success"
         if running_idx is not None:
             states[running_idx] = "running"
-    # иначе всё pending
+        _apply_tg_stage(states, tg_state=tg_state, pipeline_status=raw, tg_status=tg_status)
+        _apply_files_stage(states, files_state=files_state, pipeline_status=raw)
+    else:
+        _apply_tg_stage(states, tg_state=tg_state, pipeline_status=raw, tg_status=tg_status)
+        _apply_files_stage(states, files_state=files_state, pipeline_status=raw)
 
     return [
         {"id": stage_id, "label": label, "state": states[i]}
         for i, (stage_id, label) in enumerate(_CI_STAGE_DEFS)
     ]
+
+
+def resolve_files_stage_statuses(
+    db: Session,
+    pipelines: list[TorrentPipeline],
+) -> dict[int, str]:
+    """pipeline_id → pending|running|success|failed для стадии Δtg (hash/file TG)."""
+    if not pipelines:
+        return {}
+    by_id = {p.id: "pending" for p in pipelines}
+    ready_ids = [
+        p.id
+        for p in pipelines
+        if p.status in {"slave_added", "done", "failed", "cancelled"}
+        or p.slave_added_at is not None
+    ]
+    if not ready_ids:
+        return by_id
+
+    rows = db.execute(
+        select(PipelineEvent.pipeline_id, PipelineEvent.event_type, PipelineEvent.id)
+        .where(
+            PipelineEvent.pipeline_id.in_(ready_ids),
+            PipelineEvent.event_type.in_(sorted(_HASH_EVENT_TYPES)),
+        )
+        .order_by(PipelineEvent.id.desc())
+    ).all()
+    seen: set[int] = set()
+    for pipeline_id, event_type, _eid in rows:
+        if pipeline_id in seen:
+            continue
+        seen.add(pipeline_id)
+        et = (event_type or "").strip().lower()
+        if et == "hash_done":
+            by_id[pipeline_id] = "success"
+        elif et == "hash_fail":
+            by_id[pipeline_id] = "failed"
+        elif et in {"hash_enqueued", "hash_progress"}:
+            by_id[pipeline_id] = "running"
+    # slave_added/done без hash-событий — ждём/в очереди (не failed/cancelled).
+    for p in pipelines:
+        if p.id in seen:
+            continue
+        if p.status in {"slave_added", "done"}:
+            by_id[p.id] = "running"
+    return by_id
 
 
 def _qb_torrent_complete_state(progress: float, state: str) -> bool:

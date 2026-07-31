@@ -3,8 +3,8 @@
 {% set size = graph_size|default('sm') %}
 <ol class="gl-pipeline gl-pipeline-{{ size }}" aria-label="Pipeline stages">
   {% for stage in stages %}
-  <li class="gl-stage gl-stage-{{ stage.state }}" title="{{ stage.label }}: {{ stage.state }}">
-    <span class="gl-stage-dot" aria-hidden="true"></span>
+  <li class="gl-stage gl-stage-{{ stage.state }}" title="{{ stage.label }}: {{ stage.state }}{% if stage.state == 'failed' and error is defined and error %} — {{ error }}{% endif %}">
+    <span class="gl-stage-dot" aria-hidden="true">{% if stage.state == 'failed' %}×{% elif stage.state == 'cancelled' %}–{% endif %}</span>
     <span class="gl-stage-label">{{ stage.label }}</span>
   </li>
   {% if not loop.last %}

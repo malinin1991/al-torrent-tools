@@ -37,7 +37,11 @@ from app.services.job_runner import (
 )
 from app.services.anilibria_auth import login_and_store_token, resolve_anilibria_password
 from app.services.db_maintenance import reset_full, reset_operational_state
-from app.services.pipeline import TorrentPipelineService, pipeline_ci_stages
+from app.services.pipeline import (
+    TorrentPipelineService,
+    pipeline_ci_stages,
+    resolve_files_stage_statuses,
+)
 from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, build_anilibria_client, get_setting_value
 from app.services.file_hasher import normalize_file_hash_workers_setting
@@ -778,6 +782,7 @@ async def _pipeline_detail_context_async(db: Session, pipeline_id: int) -> dict:
         "torrent_label": torrent_label or f"Torrent #{pipeline.torrent_id}",
         "master_state": master_states.get((pipeline.info_hash or "").lower(), {}),
         "slave_state": slave_states.get((pipeline.info_hash or "").lower(), {}),
+        "files_status": resolve_files_stage_statuses(db, [pipeline]).get(pipeline.id, "pending"),
     }
 
 
@@ -838,6 +843,7 @@ def _pipeline_page_context(
                 }
 
     display_rows = []
+    files_statuses = resolve_files_stage_statuses(db, rows)
     for row in rows:
         meta = archive_meta.get((row.release_id, row.torrent_id), {})
         release_name = meta.get("anime_name") or meta.get("release_alias") or f"Release #{row.release_id}"
@@ -849,6 +855,7 @@ def _pipeline_page_context(
                 "release_name": release_name,
                 "torrent_label": torrent_label,
                 "ids_title": f"release_id={row.release_id} torrent_id={row.torrent_id}",
+                "files_status": files_statuses.get(row.id, "pending"),
             }
         )
 

@@ -485,15 +485,81 @@ def test_classify_slave_torrent_states() -> None:
 def test_pipeline_ci_stages_mapping() -> None:
     from app.services.pipeline import pipeline_ci_stages
 
-    slave_added = pipeline_ci_stages("slave_added")
-    assert [s["state"] for s in slave_added] == ["success", "success", "running", "pending"]
+    # discover → master → tg → slave → done → Δtg
+    slave_added = pipeline_ci_stages("slave_added", tg_status="queued", files_status="running")
+    assert [s["id"] for s in slave_added] == [
+        "discover",
+        "master",
+        "tg",
+        "slave",
+        "done",
+        "files",
+    ]
+    assert [s["label"] for s in slave_added][-1] == "Δtg"
+    assert [s["state"] for s in slave_added] == [
+        "success",
+        "success",
+        "running",
+        "running",
+        "pending",
+        "running",
+    ]
 
-    master_complete = pipeline_ci_stages("master_complete")
-    assert [s["state"] for s in master_complete] == ["success", "success", "running", "pending"]
+    master_complete = pipeline_ci_stages("master_complete", tg_status="sent")
+    assert [s["state"] for s in master_complete] == [
+        "success",
+        "success",
+        "success",
+        "running",
+        "pending",
+        "pending",
+    ]
 
-    done = pipeline_ci_stages("done")
-    assert all(s["state"] == "success" for s in done)
+    master_added = pipeline_ci_stages("master_added", tg_status="queued")
+    assert [s["state"] for s in master_added] == [
+        "success",
+        "running",
+        "running",
+        "pending",
+        "pending",
+        "pending",
+    ]
+
+    done = pipeline_ci_stages("done", tg_status="sent", files_status="success")
+    assert [s["state"] for s in done] == ["success"] * 6
+
+    done_hash_running = pipeline_ci_stages("done", tg_status="skipped", files_status="running")
+    assert done_hash_running[2]["state"] == "success"  # tg skipped
+    assert done_hash_running[5]["state"] == "running"  # Δtg
 
     failed = pipeline_ci_stages("failed", master_added_at="t")
     assert failed[0]["state"] == "success"
     assert failed[1]["state"] == "failed"
+    assert failed[3]["state"] == "pending"
+
+    failed_slave = pipeline_ci_stages(
+        "failed",
+        master_added_at="t",
+        error="Slave недоступен — waiting_slave",
+    )
+    assert failed_slave[1]["state"] == "success"
+    assert failed_slave[3]["state"] == "failed"
+
+
+def test_resolve_files_stage_statuses() -> None:
+    from app.services.pipeline import resolve_files_stage_statuses
+
+    db = MagicMock()
+    p_done = SimpleNamespace(id=1, status="done", slave_added_at="t")
+    p_fail = SimpleNamespace(id=2, status="failed", slave_added_at="t")
+    p_early = SimpleNamespace(id=3, status="master_added", slave_added_at=None)
+
+    # Последние hash-события: done→hash_done, failed без событий
+    db.execute.return_value.all.return_value = [
+        (1, "hash_done", 10),
+        (1, "hash_progress", 9),
+    ]
+    result = resolve_files_stage_statuses(db, [p_done, p_fail, p_early])
+    assert result[1] == "success"
+    assert result[2] == "pending"  # failed без hash — не running
+    assert result[3] == "pending"

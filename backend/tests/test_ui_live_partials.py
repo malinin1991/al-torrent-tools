@@ -63,6 +63,7 @@ def test_pipeline_detail_live_partial_renders() -> None:
             "torrent_label": "BDRip · 1-2",
             "master_state": {},
             "slave_state": {},
+            "files_status": "success",
             "life_path_text": "path",
             "timeline": [
                 {
@@ -305,16 +306,20 @@ def test_pipeline_live_partial_compact_graph() -> None:
                     "release_name": "Show",
                     "torrent_label": "WEB",
                     "ids_title": "ids",
+                    "files_status": "running",
                 }
             ],
         },
     ).body.decode("utf-8")
     assert "gl-pipeline" in html
     assert "pipeline-list-table" in html
+    assert "Δtg" in html
     assert "На slave" not in html
     assert "На master" not in html
     assert ">TG<" not in html
-    assert "cdcdcdcd…" in html
+    assert "tg" in html
+    assert "cd" * 20 in html
+    assert "…" not in html.split("pipeline-list-hash")[1].split("</div>")[0]
 
 
 def test_releases_live_url_uses_urlencode() -> None:
