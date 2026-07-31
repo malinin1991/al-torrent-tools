@@ -1,6 +1,12 @@
 <div class="card" style="margin-bottom:12px;">
+  <div class="gl-pipeline-detail-head">
+    {% set stages = pipeline_ci_stages(pipeline.status, master_added_at=pipeline.master_added_at, slave_added_at=pipeline.slave_added_at) %}
+    {% set status = pipeline.status %}
+    {% set graph_size = 'lg' %}
+    {% include "partials/pipeline_ci_graph.html" %}
+    <span class="job-status job-status-{{ pipeline.status }}">{{ pipeline.status }}</span>
+  </div>
   <table class="info-table">
-    <tr><th>Статус</th><td><span class="job-status job-status-{{ pipeline.status }}">{{ pipeline.status }}</span></td></tr>
     <tr><th>TG</th><td><span class="tg-status tg-status-{{ pipeline.tg_status or 'skipped' }}">{{ pipeline.tg_status or 'skipped' }}</span></td></tr>
     <tr><th>Релиз</th><td>{{ release_name }} <span class="muted">(id={{ pipeline.release_id }})</span></td></tr>
     <tr><th>Торрент</th><td>{{ torrent_label }} <span class="muted">(id={{ pipeline.torrent_id }})</span></td></tr>
@@ -21,12 +27,31 @@
       </td>
     </tr>
     <tr>
+      <th>На slave</th>
+      <td>
+        {% if slave_state %}
+        <span class="master-state master-state-{{ slave_state.key }}"{% if slave_state.raw_state %} title="{{ slave_state.raw_state }}"{% endif %}>
+          {{ slave_state.label }}
+          {% if slave_state.key == 'downloading' and slave_state.progress is not none %}
+          {{ (slave_state.progress * 100)|round(0)|int }}%
+          {% endif %}
+        </span>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
       <th>Добавлен в master</th>
       <td>{% if pipeline.master_added_at %}<time class="local-time" datetime="{{ pipeline.master_added_at|as_utc_iso }}">{{ pipeline.master_added_at }}</time>{% else %}—{% endif %}</td>
     </tr>
     <tr>
       <th>Добавлен в slave</th>
       <td>{% if pipeline.slave_added_at %}<time class="local-time" datetime="{{ pipeline.slave_added_at|as_utc_iso }}">{{ pipeline.slave_added_at }}</time>{% else %}—{% endif %}</td>
+    </tr>
+    <tr>
+      <th>Slave завершён</th>
+      <td>{% if pipeline.slave_completed_at %}<time class="local-time" datetime="{{ pipeline.slave_completed_at|as_utc_iso }}">{{ pipeline.slave_completed_at }}</time>{% else %}—{% endif %}</td>
     </tr>
     <tr>
       <th>Создан</th>

@@ -36,7 +36,7 @@ SIMPLE_CHANNELS = frozenset(
     {"dashboard", "jobs", "pipeline", "releases", "archive", "info"}
 )
 
-# Статусы, при которых на pipeline нужен live progress с master (qB).
+# Статусы, при которых на pipeline нужен live progress с master/slave (qB).
 _ACTIVE_PIPELINE_STATUSES = frozenset(
     {
         "discovered",
@@ -44,6 +44,7 @@ _ACTIVE_PIPELINE_STATUSES = frozenset(
         "master_added",
         "master_complete",
         "waiting_slave",
+        "slave_added",
     }
 )
 
@@ -133,12 +134,14 @@ def _pipeline_list_token(db: Session) -> str:
             TorrentPipeline.error,
             TorrentPipeline.master_added_at,
             TorrentPipeline.slave_added_at,
+            TorrentPipeline.slave_completed_at,
         )
         .order_by(TorrentPipeline.id.desc())
         .limit(300)
     ).all()
     sig = "|".join(
-        f"{r.id}:{r.status}:{r.tg_status}:{(r.error or '')[:80]}:{r.master_added_at}:{r.slave_added_at}"
+        f"{r.id}:{r.status}:{r.tg_status}:{(r.error or '')[:80]}:"
+        f"{r.master_added_at}:{r.slave_added_at}:{r.slave_completed_at}"
         for r in rows
     )
     # Глобальный count — иначе активный pipeline старше топ-300 не даёт progress-tick.
@@ -168,7 +171,7 @@ def _pipeline_detail_token(db: Session, pipeline_id: int) -> str:
         tick = f"|t:{int(time.time() // _PIPELINE_PROGRESS_TICK_SEC)}"
     return (
         f"pd:{pipeline_id}:{row.status}:{row.tg_status}:{row.error}:"
-        f"{row.master_added_at}:{row.slave_added_at}:{max_ev}{tick}"
+        f"{row.master_added_at}:{row.slave_added_at}:{row.slave_completed_at}:{max_ev}{tick}"
     )
 
 

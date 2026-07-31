@@ -137,6 +137,15 @@ MASTER_UI_LABELS: dict[str, str] = {
     "unavailable": "master недоступен",
 }
 
+SLAVE_UI_LABELS: dict[str, str] = {
+    "downloading": "загружается",
+    "seeding": "раздаётся",
+    "stopped": "остановлен",
+    "error": "с ошибкой",
+    "missing": "нет на slave",
+    "unavailable": "slave недоступен",
+}
+
 _QB_DOWNLOADING = frozenset({
     "downloading",
     "metadl",

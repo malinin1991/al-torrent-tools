@@ -153,14 +153,14 @@ def test_process_completion_enqueues_hash_without_blocking_slave(monkeypatch: py
         info_hash="abc123",
         release_id=10,
         torrent_id=20,
-        status=TorrentPipelineService.STATUS_DONE,
+        status=TorrentPipelineService.STATUS_SLAVE_ADDED,
         error=None,
     )
     add_called = {"ok": False}
 
     def fake_add(p, _bytes):
         add_called["ok"] = True
-        p.status = TorrentPipelineService.STATUS_DONE
+        p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
         return done
 
     service._add_to_slave = MagicMock(side_effect=fake_add)  # type: ignore[method-assign]
@@ -169,7 +169,7 @@ def test_process_completion_enqueues_hash_without_blocking_slave(monkeypatch: py
 
     result = service.process_completion(pipeline, b"torrent")
 
-    assert result.status == TorrentPipelineService.STATUS_DONE
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
     assert add_called["ok"] is True
     enqueue.assert_called_once_with(done)
     # slave add и enqueue независимы: оба вызваны
@@ -192,7 +192,7 @@ def test_process_completion_retry_enqueues_hash_if_needed() -> None:
         info_hash="abc123",
         release_id=10,
         torrent_id=20,
-        status=TorrentPipelineService.STATUS_DONE,
+        status=TorrentPipelineService.STATUS_SLAVE_ADDED,
         error=None,
     )
     service._add_to_slave = MagicMock(return_value=done)  # type: ignore[method-assign]
@@ -201,7 +201,7 @@ def test_process_completion_retry_enqueues_hash_if_needed() -> None:
 
     result = service.process_completion(pipeline, b"torrent")
 
-    assert result.status == TorrentPipelineService.STATUS_DONE
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
     service._add_to_slave.assert_called_once()
     enqueue.assert_called_once_with(done)
 

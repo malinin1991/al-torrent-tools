@@ -5,9 +5,10 @@
       <th>Hash</th>
       <th>Релиз</th>
       <th>Торрент</th>
-      <th>Статус</th>
+      <th>Pipeline</th>
       <th>TG</th>
       <th>На master</th>
+      <th>На slave</th>
       <th>Добавлен в master</th>
       <th>Добавлен в slave</th>
       <th>Ошибка</th>
@@ -17,13 +18,21 @@
   <tbody>
     {% for item in display_rows %}
     {% set row = item.row %}
-    {% set ms = master_states.get(row.info_hash.lower() if row.info_hash else '', {}) %}
+    {% set hash_key = row.info_hash.lower() if row.info_hash else '' %}
+    {% set ms = master_states.get(hash_key, {}) %}
+    {% set ss = slave_states.get(hash_key, {}) %}
     <tr>
       <td><a href="/pipeline/{{ row.id }}">{{ row.id }}</a></td>
       <td>{{ row.info_hash }}</td>
       <td title="{{ item.ids_title }}">{{ item.release_name }}</td>
       <td title="{{ item.ids_title }}">{{ item.torrent_label }}</td>
-      <td><span class="job-status job-status-{{ row.status }}">{{ row.status }}</span></td>
+      <td>
+        {% set stages = pipeline_ci_stages(row.status, master_added_at=row.master_added_at, slave_added_at=row.slave_added_at) %}
+        {% set status = row.status %}
+        {% set graph_size = 'sm' %}
+        {% include "partials/pipeline_ci_graph.html" %}
+        <span class="job-status job-status-{{ row.status }} gl-pipeline-status-text">{{ row.status }}</span>
+      </td>
       <td><span class="tg-status tg-status-{{ row.tg_status or 'skipped' }}">{{ row.tg_status or 'skipped' }}</span></td>
       <td>
         {% if ms %}
@@ -37,13 +46,25 @@
         <span class="muted">—</span>
         {% endif %}
       </td>
+      <td>
+        {% if ss %}
+        <span class="master-state master-state-{{ ss.key }}"{% if ss.raw_state %} title="{{ ss.raw_state }}"{% endif %}>
+          {{ ss.label }}
+          {% if ss.key == 'downloading' and ss.progress is not none %}
+          {{ (ss.progress * 100)|round(0)|int }}%
+          {% endif %}
+        </span>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </td>
       <td>{% if row.master_added_at %}<time class="local-time" datetime="{{ row.master_added_at|as_utc_iso }}">{{ row.master_added_at }}</time>{% else %}-{% endif %}</td>
       <td>{% if row.slave_added_at %}<time class="local-time" datetime="{{ row.slave_added_at|as_utc_iso }}">{{ row.slave_added_at }}</time>{% else %}-{% endif %}</td>
       <td>{{ row.error or "-" }}</td>
       <td>{% if row.created_at %}<time class="local-time" datetime="{{ row.created_at|as_utc_iso }}">{{ row.created_at }}</time>{% else %}-{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="11" class="muted">Записей пока нет</td></tr>
+    <tr><td colspan="12" class="muted">Записей пока нет</td></tr>
     {% endfor %}
   </tbody>
 </table>

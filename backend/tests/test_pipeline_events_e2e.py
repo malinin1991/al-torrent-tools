@@ -36,6 +36,7 @@ def _pipeline(*, status: str = "discovered", pipeline_id: int = 1) -> SimpleName
         torrent_id=55,
         master_added_at=None,
         slave_added_at=None,
+        slave_completed_at=None,
         error=None,
         tg_status="skipped",
         created_at=datetime(2026, 7, 26, tzinfo=timezone.utc),
@@ -113,13 +114,154 @@ def test_qb_complete_webhook_uses_webhook_actor(monkeypatch: pytest.MonkeyPatch)
             "get_latest_by_hash",
             lambda self, h: pipeline,
         )
-        return await qb_complete_webhook(request, hash_query="ab" * 20, db=db)
+        return await qb_complete_webhook(
+            request, hash_query="ab" * 20, role_query="master", db=db
+        )
 
     result = asyncio.run(_run())
     assert result["ok"] is True
     assert created
     assert created[0]._actor == "webhook"
     _ = original_cls
+
+
+def test_qb_complete_webhook_requires_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import HTTPException
+
+    from app.api.rest import qb_complete_webhook
+
+    async def _run():
+        request = MagicMock()
+        request.method = "GET"
+        return await qb_complete_webhook(
+            request, hash_query="ab" * 20, role_query=None, db=MagicMock()
+        )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(_run())
+    assert exc_info.value.status_code == 400
+    assert "role" in str(exc_info.value.detail).lower()
+
+
+def test_qb_complete_webhook_slave_role_marks_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api.rest import qb_complete_webhook
+
+    db = MagicMock()
+    pipeline = _pipeline(status="slave_added", pipeline_id=11)
+    done = _pipeline(status="done", pipeline_id=11)
+
+    class FakeService(TorrentPipelineService):
+        def get_latest_by_hash(self, _h):  # noqa: ANN001
+            return pipeline
+
+        def classify_slave_torrent(self, _p):  # noqa: ANN001
+            return "complete"
+
+        def process_slave_completion(self, p):  # noqa: ANN001
+            p.status = "done"
+            return done
+
+    monkeypatch.setattr("app.api.rest.TorrentPipelineService", FakeService)
+
+    async def _run():
+        request = MagicMock()
+        request.method = "GET"
+        return await qb_complete_webhook(
+            request, hash_query="ab" * 20, role_query="slave", db=db
+        )
+
+    result = asyncio.run(_run())
+    assert result["ok"] is True
+    assert result["status"] == "done"
+
+
+def test_qb_complete_webhook_slave_role_rejects_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.rest import qb_complete_webhook
+
+    db = MagicMock()
+    pipeline = _pipeline(status="slave_added", pipeline_id=11)
+
+    class FakeService(TorrentPipelineService):
+        def get_latest_by_hash(self, _h):  # noqa: ANN001
+            return pipeline
+
+        def classify_slave_torrent(self, _p):  # noqa: ANN001
+            return "in_progress"
+
+        def process_slave_completion(self, p):  # noqa: ANN001
+            raise AssertionError("не должен вызываться при in_progress")
+
+    monkeypatch.setattr("app.api.rest.TorrentPipelineService", FakeService)
+
+    async def _run():
+        request = MagicMock()
+        request.method = "GET"
+        return await qb_complete_webhook(
+            request, hash_query="ab" * 20, role_query="slave", db=db
+        )
+
+    result = asyncio.run(_run())
+    assert result["ok"] is False
+    assert result["status"] == "slave_added"
+
+
+def test_qb_complete_webhook_slave_race_stays_in_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """classify=complete, но process_slave_completion оставил slave_added → ok:false."""
+    from app.api.rest import qb_complete_webhook
+
+    db = MagicMock()
+    pipeline = _pipeline(status="slave_added", pipeline_id=11)
+
+    class FakeService(TorrentPipelineService):
+        def get_latest_by_hash(self, _h):  # noqa: ANN001
+            return pipeline
+
+        def classify_slave_torrent(self, _p):  # noqa: ANN001
+            return "complete"
+
+        def process_slave_completion(self, p):  # noqa: ANN001
+            return p
+
+    monkeypatch.setattr("app.api.rest.TorrentPipelineService", FakeService)
+
+    async def _run():
+        request = MagicMock()
+        request.method = "GET"
+        return await qb_complete_webhook(
+            request, hash_query="ab" * 20, role_query="slave", db=db
+        )
+
+    result = asyncio.run(_run())
+    assert result["ok"] is False
+    assert result["status"] == "slave_added"
+
+
+def test_qb_complete_webhook_slave_too_early(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api.rest import qb_complete_webhook
+
+    db = MagicMock()
+    pipeline = _pipeline(status="master_added", pipeline_id=11)
+
+    class FakeService(TorrentPipelineService):
+        def get_latest_by_hash(self, _h):  # noqa: ANN001
+            return pipeline
+
+    monkeypatch.setattr("app.api.rest.TorrentPipelineService", FakeService)
+
+    async def _run():
+        request = MagicMock()
+        request.method = "GET"
+        return await qb_complete_webhook(
+            request, hash_query="ab" * 20, role_query="slave", db=db
+        )
+
+    result = asyncio.run(_run())
+    assert result["ok"] is False
+    assert "рано" in result["message"].lower()
 
 
 def test_poll_path_records_actor_poll() -> None:
@@ -441,8 +583,13 @@ def test_pipeline_detail_html_renders_timeline() -> None:
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.filters["as_utc_iso"] = as_utc_iso
     templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
+    from app.services.pipeline import pipeline_ci_stages
+
+    templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     pipeline = _pipeline(status="done", pipeline_id=3)
+    pipeline.slave_completed_at = now
+    pipeline.created_at = now
     event = SimpleNamespace(
         created_at=now,
         event_type="slave_add",
@@ -451,6 +598,7 @@ def test_pipeline_detail_html_renders_timeline() -> None:
         message="на slave",
         job_id=7,
         details_json={"actor": "poll"},
+        id=1,
     )
     request = MagicMock()
     html = templates.TemplateResponse(
@@ -462,6 +610,7 @@ def test_pipeline_detail_html_renders_timeline() -> None:
             "release_name": "Show",
             "torrent_label": "BDRip · 1-2",
             "master_state": {},
+            "slave_state": {},
             "life_path_text": "path text",
             "timeline": [
                 {
@@ -481,6 +630,7 @@ def test_pipeline_detail_html_renders_timeline() -> None:
     assert "на slave" in html
     assert 'data-ui-sse-channel="pipeline_detail:3"' in html
     assert "live · SSE" in html
+    assert "gl-pipeline" in html
 
 
 def test_cleanup_logs_retains_recent_jobs_and_events() -> None:

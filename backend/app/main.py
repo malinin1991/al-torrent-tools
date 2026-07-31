@@ -37,7 +37,7 @@ from app.services.job_runner import (
 )
 from app.services.anilibria_auth import login_and_store_token, resolve_anilibria_password
 from app.services.db_maintenance import reset_full, reset_operational_state
-from app.services.pipeline import TorrentPipelineService
+from app.services.pipeline import TorrentPipelineService, pipeline_ci_stages
 from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, build_anilibria_client, get_setting_value
 from app.services.file_hasher import normalize_file_hash_workers_setting
@@ -106,6 +106,7 @@ base_path = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(base_path / "templates"))
 templates.env.filters["as_utc_iso"] = as_utc_iso
 templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
+templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
 app.mount("/static", StaticFiles(directory=str(base_path / "static")), name="static")
 
 
@@ -755,12 +756,19 @@ async def _pipeline_detail_context_async(db: Session, pipeline_id: int) -> dict:
         life_path_chunks.append(chunk)
 
     master_states: dict = {}
+    slave_states: dict = {}
     try:
         master_states = await asyncio.to_thread(
             _load_master_ui_states, [pipeline.info_hash]
         )
     except Exception:
         master_states = {}
+    try:
+        slave_states = await asyncio.to_thread(
+            _load_slave_ui_states, [pipeline.info_hash]
+        )
+    except Exception:
+        slave_states = {}
 
     return {
         "pipeline": pipeline,
@@ -769,6 +777,7 @@ async def _pipeline_detail_context_async(db: Session, pipeline_id: int) -> dict:
         "release_name": release_name or f"Release #{pipeline.release_id}",
         "torrent_label": torrent_label or f"Torrent #{pipeline.torrent_id}",
         "master_state": master_states.get((pipeline.info_hash or "").lower(), {}),
+        "slave_state": slave_states.get((pipeline.info_hash or "").lower(), {}),
     }
 
 
@@ -781,10 +790,24 @@ def _load_master_ui_states(info_hashes: list[str]) -> dict:
             return {}
 
 
+def _load_slave_ui_states(info_hashes: list[str]) -> dict:
+    """Опрос slave в отдельном потоке (своя DB-сессия)."""
+    with SessionLocal() as thread_db:
+        try:
+            return TorrentPipelineService(thread_db).get_slave_ui_states(info_hashes)
+        except Exception:
+            return {}
+
+
 async def _pipeline_page_context_async(db: Session, *, status: str | None) -> dict:
-    context = _pipeline_page_context(db, status=status, master_states={})
+    context = _pipeline_page_context(db, status=status, master_states={}, slave_states={})
     hashes = [row.info_hash for row in context["rows"]]
-    context["master_states"] = await asyncio.to_thread(_load_master_ui_states, hashes)
+    master_states, slave_states = await asyncio.gather(
+        asyncio.to_thread(_load_master_ui_states, hashes),
+        asyncio.to_thread(_load_slave_ui_states, hashes),
+    )
+    context["master_states"] = master_states
+    context["slave_states"] = slave_states
     return context
 
 
@@ -793,6 +816,7 @@ def _pipeline_page_context(
     *,
     status: str | None,
     master_states: dict | None = None,
+    slave_states: dict | None = None,
 ) -> dict:
     query = select(TorrentPipeline)
     if status:
@@ -805,6 +829,13 @@ def _pipeline_page_context(
             )
         except Exception:
             master_states = {}
+    if slave_states is None:
+        try:
+            slave_states = TorrentPipelineService(db).get_slave_ui_states(
+                [row.info_hash for row in rows]
+            )
+        except Exception:
+            slave_states = {}
 
     archive_meta: dict[tuple[int, int], dict] = {}
     if rows:
@@ -848,6 +879,7 @@ def _pipeline_page_context(
         "rows": rows,
         "display_rows": display_rows,
         "master_states": master_states,
+        "slave_states": slave_states,
         "status": status or "",
     }
 

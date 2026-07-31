@@ -191,7 +191,7 @@ async def _recover_failed_pipeline(
             updated = pipeline_service.process_completion(pipeline, torrent_bytes)
             if updated.status == pipeline_service.STATUS_WAITING_SLAVE:
                 stats["still_waiting"] += 1
-            elif updated.status in pipeline_service._TERMINAL_OK:
+            elif updated.status in pipeline_service._SLAVE_REACHED:
                 stats["submitted"] += 1
         return True
 

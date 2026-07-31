@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import ExtraUrl, JobLog, PipelineEvent, QbClient, TorrentArchive, TorrentPipeline
 from app.services.qbittorrent import (
     MASTER_UI_LABELS,
+    SLAVE_UI_LABELS,
     ensure_announce_passkey,
     is_qb_wait_error_text,
     map_qb_torrent_ui_state,
@@ -26,11 +27,99 @@ from app.services.torrent_qb_meta import (
 )
 
 MasterTorrentState = Literal["complete", "in_progress", "missing"]
+SlaveTorrentState = Literal["complete", "in_progress", "missing"]
+CiStageState = Literal["pending", "running", "success", "failed", "cancelled"]
 
 # created | status_change | master_add | slave_add | hash_enqueued | hash_progress |
 # hash_done | hash_fail | tg_queued | tg_sent | cancelled | failed | ui_status |
 # hevc_status
 PipelineActor = Literal["job", "webhook", "poll", "manual"]
+
+_CI_STAGE_DEFS: tuple[tuple[str, str], ...] = (
+    ("discover", "discover"),
+    ("master", "master"),
+    ("slave", "slave"),
+    ("done", "done"),
+)
+
+# Статус pipeline → индекс «текущей» стадии (running) или None если все success / terminal.
+_CI_RUNNING_STAGE: dict[str, int | None] = {
+    "discovered": 0,
+    "waiting_master": 0,
+    "master_added": 1,
+    # master скачал; идёт (или вот-вот) досылка на slave
+    "master_complete": 2,
+    "waiting_slave": 2,
+    "slave_added": 2,
+    "done": None,
+}
+
+# Сколько стадий уже success (не включая running).
+_CI_SUCCESS_BEFORE: dict[str, int] = {
+    "discovered": 0,
+    "waiting_master": 0,
+    "master_added": 1,
+    "master_complete": 2,
+    "waiting_slave": 2,
+    "slave_added": 2,
+    "done": 4,
+}
+
+
+def pipeline_ci_stages(
+    status: str,
+    *,
+    master_added_at: Any = None,
+    slave_added_at: Any = None,
+) -> list[dict[str, str]]:
+    """Горизонтальный CI stage-graph: [{id, label, state}, …]."""
+    raw = (status or "").strip().lower()
+    n = len(_CI_STAGE_DEFS)
+    states: list[CiStageState] = ["pending"] * n
+
+    if raw == "done":
+        states = ["success"] * n
+    elif raw in {"failed", "cancelled"}:
+        terminal: CiStageState = "failed" if raw == "failed" else "cancelled"
+        if slave_added_at is not None:
+            fail_idx = 2
+            success_before = 2
+        elif master_added_at is not None:
+            fail_idx = 1
+            success_before = 1
+        else:
+            fail_idx = 0
+            success_before = 0
+        for i in range(success_before):
+            states[i] = "success"
+        states[fail_idx] = terminal
+    elif raw in _CI_RUNNING_STAGE:
+        running_idx = _CI_RUNNING_STAGE[raw]
+        success_before = _CI_SUCCESS_BEFORE.get(raw, 0)
+        for i in range(success_before):
+            states[i] = "success"
+        if running_idx is not None:
+            states[running_idx] = "running"
+    # иначе всё pending
+
+    return [
+        {"id": stage_id, "label": label, "state": states[i]}
+        for i, (stage_id, label) in enumerate(_CI_STAGE_DEFS)
+    ]
+
+
+def _qb_torrent_complete_state(progress: float, state: str) -> bool:
+    """Торрент скачан и/или на раздаче (как classify_*_torrent → complete)."""
+    if progress >= 1.0:
+        return True
+    return state in {
+        "uploading",
+        "stalledup",
+        "queuedup",
+        "forcedup",
+        "pausedup",
+        "stoppedup",
+    }
 
 
 def record_pipeline_event(
@@ -75,7 +164,10 @@ class TorrentPipelineService:
     STATUS_FAILED = "failed"
     STATUS_CANCELLED = "cancelled"
 
-    _TERMINAL_OK = frozenset({STATUS_DONE, STATUS_SLAVE_ADDED})
+    # Успешный terminal: slave закончил и на раздаче.
+    _TERMINAL_OK = frozenset({STATUS_DONE})
+    # Досылка на slave уже состоялась (ещё качает / уже done).
+    _SLAVE_REACHED = frozenset({STATUS_SLAVE_ADDED, STATUS_DONE})
     _AWAITING_SLAVE = frozenset({STATUS_MASTER_ADDED, STATUS_MASTER_COMPLETE})
     _EXCLUDED_FROM_LATEST = frozenset({STATUS_FAILED, STATUS_CANCELLED})
 
@@ -363,6 +455,7 @@ class TorrentPipelineService:
     ) -> TorrentPipeline:
         from_status = pipeline.status
         pipeline.status = self.STATUS_DONE
+        pipeline.slave_completed_at = utcnow()
         pipeline.error = None
         self._db.commit()
         self._db.refresh(pipeline)
@@ -447,6 +540,18 @@ class TorrentPipelineService:
         ).all()
         return list(rows)
 
+    def get_slave_added_older_than(self, minutes: int) -> list[TorrentPipeline]:
+        """Aged slave_added — fallback poll, пока slave не на раздаче."""
+        threshold = utcnow() - timedelta(minutes=minutes)
+        rows = self._db.scalars(
+            select(TorrentPipeline).where(
+                TorrentPipeline.status == self.STATUS_SLAVE_ADDED,
+                TorrentPipeline.slave_added_at.is_not(None),
+                TorrentPipeline.slave_added_at <= threshold,
+            )
+        ).all()
+        return list(rows)
+
     def get_pipelines_awaiting_slave(self) -> list[TorrentPipeline]:
         """Pipeline, которых ещё нет на slave (ожидают callback / досылку)."""
         rows = self._db.scalars(
@@ -480,9 +585,12 @@ class TorrentPipelineService:
         return claimed
 
     def process_completion(self, pipeline: TorrentPipeline, torrent_bytes: bytes) -> TorrentPipeline:
-        """Идемпотентное завершение: master_added → slave; waiting_slave / master_complete — досылка."""
+        """Идемпотентное завершение: master_added → slave; waiting_slave / master_complete — досылка.
+
+        Останавливается на slave_added (done — отдельно через process_slave_completion).
+        """
         self._db.refresh(pipeline)
-        if pipeline.status in self._TERMINAL_OK:
+        if pipeline.status in self._SLAVE_REACHED:
             self._record_event(
                 pipeline,
                 event_type="status_change",
@@ -507,7 +615,7 @@ class TorrentPipelineService:
         claimed = self._claim_master_complete(pipeline.id)
         if claimed is None:
             self._db.refresh(pipeline)
-            if pipeline.status in self._TERMINAL_OK:
+            if pipeline.status in self._SLAVE_REACHED:
                 self._record_event(
                     pipeline,
                     event_type="status_change",
@@ -532,6 +640,45 @@ class TorrentPipelineService:
         result = self._add_to_slave(pipeline, torrent_bytes)
         self._enqueue_hash_torrent(result)
         return result
+
+    def process_slave_completion(self, pipeline: TorrentPipeline) -> TorrentPipeline:
+        """slave_added + slave complete/seeding → done; missing → cancelled."""
+        self._db.refresh(pipeline)
+        if pipeline.status == self.STATUS_DONE:
+            self._record_event(
+                pipeline,
+                event_type="status_change",
+                message=f"Pipeline {pipeline.id}: process_slave_completion no-op, status=done",
+                from_status=pipeline.status,
+                to_status=pipeline.status,
+                details={"noop": True},
+                log_level="debug",
+            )
+            return pipeline
+        if pipeline.status != self.STATUS_SLAVE_ADDED:
+            self._record_event(
+                pipeline,
+                event_type="status_change",
+                message=(
+                    f"Pipeline {pipeline.id}: process_slave_completion no-op, "
+                    f"status={pipeline.status}"
+                ),
+                from_status=pipeline.status,
+                to_status=pipeline.status,
+                details={"noop": True},
+                log_level="debug",
+            )
+            return pipeline
+
+        state = self.classify_slave_torrent(pipeline)
+        if state == "in_progress":
+            return pipeline
+        if state == "missing":
+            return self.mark_cancelled(
+                pipeline,
+                "Торрент отсутствует на slave (удалён) — pipeline cancelled",
+            )
+        return self.mark_done(pipeline, details={"qb_role": "slave", "slave_state": state})
 
     def _hash_torrent_already_done_or_queued(self, info_hash: str) -> bool:
         """Не дублировать hash_torrent.
@@ -727,8 +874,7 @@ class TorrentPipelineService:
             # Имя раздачи (meta), не метка QbClient.
             if rename:
                 slave_details["qb_name"] = rename
-            self.mark_slave_added(pipeline, details=slave_details)
-            return self.mark_done(pipeline)
+            return self.mark_slave_added(pipeline, details=slave_details)
         except Exception as exc:
             if should_wait_for_qb(exc):
                 return self.mark_waiting_slave(pipeline, qb_client_wait_message("slave", exc))
@@ -850,6 +996,19 @@ class TorrentPipelineService:
         self._master_client = qb
         return qb
 
+    def _get_slave_api(self) -> qbittorrentapi.Client:
+        slave = self._get_qb_client("slave")
+        if slave is None:
+            raise RuntimeError("Не найден активный qBittorrent клиент с ролью slave")
+        qb = qbittorrentapi.Client(
+            host=slave.host,
+            port=slave.port,
+            username=slave.username,
+            password=slave.password_encrypted,
+        )
+        qb.auth_log_in()
+        return qb
+
     def classify_master_torrent(self, pipeline: TorrentPipeline) -> MasterTorrentState:
         """Статус торрента на master: complete / in_progress / missing."""
         qb = self._get_master_api()
@@ -859,14 +1018,20 @@ class TorrentPipelineService:
         torrent = torrents[0]
         progress = float(getattr(torrent, "progress", 0.0) or 0.0)
         state = str(getattr(torrent, "state", "") or "").lower()
-        if progress >= 1.0 or state in {
-            "uploading",
-            "stalledup",
-            "queuedup",
-            "forcedup",
-            "pausedup",
-            "stoppedup",
-        }:
+        if _qb_torrent_complete_state(progress, state):
+            return "complete"
+        return "in_progress"
+
+    def classify_slave_torrent(self, pipeline: TorrentPipeline) -> SlaveTorrentState:
+        """Статус торрента на slave: complete / in_progress / missing."""
+        qb = self._get_slave_api()
+        torrents = qb.torrents_info(hashes=pipeline.info_hash)
+        if not torrents:
+            return "missing"
+        torrent = torrents[0]
+        progress = float(getattr(torrent, "progress", 0.0) or 0.0)
+        state = str(getattr(torrent, "state", "") or "").lower()
+        if _qb_torrent_complete_state(progress, state):
             return "complete"
         return "in_progress"
 
@@ -875,18 +1040,28 @@ class TorrentPipelineService:
 
     def get_master_ui_states(self, info_hashes: list[str]) -> dict[str, dict[str, Any]]:
         """Пакетный опрос master: hash → {key, label, progress, raw_state}."""
+        return self._get_qb_ui_states(info_hashes, role="master")
+
+    def get_slave_ui_states(self, info_hashes: list[str]) -> dict[str, dict[str, Any]]:
+        """Пакетный опрос slave: hash → {key, label, progress, raw_state}."""
+        return self._get_qb_ui_states(info_hashes, role="slave")
+
+    def _get_qb_ui_states(
+        self, info_hashes: list[str], *, role: Literal["master", "slave"]
+    ) -> dict[str, dict[str, Any]]:
+        labels = MASTER_UI_LABELS if role == "master" else SLAVE_UI_LABELS
         normalized = sorted({(h or "").strip().lower() for h in info_hashes if (h or "").strip()})
         if not normalized:
             return {}
 
         unavailable = {
             "key": "unavailable",
-            "label": MASTER_UI_LABELS["unavailable"],
+            "label": labels["unavailable"],
             "progress": None,
             "raw_state": None,
         }
         try:
-            qb = self._get_master_api()
+            qb = self._get_master_api() if role == "master" else self._get_slave_api()
             torrents = qb.torrents_info(hashes="|".join(normalized))
         except Exception:
             return {h: dict(unavailable) for h in normalized}
@@ -901,14 +1076,14 @@ class TorrentPipelineService:
             key = map_qb_torrent_ui_state(raw_state, progress)
             by_hash[raw_hash] = {
                 "key": key,
-                "label": MASTER_UI_LABELS.get(key, key),
+                "label": labels.get(key, key),
                 "progress": progress,
                 "raw_state": raw_state,
             }
 
         missing = {
             "key": "missing",
-            "label": MASTER_UI_LABELS["missing"],
+            "label": labels["missing"],
             "progress": None,
             "raw_state": None,
         }

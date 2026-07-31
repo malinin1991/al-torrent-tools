@@ -20,6 +20,7 @@ def _pipeline(*, status: str = "discovered", pipeline_id: int = 1) -> SimpleName
         torrent_id=55,
         master_added_at=None,
         slave_added_at=None,
+        slave_completed_at=None,
         error=None,
         tg_status="skipped",
     )

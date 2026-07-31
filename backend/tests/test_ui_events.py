@@ -60,10 +60,12 @@ def test_pipeline_detail_token_includes_status() -> None:
         error=None,
         master_added_at="t1",
         slave_added_at="t2",
+        slave_completed_at="t3",
     )
     db.scalar.return_value = 5
     token = channel_token(db, "pipeline_detail:7")
     assert "pd:7:done:skipped" in token
+    assert "t3" in token
     assert token.endswith(":5") or ":5" in token
 
 

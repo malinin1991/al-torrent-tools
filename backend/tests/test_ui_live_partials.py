@@ -20,6 +20,9 @@ def _templates() -> Jinja2Templates:
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.filters["as_utc_iso"] = as_utc_iso
     templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
+    from app.services.pipeline import pipeline_ci_stages
+
+    templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
     return templates
 
 
@@ -35,6 +38,7 @@ def test_pipeline_detail_live_partial_renders() -> None:
         info_hash="ab" * 20,
         master_added_at=None,
         slave_added_at=None,
+        slave_completed_at=now,
         created_at=now,
         error=None,
     )
@@ -58,6 +62,7 @@ def test_pipeline_detail_live_partial_renders() -> None:
             "release_name": "Show",
             "torrent_label": "BDRip · 1-2",
             "master_state": {},
+            "slave_state": {},
             "life_path_text": "path",
             "timeline": [
                 {
@@ -73,6 +78,8 @@ def test_pipeline_detail_live_partial_renders() -> None:
     assert "Жизненный путь" in html
     assert "slave_add" in html
     assert 'data-sse-key="pe-9"' in html
+    assert "gl-pipeline" in html
+    assert "На slave" in html
 
 
 def test_releases_live_partial_has_sse_keys() -> None:
@@ -143,6 +150,7 @@ def test_pipeline_detail_live_route(monkeypatch) -> None:
         torrent_id=55,
         master_added_at=None,
         slave_added_at=None,
+        slave_completed_at=None,
         error=None,
         tg_status="skipped",
         created_at=datetime(2026, 7, 26, tzinfo=timezone.utc),
@@ -270,6 +278,51 @@ def test_pipeline_page_no_hx_every_trigger() -> None:
     text = (_TEMPLATES_DIR / "pipeline.html").read_text(encoding="utf-8")
     assert "every 3s" not in text
     assert 'data-ui-sse-channel="pipeline"' in text
+    assert "Сияй" not in text
+
+
+def test_pipeline_live_partial_renders_slave_column() -> None:
+    templates = _templates()
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    row = SimpleNamespace(
+        id=5,
+        info_hash="cd" * 20,
+        status="slave_added",
+        tg_status="skipped",
+        master_added_at=now,
+        slave_added_at=now,
+        error=None,
+        created_at=now,
+    )
+    request = MagicMock()
+    html = templates.TemplateResponse(
+        request,
+        "partials/pipeline_live.html",
+        {
+            "request": request,
+            "display_rows": [
+                {
+                    "row": row,
+                    "release_name": "Show",
+                    "torrent_label": "WEB",
+                    "ids_title": "ids",
+                }
+            ],
+            "master_states": {},
+            "slave_states": {
+                "cd" * 20: {
+                    "key": "downloading",
+                    "label": "загружается",
+                    "progress": 0.42,
+                    "raw_state": "downloading",
+                }
+            },
+        },
+    ).body.decode("utf-8")
+    assert "На slave" in html
+    assert "gl-pipeline" in html
+    assert "загружается" in html
+    assert "42%" in html
 
 
 def test_releases_live_url_uses_urlencode() -> None:

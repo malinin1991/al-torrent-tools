@@ -115,7 +115,7 @@ def test_retry_recovers_failed_when_already_on_master(monkeypatch) -> None:
         return p
 
     service.mark_master_added = MagicMock(side_effect=mark_added)  # type: ignore[method-assign]
-    done = SimpleNamespace(status=TorrentPipelineService.STATUS_DONE, error=None)
+    done = SimpleNamespace(status=TorrentPipelineService.STATUS_SLAVE_ADDED, error=None)
     service.process_completion = MagicMock(return_value=done)  # type: ignore[method-assign]
     service.mark_failed = MagicMock()  # type: ignore[method-assign]
     service.mark_cancelled = MagicMock()  # type: ignore[method-assign]
@@ -295,7 +295,7 @@ def test_retry_waiting_slave_submits_when_ready(monkeypatch) -> None:
     )
     service.classify_master_torrent = MagicMock(return_value="complete")  # type: ignore[method-assign]
     service.load_torrent_bytes_from_archive = MagicMock(return_value=b"torrent")  # type: ignore[method-assign]
-    done = SimpleNamespace(status=TorrentPipelineService.STATUS_DONE, error=None)
+    done = SimpleNamespace(status=TorrentPipelineService.STATUS_SLAVE_ADDED, error=None)
     service.process_completion = MagicMock(return_value=done)  # type: ignore[method-assign]
     service.mark_cancelled = MagicMock()  # type: ignore[method-assign]
 

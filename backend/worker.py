@@ -85,6 +85,26 @@ async def _poll_master_pipeline() -> None:
                 pipeline_service.mark_failed(pipeline, str(exc))
 
 
+async def _poll_slave_pipeline() -> None:
+    """Частый fallback: aged slave_added → done; missing → cancelled."""
+    with SessionLocal() as db:
+        age_minutes = _setting_int("pipeline_master_min_age_min", settings.pipeline_master_min_age_min)
+        pipeline_service = TorrentPipelineService(db, actor="poll")
+        candidates = pipeline_service.get_slave_added_older_than(age_minutes)
+        for pipeline in candidates:
+            try:
+                pipeline_service.process_slave_completion(pipeline)
+            except Exception as exc:
+                if should_wait_for_qb(exc):
+                    logger.warning(
+                        "Pipeline %s: %s — статус не меняем на failed",
+                        pipeline.id,
+                        qb_client_wait_message("slave", exc),
+                    )
+                    continue
+                pipeline_service.mark_failed(pipeline, str(exc))
+
+
 async def _pipeline_reconcile() -> None:
     with SessionLocal() as db:
         try:
@@ -221,6 +241,14 @@ async def main() -> None:
         "interval",
         seconds=60,
         id="pipeline_poll",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _poll_slave_pipeline,
+        "interval",
+        seconds=60,
+        id="pipeline_slave_poll",
         max_instances=1,
         coalesce=True,
     )

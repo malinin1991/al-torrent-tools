@@ -504,15 +504,19 @@ def list_torrent_downloadable_files(info_hash: str, db: Session = Depends(get_db
 async def qb_complete_webhook(
     request: Request,
     hash_query: str | None = Query(default=None, alias="hash"),
+    role_query: str | None = Query(default=None, alias="role"),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Webhook от qBittorrent master: Run external program on torrent finished.
+    """Webhook от qBittorrent: Run external program on torrent finished.
 
-    Ожидает info hash v1 (`%I`) в query `?hash=` или JSON `{"hash":"..."}` (POST).
-    Если pipeline с таким hash есть и статус `master_added` — добавляет торрент на slave.
+    Обязательные query: `?hash=%I&role=master|slave` (или JSON `{"hash","role"}` на POST).
+    - role=master → process_completion (досылка на slave → slave_added)
+    - role=slave → process_slave_completion (slave seeding → done)
     """
     info_hash = (hash_query or "").strip().lower()
-    if not info_hash and request.method == "POST":
+    role = (role_query or "").strip().lower()
+    body: dict = {}
+    if request.method == "POST":
         content_type = (request.headers.get("content-type") or "").lower()
         if "application/json" in content_type:
             try:
@@ -520,9 +524,19 @@ async def qb_complete_webhook(
             except Exception:
                 raw_payload = {}
             if isinstance(raw_payload, dict):
-                info_hash = str(raw_payload.get("hash") or "").strip().lower()
+                body = raw_payload
+                if not info_hash:
+                    info_hash = str(body.get("hash") or "").strip().lower()
+                if not role:
+                    role = str(body.get("role") or "").strip().lower()
+
     if not info_hash:
         raise HTTPException(status_code=400, detail="Не передан hash (ожидается %I из qBittorrent)")
+    if role not in {"master", "slave"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Не передан role (ожидается role=master или role=slave)",
+        )
 
     try:
         info_hash = sanitize_info_hash(info_hash)
@@ -539,8 +553,7 @@ async def qb_complete_webhook(
 
     if pipeline.status == TorrentPipelineService.STATUS_DONE:
         return {"ok": True, "status": pipeline.status, "message": "Pipeline уже завершен"}
-    if pipeline.status == TorrentPipelineService.STATUS_SLAVE_ADDED:
-        return {"ok": True, "status": pipeline.status, "message": "Pipeline уже добавлен на slave"}
+
     if pipeline.status == TorrentPipelineService.STATUS_FAILED:
         return {
             "ok": False,
@@ -554,6 +567,107 @@ async def qb_complete_webhook(
             "status": pipeline.status,
             "pipeline_id": pipeline.id,
             "message": pipeline.error or "Pipeline отменён",
+        }
+
+    if role == "slave":
+        return await _qb_complete_slave_role(pipeline_service, pipeline)
+
+    return await _qb_complete_master_role(db, pipeline_service, pipeline)
+
+
+async def _qb_complete_slave_role(
+    pipeline_service: TorrentPipelineService,
+    pipeline,
+) -> dict:
+    """role=slave: slave_added → проверить раздачу → done."""
+    if pipeline.status in {
+        TorrentPipelineService.STATUS_DISCOVERED,
+        TorrentPipelineService.STATUS_WAITING_MASTER,
+        TorrentPipelineService.STATUS_MASTER_ADDED,
+        TorrentPipelineService.STATUS_MASTER_COMPLETE,
+        TorrentPipelineService.STATUS_WAITING_SLAVE,
+    }:
+        return {
+            "ok": False,
+            "status": pipeline.status,
+            "pipeline_id": pipeline.id,
+            "message": "Рано: slave ещё не в пайплайне (ожидается slave_added)",
+        }
+    if pipeline.status != TorrentPipelineService.STATUS_SLAVE_ADDED:
+        return {
+            "ok": False,
+            "status": pipeline.status,
+            "pipeline_id": pipeline.id,
+            "message": f"Неожиданный статус pipeline для role=slave: {pipeline.status}",
+        }
+
+    try:
+        slave_state = pipeline_service.classify_slave_torrent(pipeline)
+    except Exception as exc:
+        if should_wait_for_qb(exc):
+            return {
+                "ok": False,
+                "status": pipeline.status,
+                "pipeline_id": pipeline.id,
+                "message": qb_client_wait_message("slave", exc),
+            }
+        return {
+            "ok": False,
+            "status": pipeline.status,
+            "pipeline_id": pipeline.id,
+            "message": f"Не удалось проверить slave: {exc}",
+        }
+
+    if slave_state == "in_progress":
+        return {
+            "ok": False,
+            "status": pipeline.status,
+            "pipeline_id": pipeline.id,
+            "message": "Торрент на slave ещё не завершён — done отклонён",
+        }
+
+    try:
+        updated = pipeline_service.process_slave_completion(pipeline)
+    except Exception as exc:
+        if should_wait_for_qb(exc):
+            return {
+                "ok": False,
+                "status": pipeline.status,
+                "pipeline_id": pipeline.id,
+                "message": qb_client_wait_message("slave", exc),
+            }
+        pipeline_service.mark_failed(pipeline, str(exc))
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки pipeline: {exc}") from exc
+
+    if updated.status == TorrentPipelineService.STATUS_DONE:
+        return {"ok": True, "status": updated.status, "pipeline_id": updated.id}
+    if updated.status == TorrentPipelineService.STATUS_CANCELLED:
+        return {
+            "ok": False,
+            "status": updated.status,
+            "pipeline_id": updated.id,
+            "message": updated.error or "Торрент отсутствует на slave",
+        }
+    return {
+        "ok": False,
+        "status": updated.status,
+        "pipeline_id": updated.id,
+        "message": "Торрент на slave ещё не завершён — done отклонён",
+    }
+
+
+async def _qb_complete_master_role(
+    db: Session,
+    pipeline_service: TorrentPipelineService,
+    pipeline,
+) -> dict:
+    """role=master: master_* / waiting_slave → досылка на slave."""
+    if pipeline.status in TorrentPipelineService._SLAVE_REACHED:
+        return {
+            "ok": True,
+            "status": pipeline.status,
+            "pipeline_id": pipeline.id,
+            "message": "Pipeline уже после master (на slave или done)",
         }
     if pipeline.status == TorrentPipelineService.STATUS_DISCOVERED:
         return {

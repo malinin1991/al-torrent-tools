@@ -1,0 +1,14 @@
+{# Мини stage-graph в стиле GitLab CI. Ожидает list stages: [{id,label,state},…] #}
+{% set stages = stages if stages is defined else pipeline_ci_stages(status) %}
+{% set size = graph_size|default('sm') %}
+<ol class="gl-pipeline gl-pipeline-{{ size }}" aria-label="Pipeline stages">
+  {% for stage in stages %}
+  <li class="gl-stage gl-stage-{{ stage.state }}" title="{{ stage.label }}: {{ stage.state }}">
+    <span class="gl-stage-dot" aria-hidden="true"></span>
+    <span class="gl-stage-label">{{ stage.label }}</span>
+  </li>
+  {% if not loop.last %}
+  <li class="gl-stage-connector" aria-hidden="true"></li>
+  {% endif %}
+  {% endfor %}
+</ol>

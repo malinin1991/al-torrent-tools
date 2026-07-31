@@ -16,6 +16,7 @@ def _pipeline(*, status: str, pipeline_id: int = 1) -> SimpleNamespace:
         error=None,
         master_added_at=None,
         slave_added_at=None,
+        slave_completed_at=None,
     )
 
 
@@ -155,25 +156,23 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
         return p
 
-    def mark_done(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
-        p.status = TorrentPipelineService.STATUS_DONE
-        return p
-
     service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
-    service.mark_done = MagicMock(side_effect=mark_done)  # type: ignore[method-assign]
+    service.mark_done = MagicMock()  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, _sample_torrent_bytes())
 
-    assert result.status == TorrentPipelineService.STATUS_DONE
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
     qb.auth_log_in.assert_called_once()
     qb.torrents_add.assert_called_once()
     assert qb.torrents_add.call_args.kwargs.get("rename") == "Name / Orig (1-2) [HEVC]"
     assert qb.torrents_set_comment.called
     assert comment_state["value"] == comment_url
     service.mark_slave_added.assert_called_once()
+    service.mark_done.assert_not_called()
     slave_details = service.mark_slave_added.call_args.kwargs.get("details") or {}
     assert slave_details.get("qb_name") == "Name / Orig (1-2) [HEVC]"
     assert slave_details.get("qb_name") != "slave-qb-label"
+
 
 def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
@@ -194,16 +193,13 @@ def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPa
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
         return p
 
-    def mark_done(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
-        p.status = TorrentPipelineService.STATUS_DONE
-        return p
-
     service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
-    service.mark_done = MagicMock(side_effect=mark_done)  # type: ignore[method-assign]
+    service.mark_done = MagicMock()  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, _sample_torrent_bytes())
 
-    assert result.status == TorrentPipelineService.STATUS_DONE
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
+    service.mark_done.assert_not_called()
     service._claim_master_complete.assert_not_called()
 
 
@@ -247,7 +243,7 @@ def test_reconcile_with_master_actions() -> None:
         side_effect=lambda p, reason: setattr(p, "status", TorrentPipelineService.STATUS_CANCELLED) or p
     )
     service.process_completion = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda p, data: setattr(p, "status", TorrentPipelineService.STATUS_DONE) or p
+        side_effect=lambda p, data: setattr(p, "status", TorrentPipelineService.STATUS_SLAVE_ADDED) or p
     )
     service.mark_failed = MagicMock()  # type: ignore[method-assign]
 
@@ -300,7 +296,7 @@ def test_reconcile_recovers_failed_when_seeding_on_master() -> None:
 
     service.mark_master_added = MagicMock(side_effect=mark_added)  # type: ignore[method-assign]
     service.process_completion = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda p, data: setattr(p, "status", TorrentPipelineService.STATUS_DONE) or p
+        side_effect=lambda p, data: setattr(p, "status", TorrentPipelineService.STATUS_SLAVE_ADDED) or p
     )
     service.mark_failed = MagicMock()  # type: ignore[method-assign]
 
@@ -408,15 +404,96 @@ def test_process_completion_conflict_on_slave_is_success(monkeypatch: pytest.Mon
         p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
         return p
 
+    service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
+    service.mark_done = MagicMock()  # type: ignore[method-assign]
+
+    result = service.process_completion(pipeline, _sample_torrent_bytes())
+
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
+    service.mark_slave_added.assert_called_once()
+    service.mark_done.assert_not_called()
+
+
+def test_process_slave_completion_marks_done() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_SLAVE_ADDED)
+    service.classify_slave_torrent = MagicMock(return_value="complete")  # type: ignore[method-assign]
+
     def mark_done(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_DONE
         return p
 
-    service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
     service.mark_done = MagicMock(side_effect=mark_done)  # type: ignore[method-assign]
 
-    result = service.process_completion(pipeline, _sample_torrent_bytes())
+    result = service.process_slave_completion(pipeline)
 
     assert result.status == TorrentPipelineService.STATUS_DONE
-    service.mark_slave_added.assert_called_once()
     service.mark_done.assert_called_once()
+
+
+def test_process_slave_completion_in_progress_noop() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_SLAVE_ADDED)
+    service.classify_slave_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
+    service.mark_done = MagicMock()  # type: ignore[method-assign]
+
+    result = service.process_slave_completion(pipeline)
+
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
+    service.mark_done.assert_not_called()
+
+
+def test_process_slave_completion_missing_cancels() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_SLAVE_ADDED)
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+
+    def mark_cancelled(p: SimpleNamespace, reason: str) -> SimpleNamespace:
+        p.status = TorrentPipelineService.STATUS_CANCELLED
+        p.error = reason
+        return p
+
+    service.mark_cancelled = MagicMock(side_effect=mark_cancelled)  # type: ignore[method-assign]
+
+    result = service.process_slave_completion(pipeline)
+
+    assert result.status == TorrentPipelineService.STATUS_CANCELLED
+    service.mark_cancelled.assert_called_once()
+
+
+def test_classify_slave_torrent_states() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_SLAVE_ADDED)
+
+    qb = MagicMock()
+    service._get_slave_api = MagicMock(return_value=qb)  # type: ignore[method-assign]
+
+    qb.torrents_info.return_value = []
+    assert service.classify_slave_torrent(pipeline) == "missing"
+
+    qb.torrents_info.return_value = [SimpleNamespace(progress=0.4, state="downloading")]
+    assert service.classify_slave_torrent(pipeline) == "in_progress"
+
+    qb.torrents_info.return_value = [SimpleNamespace(progress=1.0, state="uploading")]
+    assert service.classify_slave_torrent(pipeline) == "complete"
+
+
+def test_pipeline_ci_stages_mapping() -> None:
+    from app.services.pipeline import pipeline_ci_stages
+
+    slave_added = pipeline_ci_stages("slave_added")
+    assert [s["state"] for s in slave_added] == ["success", "success", "running", "pending"]
+
+    master_complete = pipeline_ci_stages("master_complete")
+    assert [s["state"] for s in master_complete] == ["success", "success", "running", "pending"]
+
+    done = pipeline_ci_stages("done")
+    assert all(s["state"] == "success" for s in done)
+
+    failed = pipeline_ci_stages("failed", master_added_at="t")
+    assert failed[0]["state"] == "success"
+    assert failed[1]["state"] == "failed"

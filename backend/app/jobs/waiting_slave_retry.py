@@ -20,7 +20,7 @@ from app.services.qbittorrent import (
 from app.services.runtime_settings import build_anilibria_client
 
 _STATUS_WAITING_SLAVE = TorrentPipelineService.STATUS_WAITING_SLAVE
-_TERMINAL_OK = TorrentPipelineService._TERMINAL_OK
+_SLAVE_REACHED = TorrentPipelineService._SLAVE_REACHED
 
 
 def _check_stop(db: Session, job_id: int | None) -> None:
@@ -131,7 +131,7 @@ async def retry_waiting_slave_pipelines(db: Session, *, job_id: int | None = Non
                 stats["still_waiting"] += 1
                 stats["slave_up"] = False
                 break
-            if updated.status in _TERMINAL_OK:
+            if updated.status in _SLAVE_REACHED:
                 stats["submitted"] += 1
             else:
                 stats["errors"] += 1

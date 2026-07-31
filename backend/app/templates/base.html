@@ -112,9 +112,9 @@
     .badge-warn { background: #3d2f1f; color: #ffcc80; }
     .badge-danger { background: #3d1f1f; color: #ff8a80; }
     .badge-muted { background: #2a2a2a; color: #9b9b9b; }
-    .job-status-running, .job-status-discovered, .job-status-waiting_master, .job-status-waiting_slave, .job-status-master_added, .job-status-master_complete { color: #ffcc80; }
+    .job-status-running, .job-status-discovered, .job-status-waiting_master, .job-status-waiting_slave, .job-status-master_added, .job-status-master_complete, .job-status-slave_added { color: #ffcc80; }
     .job-status-stopping { color: #ffcc80; opacity: 0.85; }
-    .job-status-success, .job-status-done, .job-status-slave_added { color: #8dffb0; }
+    .job-status-success, .job-status-done { color: #8dffb0; }
     .job-status-failed, .job-status-error { color: #ff8a80; }
     .job-status-cancelled, .job-status-pending { color: #9b9b9b; }
     .tg-status-skipped { color: #9b9b9b; }
@@ -125,6 +125,71 @@
     .master-state-stopped { color: #ffcc80; }
     .master-state-error { color: #ff8a80; }
     .master-state-missing, .master-state-unavailable { color: #9b9b9b; }
+    .gl-pipeline {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      flex-wrap: nowrap;
+    }
+    .gl-pipeline-sm .gl-stage-label { font-size: 0.7rem; }
+    .gl-pipeline-lg .gl-stage-label { font-size: 0.85rem; }
+    .gl-pipeline-lg { margin-bottom: 14px; }
+    .gl-pipeline-detail-head {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .gl-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      min-width: 52px;
+    }
+    .gl-pipeline-lg .gl-stage { min-width: 72px; }
+    .gl-stage-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid #666;
+      background: #1b1b1b;
+      box-sizing: border-box;
+    }
+    .gl-pipeline-lg .gl-stage-dot { width: 18px; height: 18px; }
+    .gl-stage-label { color: #9b9b9b; line-height: 1.1; }
+    .gl-stage-connector {
+      flex: 0 0 18px;
+      height: 2px;
+      background: #444;
+      margin: 0 2px 16px;
+      list-style: none;
+      align-self: flex-start;
+    }
+    .gl-pipeline-lg .gl-stage-connector { flex-basis: 28px; margin-bottom: 18px; }
+    .gl-stage-pending .gl-stage-dot { border-color: #555; background: #222; }
+    .gl-stage-pending .gl-stage-label { color: #666; }
+    .gl-stage-running .gl-stage-dot {
+      border-color: #1f75cb;
+      background: #1f75cb;
+      animation: gl-stage-pulse 1.2s ease-in-out infinite;
+    }
+    .gl-stage-running .gl-stage-label { color: #9ad1ff; }
+    .gl-stage-success .gl-stage-dot { border-color: #2da160; background: #2da160; }
+    .gl-stage-success .gl-stage-label { color: #8dffb0; }
+    .gl-stage-failed .gl-stage-dot { border-color: #ec5941; background: #ec5941; }
+    .gl-stage-failed .gl-stage-label { color: #ff8a80; }
+    .gl-stage-cancelled .gl-stage-dot { border-color: #888; background: #555; }
+    .gl-stage-cancelled .gl-stage-label { color: #9b9b9b; }
+    .gl-pipeline-status-text { display: block; font-size: 0.75rem; margin-top: 4px; }
+    @keyframes gl-stage-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(31, 117, 203, 0.55); }
+      50% { box-shadow: 0 0 0 5px rgba(31, 117, 203, 0); }
+    }
     tr.row-selected td { background: #243044; }
     a { color: #9ad1ff; }
     code { background: #101010; padding: 2px 6px; border-radius: 4px; }

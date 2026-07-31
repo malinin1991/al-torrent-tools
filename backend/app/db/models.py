@@ -165,6 +165,7 @@ class TorrentPipeline(Base):
     tg_status: Mapped[str] = mapped_column(String(16), nullable=False, default="skipped")
     master_added_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     slave_added_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    slave_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     events: Mapped[list["PipelineEvent"]] = relationship(

@@ -225,25 +225,33 @@ AniLibria / ongoing
         ▼
   qBittorrent: «Run external program on torrent finished»
         │
-        │  curl …?hash=%I
+        │  curl …?hash=%I&role=master
         ▼
   POST/GET /api/webhooks/qb/complete
         │
         │  pipeline найден по info_hash, статус master_added
         ▼
   добавить тот же .torrent в qB slave
-  pipeline: master_complete → slave_added → done
+  pipeline: master_complete → slave_added
+        │
+        │  slave скачивает / checking
+        ▼
+  qBittorrent slave: «Run external program on torrent finished»
+        │
+        │  curl …?hash=%I&role=slave
+        ▼
+  pipeline: slave_added → done (на раздаче)
 
   если slave лежит:
   pipeline → waiting_slave
   worker каждые 5 мин → slave ожил?
-    ├─ есть в API и на master → slave_added → done
+    ├─ есть в API и на master → slave_added (далее webhook/poll → done)
     └─ нет в API или нет на master → cancelled
 ```
 
 Если webhook не сработал, есть запасные механики:
 
-1. **Worker ~60 с** — для `master_added` старше `PIPELINE_MASTER_MIN_AGE_MIN`: опрос master по hash; при 100% / seeding → slave; если торрента нет на master → `cancelled`.
+1. **Worker ~60 с** — для `master_added` старше `PIPELINE_MASTER_MIN_AGE_MIN`: опрос master по hash; при 100% / seeding → slave; если торрента нет на master → `cancelled`. Тот же интервал для aged `slave_added` → `done` (или `cancelled`, если нет на slave).
 2. **Сверка по расписанию** (по умолчанию каждые 10 мин, `PIPELINE_RECONCILE_INTERVAL_SEC` / настройка в UI; кнопка «Сверить с master» на `/pipeline`) — все pipeline в `master_added` / `master_complete` (ещё нет на slave):
    - загружен на master → досылка на slave;
    - ещё качается / остановлен → ждём callback;
@@ -251,46 +259,41 @@ AniLibria / ongoing
 3. **Master недоступен** — pipeline в `waiting_master`; worker каждые 5 мин проверяет master и наличие торрента в AniLibria API по hash.
 4. **Slave недоступен** — pipeline в `waiting_slave`; worker каждые 5 мин: slave ожил → торрент есть в API и на master → досылка на slave; иначе `cancelled`.
 
-### Команда для qBittorrent master
+### Команда для qBittorrent
 
-В master-клиенте:
+В **Tools → Options → Downloads** включи **Run external program on torrent finished** и вставь команду.
 
-1. **Tools → Options → Downloads** (или Settings → Downloads).
-2. Включи **Run external program on torrent finished** / **Run external program on completion**.
-3. Вставь команду:
-
-**Если AL Torrent Tools на той же машине, что и master (порт 8000 проброшен):**
+**Master** (после скачивания — досылка на slave):
 
 ```bash
-curl -fsS -X POST "http://127.0.0.1:8000/api/webhooks/qb/complete?hash=%I"
+curl -fsS -X POST "http://HOST:8000/api/webhooks/qb/complete?hash=%I&role=master"
 ```
 
-**Если master в Docker / на другой машине**, подставь IP или hostname хоста, где слушает API:
+**Slave** (после скачивания — pipeline → done):
 
 ```bash
-curl -fsS -X POST "http://HOST:8000/api/webhooks/qb/complete?hash=%I"
+curl -fsS -X POST "http://HOST:8000/api/webhooks/qb/complete?hash=%I&role=slave"
 ```
 
-Примеры `HOST`:
-- macOS Docker Desktop → часто `host.docker.internal`
-- Linux → IP хоста в docker-сети (`172.17.0.1` и т.п.) или IP LAN
-- удалённый сервер → `http://altt.example.com:8000/...`
+Локально вместо `HOST` — `127.0.0.1`; из Docker часто `host.docker.internal` или IP хоста.
 
-Параметр **`%I`** — Info hash v1 (qBittorrent подставит сам). Кавычки вокруг URL обязательны, иначе пробелы/спецсимволы обрежут команду.
+Параметр **`%I`** — Info hash v1 (qBittorrent подставит сам). **`role`** обязателен (`master` или `slave`). Кавычки вокруг URL обязательны.
 
 Проверка вручную (подставь реальный hash из UI «Пайплайн»):
 
 ```bash
-curl -fsS -X POST "http://127.0.0.1:8000/api/webhooks/qb/complete?hash=YOUR_INFO_HASH"
+curl -fsS -X POST "http://127.0.0.1:8000/api/webhooks/qb/complete?hash=YOUR_INFO_HASH&role=master"
+curl -fsS -X POST "http://127.0.0.1:8000/api/webhooks/qb/complete?hash=YOUR_INFO_HASH&role=slave"
 ```
 
-Ожидаемый ответ при успехе: `{"ok":true,"status":"done","pipeline_id":...}`.  
-Если hash неизвестен → `404`. Если торрент на master ещё качается → `ok:false`. Если pipeline ещё не `master_added` → `ok:false` с пояснением.
+Ожидаемый ответ при успехе master: `{"ok":true,"status":"slave_added","pipeline_id":...}`.  
+Успех slave: `{"ok":true,"status":"done","pipeline_id":...}`.  
+Если hash неизвестен → `404`. Без `role` → `400`. Если торрент ещё качается → `ok:false`.
 
 GET тоже поддерживается (удобно для отладки):
 
 ```bash
-curl -fsS "http://127.0.0.1:8000/api/webhooks/qb/complete?hash=%I"
+curl -fsS "http://127.0.0.1:8000/api/webhooks/qb/complete?hash=%I&role=master"
 ```
 
 ## Документация
