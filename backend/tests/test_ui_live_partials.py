@@ -278,10 +278,9 @@ def test_pipeline_page_no_hx_every_trigger() -> None:
     text = (_TEMPLATES_DIR / "pipeline.html").read_text(encoding="utf-8")
     assert "every 3s" not in text
     assert 'data-ui-sse-channel="pipeline"' in text
-    assert "Сияй" not in text
 
 
-def test_pipeline_live_partial_renders_slave_column() -> None:
+def test_pipeline_live_partial_compact_graph() -> None:
     templates = _templates()
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     row = SimpleNamespace(
@@ -308,21 +307,14 @@ def test_pipeline_live_partial_renders_slave_column() -> None:
                     "ids_title": "ids",
                 }
             ],
-            "master_states": {},
-            "slave_states": {
-                "cd" * 20: {
-                    "key": "downloading",
-                    "label": "загружается",
-                    "progress": 0.42,
-                    "raw_state": "downloading",
-                }
-            },
         },
     ).body.decode("utf-8")
-    assert "На slave" in html
     assert "gl-pipeline" in html
-    assert "загружается" in html
-    assert "42%" in html
+    assert "pipeline-list-table" in html
+    assert "На slave" not in html
+    assert "На master" not in html
+    assert ">TG<" not in html
+    assert "cdcdcdcd…" in html
 
 
 def test_releases_live_url_uses_urlencode() -> None:

@@ -144,17 +144,13 @@ def _pipeline_list_token(db: Session) -> str:
         f"{r.master_added_at}:{r.slave_added_at}:{r.slave_completed_at}"
         for r in rows
     )
-    # Глобальный count — иначе активный pipeline старше топ-300 не даёт progress-tick.
+    # Список больше не показывает live % с qB — tick не нужен (достаточно status/events).
     active = db.scalar(
         select(func.count())
         .select_from(TorrentPipeline)
         .where(TorrentPipeline.status.in_(_ACTIVE_PIPELINE_STATUSES))
     ) or 0
-    tick = ""
-    if active:
-        # Progress % с master меняется без записи в БД.
-        tick = f"|t:{int(time.time() // _PIPELINE_PROGRESS_TICK_SEC)}"
-    return f"p:{max_pipe}|e:{max_ev}|s:{sig}|a:{int(active)}{tick}"
+    return f"p:{max_pipe}|e:{max_ev}|s:{sig}|a:{int(active)}"
 
 
 def _pipeline_detail_token(db: Session, pipeline_id: int) -> str:

@@ -800,42 +800,19 @@ def _load_slave_ui_states(info_hashes: list[str]) -> dict:
 
 
 async def _pipeline_page_context_async(db: Session, *, status: str | None) -> dict:
-    context = _pipeline_page_context(db, status=status, master_states={}, slave_states={})
-    hashes = [row.info_hash for row in context["rows"]]
-    master_states, slave_states = await asyncio.gather(
-        asyncio.to_thread(_load_master_ui_states, hashes),
-        asyncio.to_thread(_load_slave_ui_states, hashes),
-    )
-    context["master_states"] = master_states
-    context["slave_states"] = slave_states
-    return context
+    # Список: только CI graph (без live qB master/slave — они на /pipeline/{id}).
+    return _pipeline_page_context(db, status=status)
 
 
 def _pipeline_page_context(
     db: Session,
     *,
     status: str | None,
-    master_states: dict | None = None,
-    slave_states: dict | None = None,
 ) -> dict:
     query = select(TorrentPipeline)
     if status:
         query = query.where(TorrentPipeline.status == status)
     rows = list(db.scalars(query.order_by(TorrentPipeline.id.desc()).limit(300)).all())
-    if master_states is None:
-        try:
-            master_states = TorrentPipelineService(db).get_master_ui_states(
-                [row.info_hash for row in rows]
-            )
-        except Exception:
-            master_states = {}
-    if slave_states is None:
-        try:
-            slave_states = TorrentPipelineService(db).get_slave_ui_states(
-                [row.info_hash for row in rows]
-            )
-        except Exception:
-            slave_states = {}
 
     archive_meta: dict[tuple[int, int], dict] = {}
     if rows:
@@ -878,8 +855,6 @@ def _pipeline_page_context(
     return {
         "rows": rows,
         "display_rows": display_rows,
-        "master_states": master_states,
-        "slave_states": slave_states,
         "status": status or "",
     }
 

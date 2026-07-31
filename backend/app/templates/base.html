@@ -135,6 +135,8 @@
       flex-wrap: nowrap;
     }
     .gl-pipeline-sm .gl-stage-label { font-size: 0.7rem; }
+    .gl-pipeline-sm .gl-stage { min-width: 44px; }
+    .gl-pipeline-sm .gl-stage-connector { flex-basis: 12px; margin-bottom: 14px; }
     .gl-pipeline-lg .gl-stage-label { font-size: 0.85rem; }
     .gl-pipeline-lg { margin-bottom: 14px; }
     .gl-pipeline-detail-head {
@@ -186,6 +188,17 @@
     .gl-stage-cancelled .gl-stage-dot { border-color: #888; background: #555; }
     .gl-stage-cancelled .gl-stage-label { color: #9b9b9b; }
     .gl-pipeline-status-text { display: block; font-size: 0.75rem; margin-top: 4px; }
+    .pipeline-list-table { width: 100%; table-layout: fixed; }
+    .pipeline-list-table th, .pipeline-list-table td {
+      vertical-align: middle;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pipeline-list-id { width: 7rem; white-space: nowrap; }
+    .pipeline-list-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; }
+    .pipeline-list-release { width: 28%; }
+    .pipeline-list-torrent { width: 28%; }
+    .pipeline-list-graph { width: 36%; overflow: visible; }
     @keyframes gl-stage-pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(31, 117, 203, 0.55); }
       50% { box-shadow: 0 0 0 5px rgba(31, 117, 203, 0); }
