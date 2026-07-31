@@ -230,7 +230,7 @@
       color: transparent;
     }
     .gl-pipeline-lg .gl-stage-dot { width: 18px; height: 18px; font-size: 13px; }
-    .gl-stage-label { color: #9b9b9b; line-height: 1.1; }
+    .gl-stage-label { color: #9b9b9b; line-height: 1.1; white-space: nowrap; }
     .gl-stage-connector {
       flex: 0 0 18px;
       height: 2px;
@@ -270,22 +270,44 @@
     .gl-stage-cancelled .gl-stage-label { color: #9b9b9b; }
     .gl-pipeline-status-text { display: block; font-size: 0.75rem; margin-top: 4px; }
     .pipeline-list-table { width: 100%; table-layout: fixed; }
+    .pipeline-list-table col.pipeline-col-id { width: 20rem; }
+    .pipeline-list-table col.pipeline-col-release { width: auto; }
+    .pipeline-list-table col.pipeline-col-torrent { width: 18rem; }
+    .pipeline-list-table col.pipeline-col-graph { width: 20rem; }
     .pipeline-list-table th, .pipeline-list-table td {
       vertical-align: middle;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .pipeline-list-id { width: 14rem; white-space: normal; }
+    .pipeline-list-id {
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: normal;
+    }
     .pipeline-list-hash {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 0.72rem;
-      word-break: break-all;
+      white-space: nowrap;
+      word-break: normal;
+      overflow-wrap: normal;
       line-height: 1.25;
       margin-top: 2px;
     }
-    .pipeline-list-release { width: 24%; }
-    .pipeline-list-torrent { width: 24%; }
-    .pipeline-list-graph { width: 40%; overflow: visible; }
+    .pipeline-list-release,
+    .pipeline-list-torrent {
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: normal;
+    }
+    .pipeline-list-graph {
+      overflow: visible;
+      overflow-wrap: normal;
+      word-break: normal;
+      white-space: normal;
+    }
+    .pipeline-list-graph .gl-pipeline-board {
+      width: max-content;
+    }
     @keyframes gl-stage-pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(31, 117, 203, 0.55); }
       50% { box-shadow: 0 0 0 5px rgba(31, 117, 203, 0); }

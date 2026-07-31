@@ -315,6 +315,7 @@ def test_pipeline_live_partial_compact_graph() -> None:
     ).body.decode("utf-8")
     assert "gl-pipeline-board" in html
     assert "pipeline-list-table" in html
+    assert "pipeline-col-graph" in html
     assert "Δtg" in html
     assert "gl-pipeline-fork" in html
     assert "gl-stage-side" in html
