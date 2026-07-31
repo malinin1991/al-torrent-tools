@@ -316,11 +316,13 @@ def test_pipeline_live_partial_compact_graph() -> None:
     assert "gl-pipeline-board" in html
     assert "pipeline-list-table" in html
     assert "Δtg" in html
+    assert "gl-pipeline-fork" in html
     assert "gl-stage-side" in html
     assert "На slave" not in html
     assert "На master" not in html
     assert ">TG<" not in html
     assert "tg" in html
+    assert "check" in html
     assert "cd" * 20 in html
     assert "…" not in html.split("pipeline-list-hash")[1].split("</div>")[0]
 

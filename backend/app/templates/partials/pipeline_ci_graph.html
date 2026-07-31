@@ -1,36 +1,51 @@
-{# CI graph: main ряд + параллельный side (TG). Ожидает graph={main, side_columns}. #}
+{# CI graph:
+   discover —— master —— slave —— done
+                  │                 ╲
+                  —— tg          —— check —— Δtg
+   tg от ребра discover——master; check——Δtg от ребра master——slave.
+#}
 {% if graph is not defined %}
   {% set graph = stages if stages is defined and stages is mapping else pipeline_ci_stages(status) %}
 {% endif %}
 {% set size = graph_size|default('sm') %}
+{% set tg_fork = graph.tg_fork if graph.tg_fork is defined else none %}
+{% set check_fork = graph.check_fork if graph.check_fork is defined else none %}
 <div class="gl-pipeline-board gl-pipeline-{{ size }}" aria-label="Pipeline stages">
   <div class="gl-pipeline-main-row">
     {% for stage in graph.main %}
-    <div class="gl-pipeline-col">
+    <div class="gl-pipeline-col{% if stage.id == 'master' %} gl-pipeline-col-master{% elif stage.id == 'slave' %} gl-pipeline-col-slave{% endif %}">
       <div class="gl-stage gl-stage-{{ stage.state }}" title="{{ stage.label }}: {{ stage.state }}{% if stage.state == 'failed' and error is defined and error %} — {{ error }}{% endif %}">
         <span class="gl-stage-dot" aria-hidden="true">{% if stage.state == 'failed' %}×{% elif stage.state == 'cancelled' %}–{% endif %}</span>
         <span class="gl-stage-label">{{ stage.label }}</span>
       </div>
-    </div>
-    {% if not loop.last %}
-    <div class="gl-stage-connector" aria-hidden="true"></div>
-    {% endif %}
-    {% endfor %}
-  </div>
-  <div class="gl-pipeline-side-row">
-    {% for side in graph.side_columns %}
-    <div class="gl-pipeline-col">
-      {% if side %}
-      <div class="gl-stage gl-stage-side gl-stage-{{ side.state }}" title="{{ side.label }}: {{ side.state }} (параллельно)">
-        <span class="gl-stage-dot" aria-hidden="true">{% if side.state == 'failed' %}×{% elif side.state == 'cancelled' %}–{% elif side.state == 'skipped' %}·{% endif %}</span>
-        <span class="gl-stage-label">{{ side.label }}</span>
+      {% if stage.id == 'master' and tg_fork and tg_fork.show %}
+      <div class="gl-pipeline-fork">
+        <div class="gl-v-connector" aria-hidden="true"></div>
+        <div class="gl-stage gl-stage-side gl-stage-{{ tg_fork.tg.state }}" title="{{ tg_fork.tg.label }}: {{ tg_fork.tg.state }} (уведомление о релизе)">
+          <span class="gl-stage-dot" aria-hidden="true">{% if tg_fork.tg.state == 'failed' %}×{% elif tg_fork.tg.state == 'cancelled' %}–{% elif tg_fork.tg.state == 'skipped' %}·{% endif %}</span>
+          <span class="gl-stage-label">{{ tg_fork.tg.label }}</span>
+        </div>
       </div>
-      {% else %}
-      <div class="gl-stage-spacer" aria-hidden="true"></div>
+      {% endif %}
+      {% if stage.id == 'slave' and check_fork and check_fork.show %}
+      <div class="gl-pipeline-fork gl-pipeline-fork-slave">
+        <div class="gl-diag-connector" aria-hidden="true"></div>
+        <div class="gl-pipeline-fork-check">
+          <div class="gl-stage gl-stage-side gl-stage-{{ check_fork.check.state }}" title="{{ check_fork.check.label }}: {{ check_fork.check.state }}">
+            <span class="gl-stage-dot" aria-hidden="true">{% if check_fork.check.state == 'failed' %}×{% elif check_fork.check.state == 'cancelled' %}–{% elif check_fork.check.state == 'skipped' %}·{% endif %}</span>
+            <span class="gl-stage-label">{{ check_fork.check.label }}</span>
+          </div>
+          <div class="gl-stage-connector gl-fork-h-connector" aria-hidden="true"></div>
+          <div class="gl-stage gl-stage-side gl-stage-{{ check_fork.delta_tg.state }}" title="{{ check_fork.delta_tg.label }}: {{ check_fork.delta_tg.state }} (изменения файлов)">
+            <span class="gl-stage-dot" aria-hidden="true">{% if check_fork.delta_tg.state == 'failed' %}×{% elif check_fork.delta_tg.state == 'cancelled' %}–{% elif check_fork.delta_tg.state == 'skipped' %}·{% endif %}</span>
+            <span class="gl-stage-label">{{ check_fork.delta_tg.label }}</span>
+          </div>
+        </div>
+      </div>
       {% endif %}
     </div>
     {% if not loop.last %}
-    <div class="gl-stage-connector gl-stage-connector-side" aria-hidden="true"></div>
+    <div class="gl-stage-connector" aria-hidden="true"></div>
     {% endif %}
     {% endfor %}
   </div>

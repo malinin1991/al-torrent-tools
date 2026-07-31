@@ -158,6 +158,7 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
 
     service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
     service.mark_done = MagicMock()  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, _sample_torrent_bytes())
 
@@ -195,6 +196,7 @@ def test_process_completion_resumes_master_complete(monkeypatch: pytest.MonkeyPa
 
     service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
     service.mark_done = MagicMock()  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, _sample_torrent_bytes())
 
@@ -406,12 +408,60 @@ def test_process_completion_conflict_on_slave_is_success(monkeypatch: pytest.Mon
 
     service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
     service.mark_done = MagicMock()  # type: ignore[method-assign]
+    # Conflict ≠ auto-done: пока in_progress на slave — остаёмся в slave_added
+    service.classify_slave_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, _sample_torrent_bytes())
 
     assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
     service.mark_slave_added.assert_called_once()
     service.mark_done.assert_not_called()
+
+
+def test_process_completion_conflict_already_complete_marks_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qbittorrentapi.exceptions import Conflict409Error
+
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_MASTER_ADDED)
+    claimed = _pipeline(status=TorrentPipelineService.STATUS_MASTER_COMPLETE)
+
+    service._claim_master_complete = MagicMock(return_value=claimed)  # type: ignore[method-assign]
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
+    slave = SimpleNamespace(
+        host="slave.local",
+        port=8080,
+        username="u",
+        password_encrypted="p",
+    )
+    service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
+    service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
+
+    qb = MagicMock()
+    qb.torrents_add.side_effect = Conflict409Error("Conflict")
+    monkeypatch.setattr("app.services.pipeline.qbittorrentapi.Client", MagicMock(return_value=qb))
+    monkeypatch.setattr("app.services.pipeline.get_setting_value", lambda *a, **k: "")
+    monkeypatch.setattr("app.services.pipeline.ensure_announce_passkey", lambda data, pk: data)
+
+    def mark_slave(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
+        p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
+        return p
+
+    def mark_done(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
+        p.status = TorrentPipelineService.STATUS_DONE
+        return p
+
+    service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
+    service.mark_done = MagicMock(side_effect=mark_done)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="complete")  # type: ignore[method-assign]
+
+    result = service.process_completion(pipeline, _sample_torrent_bytes())
+
+    assert result.status == TorrentPipelineService.STATUS_DONE
+    service.mark_slave_added.assert_called_once()
+    service.mark_done.assert_called_once()
 
 
 def test_process_slave_completion_marks_done() -> None:
@@ -485,27 +535,51 @@ def test_classify_slave_torrent_states() -> None:
 def test_pipeline_ci_stages_mapping() -> None:
     from app.services.pipeline import pipeline_ci_stages
 
-    # main: discover → master → check → slave → done
-    # side: tg под master; Δtg под check
+    # main: discover → master → slave → done
+    # tg от discover——master; check → Δtg от master——slave
     g = pipeline_ci_stages(
         "slave_added",
         tg_status="queued",
         files_status="running",
         tracked=True,
         master_added_at="t",
+        slave_added_at="t",
     )
-    assert [s["id"] for s in g["main"]] == ["discover", "master", "check", "slave", "done"]
+    assert [s["id"] for s in g["main"]] == ["discover", "master", "slave", "done"]
     assert [s["state"] for s in g["main"]] == [
         "success",
         "success",
         "running",
-        "running",
         "pending",
     ]
-    assert g["side_columns"][1]["id"] == "tg"
-    assert g["side_columns"][1]["state"] == "running"
-    assert g["side_columns"][2]["label"] == "Δtg"
-    assert g["side_columns"][2]["state"] == "pending"  # ждёт окончания check
+    assert g["tg_fork"]["show"] is True
+    assert g["tg_fork"]["tg"]["state"] == "running"
+    assert g["check_fork"]["show"] is True
+    assert g["check_fork"]["check"]["state"] == "running"
+    assert g["check_fork"]["delta_tg"]["label"] == "Δtg"
+    assert g["check_fork"]["delta_tg"]["state"] == "pending"  # ждёт окончания check
+
+    # early sync на master_added не открывает ветку master——slave и не зелёнит Δtg
+    early_sync = pipeline_ci_stages(
+        "master_added",
+        tg_status="queued",
+        files_status="synced",
+        tracked=True,
+        master_added_at="t",
+    )
+    assert early_sync["check_fork"]["show"] is False
+    assert early_sync["tg_fork"]["tg"]["state"] == "running"
+
+    done_synced = pipeline_ci_stages(
+        "done",
+        tg_status="sent",
+        files_status="synced",
+        tracked=True,
+        master_added_at="t",
+        slave_added_at="t",
+    )
+    assert done_synced["check_fork"]["check"]["state"] == "success"
+    assert done_synced["check_fork"]["delta_tg"]["state"] == "pending"  # hash ещё не done
 
     untracked = pipeline_ci_stages(
         "done",
@@ -513,10 +587,12 @@ def test_pipeline_ci_stages_mapping() -> None:
         files_status="success",
         tracked=False,
         master_added_at="t",
+        slave_added_at="t",
     )
-    assert untracked["main"][2]["state"] == "success"  # check
-    assert untracked["side_columns"][1]["state"] == "skipped"
-    assert untracked["side_columns"][2]["state"] == "skipped"
+    assert [s["state"] for s in untracked["main"]] == ["success"] * 4
+    assert untracked["check_fork"]["check"]["state"] == "success"
+    assert untracked["tg_fork"]["tg"]["state"] == "skipped"
+    assert untracked["check_fork"]["delta_tg"]["state"] == "skipped"
 
     master_added = pipeline_ci_stages(
         "master_added", tg_status="queued", tracked=True, master_added_at="t"
@@ -526,10 +602,10 @@ def test_pipeline_ci_stages_mapping() -> None:
         "running",
         "pending",
         "pending",
-        "pending",
     ]
-    assert master_added["side_columns"][1]["state"] == "running"
-    assert master_added["side_columns"][2]["state"] == "pending"
+    assert master_added["tg_fork"]["show"] is True
+    assert master_added["tg_fork"]["tg"]["state"] == "running"
+    assert master_added["check_fork"]["show"] is False  # ещё до master——slave
 
     done = pipeline_ci_stages(
         "done",
@@ -537,10 +613,13 @@ def test_pipeline_ci_stages_mapping() -> None:
         files_status="success",
         tracked=True,
         master_added_at="t",
+        slave_added_at="t",
     )
-    assert [s["state"] for s in done["main"]] == ["success"] * 5
-    assert done["side_columns"][1]["state"] == "success"
-    assert done["side_columns"][2]["state"] == "success"
+    assert [s["state"] for s in done["main"]] == ["success"] * 4
+    assert done["tg_fork"]["tg"]["state"] == "success"
+    assert done["check_fork"]["show"] is True
+    assert done["check_fork"]["check"]["state"] == "success"
+    assert done["check_fork"]["delta_tg"]["state"] == "success"
 
     failed = pipeline_ci_stages("failed", master_added_at="t", tracked=True)
     assert failed["main"][0]["state"] == "success"
@@ -553,23 +632,45 @@ def test_pipeline_ci_stages_mapping() -> None:
         tracked=True,
     )
     assert failed_slave["main"][1]["state"] == "success"
-    assert failed_slave["main"][3]["state"] == "failed"
+    assert failed_slave["main"][2]["state"] == "failed"
 
 
 def test_resolve_files_stage_statuses() -> None:
     from app.services.pipeline import resolve_files_stage_statuses
 
     db = MagicMock()
-    p_done = SimpleNamespace(id=1, status="done", slave_added_at="t")
-    p_fail = SimpleNamespace(id=2, status="failed", slave_added_at="t")
-    p_early = SimpleNamespace(id=3, status="master_added", slave_added_at=None)
+    p_done = SimpleNamespace(id=1, status="done", master_added_at="t", slave_added_at="t")
+    p_fail = SimpleNamespace(id=2, status="failed", master_added_at="t", slave_added_at="t")
+    p_early = SimpleNamespace(id=3, status="master_added", master_added_at="t", slave_added_at=None)
+    p_sync = SimpleNamespace(id=4, status="done", master_added_at="t", slave_added_at="t")
 
-    # Последние hash-события: done→hash_done, failed без событий
+    # Новейшие: hash_done; sync_composition без hash → success; без событий → pending
     db.execute.return_value.all.return_value = [
-        (1, "hash_done", 10),
-        (1, "hash_progress", 9),
+        (1, "hash_done", None, None, 10),
+        (1, "hash_progress", None, None, 9),
+        (
+            4,
+            "ui_status",
+            "ui_status sync_composition: transitions=17",
+            {"phase": "sync_composition"},
+            8,
+        ),
     ]
-    result = resolve_files_stage_statuses(db, [p_done, p_fail, p_early])
+    result = resolve_files_stage_statuses(db, [p_done, p_fail, p_early, p_sync])
     assert result[1] == "success"
     assert result[2] == "pending"  # failed без hash — не running
     assert result[3] == "pending"
+    assert result[4] == "synced"  # sync_composition = check ok, не hash success
+
+    # Более новый sync не перекрывает более старый hash_fail; hash_enqueued важнее sync
+    db.execute.return_value.all.return_value = [
+        (5, "ui_status", "sync", {"phase": "sync_composition"}, 30),
+        (5, "hash_fail", None, None, 20),
+        (6, "hash_enqueued", None, None, 40),
+        (6, "ui_status", "sync", {"phase": "sync_composition"}, 10),
+    ]
+    p5 = SimpleNamespace(id=5, status="done", master_added_at="t", slave_added_at="t")
+    p6 = SimpleNamespace(id=6, status="slave_added", master_added_at="t", slave_added_at="t")
+    result2 = resolve_files_stage_statuses(db, [p5, p6])
+    assert result2[5] == "failed"
+    assert result2[6] == "running"

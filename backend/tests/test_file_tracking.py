@@ -166,6 +166,7 @@ def test_process_completion_enqueues_hash_without_blocking_slave(monkeypatch: py
     service._add_to_slave = MagicMock(side_effect=fake_add)  # type: ignore[method-assign]
     enqueue = MagicMock()
     service._enqueue_hash_torrent = enqueue  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, b"torrent")
 
@@ -198,6 +199,7 @@ def test_process_completion_retry_enqueues_hash_if_needed() -> None:
     service._add_to_slave = MagicMock(return_value=done)  # type: ignore[method-assign]
     enqueue = MagicMock()
     service._enqueue_hash_torrent = enqueue  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, b"torrent")
 
