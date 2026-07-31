@@ -610,7 +610,7 @@ def test_pipeline_ci_stages_mapping() -> None:
     assert g["check_fork"]["delta_tg"]["label"] == "Δtg"
     assert g["check_fork"]["delta_tg"]["state"] == "pending"  # ждёт hash_done
 
-    # check/Δtg всегда видны; early sync зелёнит check, но не Δtg
+    # check/Δtg всегда видны; early sync НЕ зелёнит check (только hash_done)
     early_sync = pipeline_ci_stages(
         "master_added",
         tg_status="queued",
@@ -619,7 +619,7 @@ def test_pipeline_ci_stages_mapping() -> None:
         master_added_at="t",
     )
     assert early_sync["check_fork"]["show"] is True
-    assert early_sync["check_fork"]["check"]["state"] == "success"
+    assert early_sync["check_fork"]["check"]["state"] == "pending"
     assert early_sync["check_fork"]["delta_tg"]["state"] == "pending"
     assert early_sync["tg_fork"]["tg"]["state"] == "running"
 
@@ -643,7 +643,7 @@ def test_pipeline_ci_stages_mapping() -> None:
         master_added_at="t",
         slave_added_at="t",
     )
-    assert done_synced["check_fork"]["check"]["state"] == "success"
+    assert done_synced["check_fork"]["check"]["state"] == "pending"
     assert done_synced["check_fork"]["delta_tg"]["state"] == "pending"  # hash ещё не done
 
     untracked = pipeline_ci_stages(
@@ -711,7 +711,7 @@ def test_resolve_files_stage_statuses() -> None:
     p_early = SimpleNamespace(id=3, status="master_added", master_added_at="t", slave_added_at=None)
     p_sync = SimpleNamespace(id=4, status="done", master_added_at="t", slave_added_at="t")
 
-    # Новейшие: hash_done; sync_composition без hash → success; без событий → pending
+    # hash_done; sync_composition без hash → pending; без событий → pending
     db.execute.return_value.all.return_value = [
         (1, "hash_done", None, None, 10),
         (1, "hash_progress", None, None, 9),
@@ -727,22 +727,21 @@ def test_resolve_files_stage_statuses() -> None:
     assert result[1] == "success"
     assert result[2] == "pending"  # failed без hash — не running
     assert result[3] == "pending"
-    assert result[4] == "synced"  # sync_composition = check ok, не hash success
+    assert result[4] == "pending"  # sync_composition игнор для check
 
-    # Более новый sync не перекрывает hash_fail; более новый enqueue → running;
-    # более новый sync блокирует более старый enqueue (не forever-running).
+    # sync после hash_progress не глушит running; hash_fail важнее sync
     db.execute.return_value.all.return_value = [
         (5, "ui_status", "sync", {"phase": "sync_composition"}, 30),
         (5, "hash_fail", None, None, 20),
-        (6, "hash_enqueued", None, None, 40),
-        (6, "ui_status", "sync", {"phase": "sync_composition"}, 10),
-        (7, "ui_status", "sync", {"phase": "sync_composition"}, 50),
+        (6, "ui_status", "sync", {"phase": "sync_composition"}, 50),
+        (6, "hash_progress", None, None, 40),
         (7, "hash_enqueued", None, None, 40),
+        (7, "ui_status", "sync", {"phase": "sync_composition"}, 10),
     ]
     p5 = SimpleNamespace(id=5, status="done", master_added_at="t", slave_added_at="t")
     p6 = SimpleNamespace(id=6, status="slave_added", master_added_at="t", slave_added_at="t")
     p7 = SimpleNamespace(id=7, status="done", master_added_at="t", slave_added_at="t")
     result2 = resolve_files_stage_statuses(db, [p5, p6, p7])
     assert result2[5] == "failed"
-    assert result2[6] == "running"
-    assert result2[7] == "synced"
+    assert result2[6] == "running"  # progress новее sync — running
+    assert result2[7] == "running"  # enqueue; sync игнор

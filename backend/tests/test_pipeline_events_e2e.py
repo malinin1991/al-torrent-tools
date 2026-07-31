@@ -157,9 +157,12 @@ def test_qb_complete_webhook_slave_role_marks_done(monkeypatch: pytest.MonkeyPat
         def classify_slave_torrent(self, _p):  # noqa: ANN001
             return "complete"
 
-        def process_slave_completion(self, p):  # noqa: ANN001
+        def mark_done(self, p, **_kwargs):  # noqa: ANN001
             p.status = "done"
             return done
+
+        def process_slave_completion(self, p):  # noqa: ANN001
+            raise AssertionError("webhook complete должен звать mark_done, не process_slave_completion")
 
     monkeypatch.setattr("app.api.rest.TorrentPipelineService", FakeService)
 
@@ -246,7 +249,7 @@ def test_qb_complete_webhook_slave_role_rejects_missing(
 def test_qb_complete_webhook_slave_race_stays_in_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """classify=complete, но process_slave_completion оставил slave_added → ok:false."""
+    """classify=complete, но mark_done оставил slave_added → ok:false."""
     from app.api.rest import qb_complete_webhook
 
     db = MagicMock()
@@ -259,8 +262,11 @@ def test_qb_complete_webhook_slave_race_stays_in_progress(
         def classify_slave_torrent(self, _p):  # noqa: ANN001
             return "complete"
 
-        def process_slave_completion(self, p):  # noqa: ANN001
+        def mark_done(self, p, **_kwargs):  # noqa: ANN001
             return p
+
+        def process_slave_completion(self, p):  # noqa: ANN001
+            raise AssertionError("не должен вызываться")
 
     monkeypatch.setattr("app.api.rest.TorrentPipelineService", FakeService)
 

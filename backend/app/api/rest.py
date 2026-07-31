@@ -634,8 +634,12 @@ async def _qb_complete_slave_role(
             "message": "Торрент на slave не найден — done отклонён (ждём poll)",
         }
 
+    # complete: mark_done без повторного classify (TOCTOU missing→cancel).
     try:
-        updated = pipeline_service.process_slave_completion(pipeline)
+        updated = pipeline_service.mark_done(
+            pipeline,
+            details={"qb_role": "slave", "slave_state": "complete", "actor": "webhook"},
+        )
     except Exception as exc:
         if should_wait_for_qb(exc):
             return {
@@ -649,18 +653,11 @@ async def _qb_complete_slave_role(
 
     if updated.status == TorrentPipelineService.STATUS_DONE:
         return {"ok": True, "status": updated.status, "pipeline_id": updated.id}
-    if updated.status == TorrentPipelineService.STATUS_CANCELLED:
-        return {
-            "ok": False,
-            "status": updated.status,
-            "pipeline_id": updated.id,
-            "message": updated.error or "Торрент отсутствует на slave",
-        }
     return {
         "ok": False,
         "status": updated.status,
         "pipeline_id": updated.id,
-        "message": "Торрент на slave ещё не завершён — done отклонён",
+        "message": updated.error or f"Ожидался done, получен {updated.status}",
     }
 
 

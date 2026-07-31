@@ -82,14 +82,15 @@ def _ci_tg_state(tg_status: str | None, *, tracked: bool) -> CiStageState:
 
 
 def _ci_check_state(files_status: str | None) -> CiStageState:
-    """Стадия check (sync_composition / hash)."""
+    """Стадия check = hash_torrent (не ранний sync_composition)."""
     raw = (files_status or "pending").strip().lower()
-    if raw in {"success", "sent", "synced"}:
+    if raw == "success":
         return "success"
     if raw in {"running", "queued", "pending_job"}:
         return "running"
     if raw in {"failed", "fail"}:
         return "failed"
+    # synced / pending — ещё ждём hash
     return "pending"
 
 
@@ -238,12 +239,9 @@ def resolve_files_stage_statuses(
     db: Session,
     pipelines: list[TorrentPipeline],
 ) -> dict[int, str]:
-    """pipeline_id → pending|running|synced|success|failed для стадии check.
+    """pipeline_id → pending|running|success|failed для стадии check.
 
-    synced = ранний sync_composition (check ok, Δtg ещё нет).
-    success = hash_done / hash_settle.
-    hash_* решают раньше sync; sync не перекрывает hash_fail.
-    Не помечает done как running без событий.
+    Только hash_* / hash_settle. sync_composition на check не влияет (sticky UI).
     """
     if not pipelines:
         return {}
@@ -271,36 +269,27 @@ def resolve_files_stage_statuses(
         .order_by(PipelineEvent.id.desc())
     ).all()
 
-    # Новейшее hash_fail/done/settle/running — hard.
-    # sync_composition — soft: не перекрывает fail/done, но блокирует более старый running.
-    hard: set[int] = set()
-    soft_sync: set[int] = set()
+    decided: set[int] = set()
     for pipeline_id, event_type, message, details_json, _eid in rows:
-        if pipeline_id in hard:
+        if pipeline_id in decided:
             continue
         et = (event_type or "").strip().lower()
         if et == "hash_fail":
             by_id[pipeline_id] = "failed"
-            hard.add(pipeline_id)
+            decided.add(pipeline_id)
         elif et == "hash_done":
             by_id[pipeline_id] = "success"
-            hard.add(pipeline_id)
+            decided.add(pipeline_id)
         elif et in {"hash_enqueued", "hash_progress"}:
-            if pipeline_id in soft_sync:
-                continue
             by_id[pipeline_id] = "running"
-            hard.add(pipeline_id)
+            decided.add(pipeline_id)
         elif et == "ui_status":
             details = details_json if isinstance(details_json, dict) else {}
             phase = str(details.get("phase") or "").strip().lower()
-            msg = (message or "").lower()
             if phase == "hash_settle":
                 by_id[pipeline_id] = "success"
-                hard.add(pipeline_id)
-            elif phase == "sync_composition" or "sync_composition" in msg:
-                if by_id[pipeline_id] == "pending":
-                    by_id[pipeline_id] = "synced"
-                soft_sync.add(pipeline_id)
+                decided.add(pipeline_id)
+            # sync_composition — игнор (не check success и не глушит hash_progress)
     return by_id
 
 
