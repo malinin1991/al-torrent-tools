@@ -1,14 +1,37 @@
-{# Мини stage-graph в стиле GitLab CI. Ожидает list stages: [{id,label,state},…] #}
-{% set stages = stages if stages is defined else pipeline_ci_stages(status) %}
+{# CI graph: main ряд + параллельный side (TG). Ожидает graph={main, side_columns}. #}
+{% if graph is not defined %}
+  {% set graph = stages if stages is defined and stages is mapping else pipeline_ci_stages(status) %}
+{% endif %}
 {% set size = graph_size|default('sm') %}
-<ol class="gl-pipeline gl-pipeline-{{ size }}" aria-label="Pipeline stages">
-  {% for stage in stages %}
-  <li class="gl-stage gl-stage-{{ stage.state }}" title="{{ stage.label }}: {{ stage.state }}{% if stage.state == 'failed' and error is defined and error %} — {{ error }}{% endif %}">
-    <span class="gl-stage-dot" aria-hidden="true">{% if stage.state == 'failed' %}×{% elif stage.state == 'cancelled' %}–{% endif %}</span>
-    <span class="gl-stage-label">{{ stage.label }}</span>
-  </li>
-  {% if not loop.last %}
-  <li class="gl-stage-connector" aria-hidden="true"></li>
-  {% endif %}
-  {% endfor %}
-</ol>
+<div class="gl-pipeline-board gl-pipeline-{{ size }}" aria-label="Pipeline stages">
+  <div class="gl-pipeline-main-row">
+    {% for stage in graph.main %}
+    <div class="gl-pipeline-col">
+      <div class="gl-stage gl-stage-{{ stage.state }}" title="{{ stage.label }}: {{ stage.state }}{% if stage.state == 'failed' and error is defined and error %} — {{ error }}{% endif %}">
+        <span class="gl-stage-dot" aria-hidden="true">{% if stage.state == 'failed' %}×{% elif stage.state == 'cancelled' %}–{% endif %}</span>
+        <span class="gl-stage-label">{{ stage.label }}</span>
+      </div>
+    </div>
+    {% if not loop.last %}
+    <div class="gl-stage-connector" aria-hidden="true"></div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  <div class="gl-pipeline-side-row">
+    {% for side in graph.side_columns %}
+    <div class="gl-pipeline-col">
+      {% if side %}
+      <div class="gl-stage gl-stage-side gl-stage-{{ side.state }}" title="{{ side.label }}: {{ side.state }} (параллельно)">
+        <span class="gl-stage-dot" aria-hidden="true">{% if side.state == 'failed' %}×{% elif side.state == 'cancelled' %}–{% elif side.state == 'skipped' %}·{% endif %}</span>
+        <span class="gl-stage-label">{{ side.label }}</span>
+      </div>
+      {% else %}
+      <div class="gl-stage-spacer" aria-hidden="true"></div>
+      {% endif %}
+    </div>
+    {% if not loop.last %}
+    <div class="gl-stage-connector gl-stage-connector-side" aria-hidden="true"></div>
+    {% endif %}
+    {% endfor %}
+  </div>
+</div>

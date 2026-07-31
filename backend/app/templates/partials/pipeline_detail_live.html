@@ -1,11 +1,12 @@
 <div class="card" style="margin-bottom:12px;">
   <div class="gl-pipeline-detail-head">
-    {% set stages = pipeline_ci_stages(
+    {% set graph = pipeline_ci_stages(
       pipeline.status,
       master_added_at=pipeline.master_added_at,
       slave_added_at=pipeline.slave_added_at,
       tg_status=pipeline.tg_status,
       files_status=files_status,
+      tracked=tracked,
       error=pipeline.error,
     ) %}
     {% set error = pipeline.error %}

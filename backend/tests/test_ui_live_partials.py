@@ -64,6 +64,7 @@ def test_pipeline_detail_live_partial_renders() -> None:
             "master_state": {},
             "slave_state": {},
             "files_status": "success",
+            "tracked": True,
             "life_path_text": "path",
             "timeline": [
                 {
@@ -307,13 +308,15 @@ def test_pipeline_live_partial_compact_graph() -> None:
                     "torrent_label": "WEB",
                     "ids_title": "ids",
                     "files_status": "running",
+                    "tracked": True,
                 }
             ],
         },
     ).body.decode("utf-8")
-    assert "gl-pipeline" in html
+    assert "gl-pipeline-board" in html
     assert "pipeline-list-table" in html
     assert "Δtg" in html
+    assert "gl-stage-side" in html
     assert "На slave" not in html
     assert "На master" not in html
     assert ">TG<" not in html

@@ -41,6 +41,7 @@ from app.services.pipeline import (
     TorrentPipelineService,
     pipeline_ci_stages,
     resolve_files_stage_statuses,
+    resolve_tracked_release_ids,
 )
 from app.services.qbittorrent import test_qb_connection
 from app.services.runtime_settings import SECRET_SETTING_KEYS, build_anilibria_client, get_setting_value
@@ -783,6 +784,7 @@ async def _pipeline_detail_context_async(db: Session, pipeline_id: int) -> dict:
         "master_state": master_states.get((pipeline.info_hash or "").lower(), {}),
         "slave_state": slave_states.get((pipeline.info_hash or "").lower(), {}),
         "files_status": resolve_files_stage_statuses(db, [pipeline]).get(pipeline.id, "pending"),
+        "tracked": pipeline.release_id in resolve_tracked_release_ids(db, [pipeline.release_id]),
     }
 
 
@@ -844,6 +846,7 @@ def _pipeline_page_context(
 
     display_rows = []
     files_statuses = resolve_files_stage_statuses(db, rows)
+    tracked_ids = resolve_tracked_release_ids(db, [row.release_id for row in rows])
     for row in rows:
         meta = archive_meta.get((row.release_id, row.torrent_id), {})
         release_name = meta.get("anime_name") or meta.get("release_alias") or f"Release #{row.release_id}"
@@ -856,6 +859,7 @@ def _pipeline_page_context(
                 "torrent_label": torrent_label,
                 "ids_title": f"release_id={row.release_id} torrent_id={row.torrent_id}",
                 "files_status": files_statuses.get(row.id, "pending"),
+                "tracked": row.release_id in tracked_ids,
             }
         )
 

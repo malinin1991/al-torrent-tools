@@ -20,12 +20,13 @@
       <td class="pipeline-list-release" title="{{ item.ids_title }}">{{ item.release_name }}</td>
       <td class="pipeline-list-torrent" title="{{ item.ids_title }}">{{ item.torrent_label }}</td>
       <td class="pipeline-list-graph">
-        {% set stages = pipeline_ci_stages(
+        {% set graph = pipeline_ci_stages(
           row.status,
           master_added_at=row.master_added_at,
           slave_added_at=row.slave_added_at,
           tg_status=row.tg_status,
           files_status=item.files_status,
+          tracked=item.tracked,
           error=row.error,
         ) %}
         {% set error = row.error %}

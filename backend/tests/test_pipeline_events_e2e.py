@@ -500,6 +500,7 @@ def test_pipeline_detail_page_timeline_and_job_links(monkeypatch: pytest.MonkeyP
     db.scalars.side_effect = [
         MagicMock(all=lambda: events),  # PipelineEvent
         MagicMock(all=lambda: [50]),  # existing Job.id — только 50, 999 удалён
+        MagicMock(all=lambda: []),  # tracked release ids
     ]
     db.scalar.return_value = SimpleNamespace(
         anime_name="Show",
@@ -507,6 +508,8 @@ def test_pipeline_detail_page_timeline_and_job_links(monkeypatch: pytest.MonkeyP
         torrent_type="BDRip 1080p",
         torrent_description="1-2",
     )
+    db.execute.return_value.all.return_value = []  # files stage hash events
+
     async def _fake_to_thread(fn, *a, **k):  # noqa: ANN001
         return {}
 
@@ -555,8 +558,10 @@ def test_pipeline_detail_prefers_archive_by_info_hash(monkeypatch: pytest.Monkey
     db.scalars.side_effect = [
         MagicMock(all=lambda: []),  # events
         MagicMock(all=lambda: []),  # jobs
+        MagicMock(all=lambda: []),  # tracked
     ]
     db.scalar.side_effect = [by_hash]
+    db.execute.return_value.all.return_value = []
 
     async def _fake_to_thread(fn, *a, **k):  # noqa: ANN001
         return {}
@@ -611,6 +616,8 @@ def test_pipeline_detail_html_renders_timeline() -> None:
             "torrent_label": "BDRip · 1-2",
             "master_state": {},
             "slave_state": {},
+            "files_status": "success",
+            "tracked": False,
             "life_path_text": "path text",
             "timeline": [
                 {

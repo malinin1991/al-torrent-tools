@@ -125,20 +125,32 @@
     .master-state-stopped { color: #ffcc80; }
     .master-state-error { color: #ff8a80; }
     .master-state-missing, .master-state-unavailable { color: #9b9b9b; }
-    .gl-pipeline {
+    .gl-pipeline-board {
       display: flex;
-      align-items: center;
-      gap: 0;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .gl-pipeline-main-row,
+    .gl-pipeline-side-row {
+      display: flex;
+      align-items: flex-start;
       list-style: none;
       margin: 0;
       padding: 0;
       flex-wrap: nowrap;
     }
+    .gl-pipeline-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 0 0 auto;
+    }
+    .gl-pipeline-sm .gl-pipeline-col { min-width: 40px; }
+    .gl-pipeline-lg .gl-pipeline-col { min-width: 72px; }
     .gl-pipeline-sm .gl-stage-label { font-size: 0.65rem; }
-    .gl-pipeline-sm .gl-stage { min-width: 36px; }
-    .gl-pipeline-sm .gl-stage-connector { flex-basis: 8px; margin-bottom: 14px; }
     .gl-pipeline-lg .gl-stage-label { font-size: 0.85rem; }
-    .gl-pipeline-lg { margin-bottom: 14px; }
+    .gl-pipeline-lg { margin-bottom: 4px; }
     .gl-pipeline-detail-head {
       display: flex;
       align-items: center;
@@ -151,9 +163,14 @@
       flex-direction: column;
       align-items: center;
       gap: 4px;
-      min-width: 52px;
     }
-    .gl-pipeline-lg .gl-stage { min-width: 72px; }
+    .gl-stage-side { opacity: 0.95; }
+    .gl-stage-spacer {
+      width: 14px;
+      height: 14px;
+      visibility: hidden;
+    }
+    .gl-pipeline-lg .gl-stage-spacer { width: 18px; height: 18px; }
     .gl-stage-dot {
       width: 14px;
       height: 14px;
@@ -175,13 +192,24 @@
       flex: 0 0 18px;
       height: 2px;
       background: #444;
-      margin: 0 2px 16px;
-      list-style: none;
+      margin: 6px 2px 0;
       align-self: flex-start;
     }
-    .gl-pipeline-lg .gl-stage-connector { flex-basis: 28px; margin-bottom: 18px; }
+    .gl-pipeline-sm .gl-stage-connector { flex-basis: 10px; }
+    .gl-pipeline-lg .gl-stage-connector { flex-basis: 28px; margin-top: 8px; }
+    .gl-stage-connector-side {
+      background: transparent;
+      height: 0;
+      margin: 0;
+    }
     .gl-stage-pending .gl-stage-dot { border-color: #555; background: #222; }
     .gl-stage-pending .gl-stage-label { color: #666; }
+    .gl-stage-skipped .gl-stage-dot {
+      border-color: #444;
+      background: #1a1a1a;
+      color: #666;
+    }
+    .gl-stage-skipped .gl-stage-label { color: #555; }
     .gl-stage-running .gl-stage-dot {
       border-color: #1f75cb;
       background: #1f75cb;

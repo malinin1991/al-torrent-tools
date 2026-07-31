@@ -485,65 +485,75 @@ def test_classify_slave_torrent_states() -> None:
 def test_pipeline_ci_stages_mapping() -> None:
     from app.services.pipeline import pipeline_ci_stages
 
-    # discover → master → tg → slave → done → Δtg
-    slave_added = pipeline_ci_stages("slave_added", tg_status="queued", files_status="running")
-    assert [s["id"] for s in slave_added] == [
-        "discover",
-        "master",
-        "tg",
-        "slave",
+    # main: discover → master → check → slave → done
+    # side: tg под master; Δtg под check
+    g = pipeline_ci_stages(
+        "slave_added",
+        tg_status="queued",
+        files_status="running",
+        tracked=True,
+        master_added_at="t",
+    )
+    assert [s["id"] for s in g["main"]] == ["discover", "master", "check", "slave", "done"]
+    assert [s["state"] for s in g["main"]] == [
+        "success",
+        "success",
+        "running",
+        "running",
+        "pending",
+    ]
+    assert g["side_columns"][1]["id"] == "tg"
+    assert g["side_columns"][1]["state"] == "running"
+    assert g["side_columns"][2]["label"] == "Δtg"
+    assert g["side_columns"][2]["state"] == "pending"  # ждёт окончания check
+
+    untracked = pipeline_ci_stages(
         "done",
-        "files",
-    ]
-    assert [s["label"] for s in slave_added][-1] == "Δtg"
-    assert [s["state"] for s in slave_added] == [
-        "success",
-        "success",
-        "running",
-        "running",
-        "pending",
-        "running",
-    ]
+        tg_status="skipped",
+        files_status="success",
+        tracked=False,
+        master_added_at="t",
+    )
+    assert untracked["main"][2]["state"] == "success"  # check
+    assert untracked["side_columns"][1]["state"] == "skipped"
+    assert untracked["side_columns"][2]["state"] == "skipped"
 
-    master_complete = pipeline_ci_stages("master_complete", tg_status="sent")
-    assert [s["state"] for s in master_complete] == [
+    master_added = pipeline_ci_stages(
+        "master_added", tg_status="queued", tracked=True, master_added_at="t"
+    )
+    assert [s["state"] for s in master_added["main"]] == [
         "success",
-        "success",
-        "success",
-        "running",
-        "pending",
-        "pending",
-    ]
-
-    master_added = pipeline_ci_stages("master_added", tg_status="queued")
-    assert [s["state"] for s in master_added] == [
-        "success",
-        "running",
         "running",
         "pending",
         "pending",
         "pending",
     ]
+    assert master_added["side_columns"][1]["state"] == "running"
+    assert master_added["side_columns"][2]["state"] == "pending"
 
-    done = pipeline_ci_stages("done", tg_status="sent", files_status="success")
-    assert [s["state"] for s in done] == ["success"] * 6
+    done = pipeline_ci_stages(
+        "done",
+        tg_status="sent",
+        files_status="success",
+        tracked=True,
+        master_added_at="t",
+    )
+    assert [s["state"] for s in done["main"]] == ["success"] * 5
+    assert done["side_columns"][1]["state"] == "success"
+    assert done["side_columns"][2]["state"] == "success"
 
-    done_hash_running = pipeline_ci_stages("done", tg_status="skipped", files_status="running")
-    assert done_hash_running[2]["state"] == "success"  # tg skipped
-    assert done_hash_running[5]["state"] == "running"  # Δtg
-
-    failed = pipeline_ci_stages("failed", master_added_at="t")
-    assert failed[0]["state"] == "success"
-    assert failed[1]["state"] == "failed"
-    assert failed[3]["state"] == "pending"
+    failed = pipeline_ci_stages("failed", master_added_at="t", tracked=True)
+    assert failed["main"][0]["state"] == "success"
+    assert failed["main"][1]["state"] == "failed"
 
     failed_slave = pipeline_ci_stages(
         "failed",
         master_added_at="t",
         error="Slave недоступен — waiting_slave",
+        tracked=True,
     )
-    assert failed_slave[1]["state"] == "success"
-    assert failed_slave[3]["state"] == "failed"
+    assert failed_slave["main"][1]["state"] == "success"
+    assert failed_slave["main"][3]["state"] == "failed"
 
 
 def test_resolve_files_stage_statuses() -> None:
