@@ -192,31 +192,14 @@ def pipeline_ci_stages(
     check_state = _ci_check_state(files_status)
     # tg: после discover / на пути к master (в т.ч. waiting_master)
     show_tg_fork = raw != "discovered" or master_added_at is not None
-    # check/Δtg: от ребра master——slave (не из-за одного early sync на master_added)
-    files_raw = (files_status or "pending").strip().lower()
-    show_check_fork = (
-        slave_added_at is not None
-        or raw
-        in {
-            "master_complete",
-            "waiting_slave",
-            "slave_added",
-            "done",
-        }
-        or files_raw in {"running", "success", "failed"}
-        or (
-            raw in {"failed", "cancelled"}
-            and (slave_added_at is not None or files_raw in {"running", "success", "failed", "synced"})
-        )
-    )
+    # check/Δtg всегда видны (иначе на master running кажется, что проверки не будет)
+    show_check_fork = True
 
     tg_state = _side_tg_state(
         pipeline_status=raw, tg_status=tg_status, tracked=tracked
     )
     if not show_tg_fork:
         tg_state = "skipped" if not tracked else "pending"
-    if not show_check_fork:
-        check_state = "pending"
     delta_tg = _side_delta_tg_state(
         tracked=tracked, files_status=files_status, check_state=check_state
     )

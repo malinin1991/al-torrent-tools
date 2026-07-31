@@ -557,9 +557,9 @@ def test_pipeline_ci_stages_mapping() -> None:
     assert g["check_fork"]["show"] is True
     assert g["check_fork"]["check"]["state"] == "running"
     assert g["check_fork"]["delta_tg"]["label"] == "Δtg"
-    assert g["check_fork"]["delta_tg"]["state"] == "pending"  # ждёт окончания check
+    assert g["check_fork"]["delta_tg"]["state"] == "pending"  # ждёт hash_done
 
-    # early sync на master_added не открывает ветку master——slave и не зелёнит Δtg
+    # check/Δtg всегда видны; early sync зелёнит check, но не Δtg
     early_sync = pipeline_ci_stages(
         "master_added",
         tg_status="queued",
@@ -567,8 +567,22 @@ def test_pipeline_ci_stages_mapping() -> None:
         tracked=True,
         master_added_at="t",
     )
-    assert early_sync["check_fork"]["show"] is False
+    assert early_sync["check_fork"]["show"] is True
+    assert early_sync["check_fork"]["check"]["state"] == "success"
+    assert early_sync["check_fork"]["delta_tg"]["state"] == "pending"
     assert early_sync["tg_fork"]["tg"]["state"] == "running"
+
+    # неотслеживаемый — Δtg сразу skipped (даже на master_added)
+    untracked_early = pipeline_ci_stages(
+        "master_added",
+        tg_status="skipped",
+        files_status="pending",
+        tracked=False,
+        master_added_at="t",
+    )
+    assert untracked_early["check_fork"]["show"] is True
+    assert untracked_early["check_fork"]["check"]["state"] == "pending"
+    assert untracked_early["check_fork"]["delta_tg"]["state"] == "skipped"
 
     done_synced = pipeline_ci_stages(
         "done",
@@ -605,7 +619,9 @@ def test_pipeline_ci_stages_mapping() -> None:
     ]
     assert master_added["tg_fork"]["show"] is True
     assert master_added["tg_fork"]["tg"]["state"] == "running"
-    assert master_added["check_fork"]["show"] is False  # ещё до master——slave
+    assert master_added["check_fork"]["show"] is True
+    assert master_added["check_fork"]["check"]["state"] == "pending"
+    assert master_added["check_fork"]["delta_tg"]["state"] == "pending"
 
     done = pipeline_ci_stages(
         "done",
