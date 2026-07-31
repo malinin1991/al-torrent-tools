@@ -207,6 +207,42 @@ def test_qb_complete_webhook_slave_role_rejects_in_progress(
     assert result["status"] == "slave_added"
 
 
+def test_qb_complete_webhook_slave_role_rejects_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """missing на webhook ≠ cancel (lag); cancel — aged poll."""
+    from app.api.rest import qb_complete_webhook
+
+    db = MagicMock()
+    pipeline = _pipeline(status="slave_added", pipeline_id=11)
+
+    class FakeService(TorrentPipelineService):
+        def get_latest_by_hash(self, _h):  # noqa: ANN001
+            return pipeline
+
+        def classify_slave_torrent(self, _p):  # noqa: ANN001
+            return "missing"
+
+        def process_slave_completion(self, p):  # noqa: ANN001
+            raise AssertionError("не должен вызываться при missing на webhook")
+
+        def mark_cancelled(self, p, _reason):  # noqa: ANN001
+            raise AssertionError("webhook missing не должен cancel")
+
+    monkeypatch.setattr("app.api.rest.TorrentPipelineService", FakeService)
+
+    async def _run():
+        request = MagicMock()
+        request.method = "GET"
+        return await qb_complete_webhook(
+            request, hash_query="ab" * 20, role_query="slave", db=db
+        )
+
+    result = asyncio.run(_run())
+    assert result["ok"] is False
+    assert result["status"] == "slave_added"
+
+
 def test_qb_complete_webhook_slave_race_stays_in_progress(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

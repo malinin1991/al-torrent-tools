@@ -43,11 +43,18 @@ def test_process_completion_noop_for_slave_added() -> None:
     service = TorrentPipelineService(db)
     pipeline = _pipeline(status=TorrentPipelineService.STATUS_SLAVE_ADDED)
     service._claim_master_complete = MagicMock()  # type: ignore[method-assign]
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
+    service.mark_done = MagicMock()  # type: ignore[method-assign]
+    service.mark_cancelled = MagicMock()  # type: ignore[method-assign]
 
     result = service.process_completion(pipeline, b"torrent-bytes")
 
     assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
     service._claim_master_complete.assert_not_called()
+    service._enqueue_hash_torrent.assert_called_once()
+    service.mark_done.assert_not_called()
+    service.mark_cancelled.assert_not_called()
 
 
 def test_process_completion_skip_when_claim_loses_race() -> None:
@@ -464,6 +471,50 @@ def test_process_completion_conflict_already_complete_marks_done(
     service.mark_done.assert_called_once()
 
 
+def test_process_completion_after_add_missing_stays_slave_added(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сразу после add missing ≠ cancel (lag torrents_info)."""
+    from qbittorrentapi.exceptions import Conflict409Error
+
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_MASTER_ADDED)
+    claimed = _pipeline(status=TorrentPipelineService.STATUS_MASTER_COMPLETE)
+
+    service._claim_master_complete = MagicMock(return_value=claimed)  # type: ignore[method-assign]
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
+    slave = SimpleNamespace(
+        host="slave.local",
+        port=8080,
+        username="u",
+        password_encrypted="p",
+    )
+    service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
+    service._resolve_qb_meta = MagicMock(return_value=(None, None, None, []))  # type: ignore[method-assign]
+
+    qb = MagicMock()
+    qb.torrents_add.side_effect = Conflict409Error("Conflict")
+    monkeypatch.setattr("app.services.pipeline.qbittorrentapi.Client", MagicMock(return_value=qb))
+    monkeypatch.setattr("app.services.pipeline.get_setting_value", lambda *a, **k: "")
+    monkeypatch.setattr("app.services.pipeline.ensure_announce_passkey", lambda data, pk: data)
+
+    def mark_slave(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
+        p.status = TorrentPipelineService.STATUS_SLAVE_ADDED
+        return p
+
+    service.mark_slave_added = MagicMock(side_effect=mark_slave)  # type: ignore[method-assign]
+    service.mark_done = MagicMock()  # type: ignore[method-assign]
+    service.mark_cancelled = MagicMock()  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+
+    result = service.process_completion(pipeline, _sample_torrent_bytes())
+
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
+    service.mark_cancelled.assert_not_called()
+    service.mark_done.assert_not_called()
+
+
 def test_process_slave_completion_marks_done() -> None:
     db = MagicMock()
     service = TorrentPipelineService(db)
@@ -678,15 +729,20 @@ def test_resolve_files_stage_statuses() -> None:
     assert result[3] == "pending"
     assert result[4] == "synced"  # sync_composition = check ok, не hash success
 
-    # Более новый sync не перекрывает более старый hash_fail; hash_enqueued важнее sync
+    # Более новый sync не перекрывает hash_fail; более новый enqueue → running;
+    # более новый sync блокирует более старый enqueue (не forever-running).
     db.execute.return_value.all.return_value = [
         (5, "ui_status", "sync", {"phase": "sync_composition"}, 30),
         (5, "hash_fail", None, None, 20),
         (6, "hash_enqueued", None, None, 40),
         (6, "ui_status", "sync", {"phase": "sync_composition"}, 10),
+        (7, "ui_status", "sync", {"phase": "sync_composition"}, 50),
+        (7, "hash_enqueued", None, None, 40),
     ]
     p5 = SimpleNamespace(id=5, status="done", master_added_at="t", slave_added_at="t")
     p6 = SimpleNamespace(id=6, status="slave_added", master_added_at="t", slave_added_at="t")
-    result2 = resolve_files_stage_statuses(db, [p5, p6])
+    p7 = SimpleNamespace(id=7, status="done", master_added_at="t", slave_added_at="t")
+    result2 = resolve_files_stage_statuses(db, [p5, p6, p7])
     assert result2[5] == "failed"
     assert result2[6] == "running"
+    assert result2[7] == "synced"

@@ -625,6 +625,14 @@ async def _qb_complete_slave_role(
             "pipeline_id": pipeline.id,
             "message": "Торрент на slave ещё не завершён — done отклонён",
         }
+    if slave_state == "missing":
+        # Не cancelled: webhook «finished» при lag API / гонке; cancel — через aged poll.
+        return {
+            "ok": False,
+            "status": pipeline.status,
+            "pipeline_id": pipeline.id,
+            "message": "Торрент на slave не найден — done отклонён (ждём poll)",
+        }
 
     try:
         updated = pipeline_service.process_slave_completion(pipeline)

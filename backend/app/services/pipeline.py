@@ -271,32 +271,36 @@ def resolve_files_stage_statuses(
         .order_by(PipelineEvent.id.desc())
     ).all()
 
-    # hash_* — терминальные; sync_composition не закрывает скан (не перекрывает hash_fail).
-    decided: set[int] = set()
+    # Новейшее hash_fail/done/settle/running — hard.
+    # sync_composition — soft: не перекрывает fail/done, но блокирует более старый running.
+    hard: set[int] = set()
+    soft_sync: set[int] = set()
     for pipeline_id, event_type, message, details_json, _eid in rows:
-        if pipeline_id in decided:
+        if pipeline_id in hard:
             continue
         et = (event_type or "").strip().lower()
         if et == "hash_fail":
             by_id[pipeline_id] = "failed"
-            decided.add(pipeline_id)
+            hard.add(pipeline_id)
         elif et == "hash_done":
             by_id[pipeline_id] = "success"
-            decided.add(pipeline_id)
+            hard.add(pipeline_id)
         elif et in {"hash_enqueued", "hash_progress"}:
+            if pipeline_id in soft_sync:
+                continue
             by_id[pipeline_id] = "running"
-            decided.add(pipeline_id)
+            hard.add(pipeline_id)
         elif et == "ui_status":
             details = details_json if isinstance(details_json, dict) else {}
             phase = str(details.get("phase") or "").strip().lower()
             msg = (message or "").lower()
             if phase == "hash_settle":
                 by_id[pipeline_id] = "success"
-                decided.add(pipeline_id)
+                hard.add(pipeline_id)
             elif phase == "sync_composition" or "sync_composition" in msg:
                 if by_id[pipeline_id] == "pending":
                     by_id[pipeline_id] = "synced"
-                # не decided — ниже по id могут быть hash_*
+                soft_sync.add(pipeline_id)
     return by_id
 
 
@@ -792,6 +796,9 @@ class TorrentPipelineService:
                 details={"noop": True},
                 log_level="debug",
             )
+            if pipeline.status == self.STATUS_SLAVE_ADDED:
+                self._enqueue_hash_torrent(pipeline)
+                return self._maybe_promote_slave_complete(pipeline)
             return pipeline
         if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
             result = self._add_to_slave(pipeline, torrent_bytes)
@@ -816,9 +823,7 @@ class TorrentPipelineService:
                 )
                 # Даже на race: убедимся, что hash_torrent поставлен.
                 self._enqueue_hash_torrent(pipeline)
-                if pipeline.status == self.STATUS_SLAVE_ADDED:
-                    return self.process_slave_completion(pipeline)
-                return pipeline
+                return self._maybe_promote_slave_complete(pipeline)
             if pipeline.status in {self.STATUS_MASTER_COMPLETE, self.STATUS_WAITING_SLAVE}:
                 result = self._add_to_slave(pipeline, torrent_bytes)
                 return self._after_slave_add(result)
@@ -831,14 +836,24 @@ class TorrentPipelineService:
         return self._after_slave_add(result)
 
     def _after_slave_add(self, pipeline: TorrentPipeline) -> TorrentPipeline:
-        """После add: hash сразу; если уже complete на slave — done."""
+        """После add: hash сразу; done только если slave уже complete (не cancel на lag)."""
         self._enqueue_hash_torrent(pipeline)
-        if pipeline.status == self.STATUS_SLAVE_ADDED:
-            return self.process_slave_completion(pipeline)
+        return self._maybe_promote_slave_complete(pipeline)
+
+    def _maybe_promote_slave_complete(self, pipeline: TorrentPipeline) -> TorrentPipeline:
+        """slave_added + complete → done. missing/in_progress не трогаем (ждём poll/webhook)."""
+        if pipeline.status != self.STATUS_SLAVE_ADDED:
+            return pipeline
+        try:
+            state = self.classify_slave_torrent(pipeline)
+        except Exception:
+            return pipeline
+        if state == "complete":
+            return self.mark_done(pipeline, details={"qb_role": "slave", "slave_state": state})
         return pipeline
 
     def process_slave_completion(self, pipeline: TorrentPipeline) -> TorrentPipeline:
-        """slave_added + slave complete/seeding → done; missing → cancelled."""
+        """slave_added + slave complete/seeding → done; missing → cancelled (aged poll)."""
         self._db.refresh(pipeline)
         if pipeline.status == self.STATUS_DONE:
             self._record_event(
