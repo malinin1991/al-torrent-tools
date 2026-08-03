@@ -37,6 +37,20 @@ def test_build_release_torrents_url() -> None:
     assert url == "https://www.anilibria.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
 
 
+def test_build_release_admin_url() -> None:
+    from app.services.torrent_qb_meta import build_release_admin_url
+
+    tpl = "https://adminka.example/anime/release/{release_id}#tab=torrents"
+    assert (
+        build_release_admin_url(10232, tpl)
+        == "https://adminka.example/anime/release/10232#tab=torrents"
+    )
+    assert build_release_admin_url(1, "") is None
+    assert build_release_admin_url(1, "   ") is None
+    assert build_release_admin_url(1, None) is None
+    assert build_release_admin_url(1, "https://adminka.example/no-placeholder") is None
+
+
 def test_first_release_torrents_url_skips_empty() -> None:
     url = first_release_torrents_url(
         None,

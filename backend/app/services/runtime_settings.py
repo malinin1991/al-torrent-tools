@@ -29,8 +29,15 @@ class AniLibriaRuntimeSettings:
     retry_delay_ms: int
 
 
-def get_setting_value(db: Session | None, key: str, default: str = "") -> str:
-    """Значение из БД с fallback на default; пустая строка в БД не перекрывает default для URL."""
+def get_setting_value(
+    db: Session | None, key: str, default: str = "", *, allow_empty: bool = False
+) -> str:
+    """Значение из БД с fallback на default.
+
+    По умолчанию пустая строка в БД не перекрывает default (удобно для URL API).
+    ``allow_empty=True`` — пустое значение из БД считается валидным (например шаблон,
+    где пусто = «выключено»).
+    """
     if db is None:
         return default
     row = db.get(Setting, key)
@@ -38,7 +45,7 @@ def get_setting_value(db: Session | None, key: str, default: str = "") -> str:
         return default
     value = row.value if isinstance(row.value, str) else str(row.value)
     if not value.strip():
-        return default
+        return "" if allow_empty else default
     return value
 
 

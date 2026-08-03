@@ -263,6 +263,7 @@ def update_settings(
     request: Request,
     anilibria_base_url: str = Form(default=settings.anilibria_base_url),
     anilibria_fallback_base_url: str = Form(default=settings.anilibria_fallback_base_url),
+    anilibria_admin_url_template: str = Form(default=settings.anilibria_admin_url_template),
     anilibria_bearer_token: str = Form(default=""),
     anilibria_login: str = Form(default=""),
     anilibria_password: str = Form(default=""),
@@ -293,6 +294,7 @@ def update_settings(
     form_data = {
         "anilibria_base_url": anilibria_base_url,
         "anilibria_fallback_base_url": anilibria_fallback_base_url,
+        "anilibria_admin_url_template": anilibria_admin_url_template,
         "anilibria_login": anilibria_login,
         "anilibria_bearer_token": anilibria_bearer_token,
         "qb_master_host": qb_master_host,

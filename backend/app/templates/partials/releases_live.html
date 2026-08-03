@@ -50,6 +50,9 @@
       {% if group.release_url %}
       <a href="{{ group.release_url }}" target="_blank" rel="noopener">На AniLibria</a>
       {% endif %}
+      {% if group.admin_url %}
+      <a href="{{ group.admin_url }}" target="_blank" rel="noopener">В админке</a>
+      {% endif %}
       {% with release_id=group.release_id, release_alias=group.release_alias, anime_name=group.anime_name, tracked=group.tracked, track_source=group.track_source %}
       {% include "partials/release_track_toggle.html" %}
       {% endwith %}

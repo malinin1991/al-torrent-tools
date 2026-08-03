@@ -12,6 +12,10 @@
       <label>Резервный URL API
         <input class="input" name="anilibria_fallback_base_url" value="{{ settings_map.get('anilibria_fallback_base_url', '') }}" />
       </label>
+      <label>Шаблон URL админки релиза
+        <input class="input" name="anilibria_admin_url_template" value="{{ settings_map.get('anilibria_admin_url_template', '') }}" placeholder="URL с переменной {release_id}" />
+      </label>
+      <p class="muted" style="grid-column:1/-1;margin:0;">В шаблоне подставляется переменная <code>{release_id}</code> (ID релиза). Пустое поле — ссылка «В админке» на странице релизов не показывается.</p>
       <label>Логин
         <input class="input" name="anilibria_login" value="{{ settings_map.get('anilibria_login', '') }}" autocomplete="username" />
       </label>

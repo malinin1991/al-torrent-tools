@@ -13,6 +13,7 @@ from typing import Any, Literal, Sequence
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import (
     DiskFileHash,
     FileChangeEvent,
@@ -38,6 +39,8 @@ from app.services.hevc_pairing import (
     release_ids_matching_hevc_filter,
 )
 from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
+from app.services.release_meta import load_release_meta_by_ids
+from app.services.runtime_settings import get_setting_value
 from app.services.torrent_files_meta import (
     QB_INCOMPLETE_SUFFIX,
     complete_path_for,
@@ -45,9 +48,9 @@ from app.services.torrent_files_meta import (
     is_under_media_root,
     resolve_media_root,
 )
-from app.services.release_meta import load_release_meta_by_ids
 from app.services.torrent_qb_meta import (
     block_flags_from_quality_json,
+    build_release_admin_url,
     build_release_torrents_url,
     genres_from_quality_json,
     members_from_quality_json,
@@ -294,6 +297,7 @@ class ReleaseGroup:
     last_updated: datetime | None
     torrent_count: int
     release_url: str | None
+    admin_url: str | None
     genres: list[str]
     torrents: list[ReleaseTorrentRow]
     archived_torrents: list[ReleaseTorrentRow] = field(default_factory=list)
@@ -597,6 +601,12 @@ def list_release_groups(
     )
     paths_by_release = _active_file_paths_by_release(archives, files_by_hash)
     site_url = resolve_anilibria_site_url()
+    admin_url_template = get_setting_value(
+        db,
+        "anilibria_admin_url_template",
+        settings.anilibria_admin_url_template,
+        allow_empty=True,
+    )
 
     by_release: dict[int, list[TorrentArchive]] = {rid: [] for rid in release_ids}
     for archive in archives:
@@ -704,6 +714,7 @@ def list_release_groups(
                     head.release_alias if head else None,
                     site_url=site_url,
                 ),
+                admin_url=build_release_admin_url(release_id, admin_url_template),
                 genres=genres,
                 members=members,
                 is_blocked_by_geo=blocked_geo,

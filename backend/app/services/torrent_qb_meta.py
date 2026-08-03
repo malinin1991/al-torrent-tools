@@ -33,6 +33,17 @@ def build_release_torrents_url(release_alias: str | None, *, site_url: str | Non
     return f"{root}/anime/releases/release/{alias}/torrents"
 
 
+def build_release_admin_url(release_id: int, template: str | None) -> str | None:
+    """URL релиза в админке из шаблона с плейсхолдером ``{release_id}``.
+
+    Пустой шаблон или отсутствие плейсхолдера → ссылку не строить.
+    """
+    tpl = (template or "").strip()
+    if not tpl or "{release_id}" not in tpl:
+        return None
+    return tpl.replace("{release_id}", str(int(release_id)))
+
+
 def first_release_torrents_url(
     *aliases: str | None,
     site_url: str | None = None,

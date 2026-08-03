@@ -269,3 +269,68 @@ def test_list_release_groups_block_fallback_when_meta_null(monkeypatch) -> None:
     assert group.members[0]["nickname"] == "NewVoice"
     assert group.is_blocked_by_geo is True
     assert group.is_blocked_by_copyrights is True
+
+
+def test_list_release_groups_builds_admin_url_from_template(monkeypatch) -> None:
+    from app.services import releases_view as rv
+    from app.services.release_meta import ReleaseMetaView
+
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    archive = SimpleNamespace(
+        id=1,
+        release_id=10232,
+        torrent_id=1,
+        info_hash="ab" * 20,
+        release_alias="show",
+        anime_name="Show",
+        category="AniLibria/2026",
+        torrent_type="WEBRip 1080p AVC",
+        torrent_description="1",
+        created_at=now,
+        file_size=100,
+        api_present=True,
+        superseded=False,
+        ignore_hevc=False,
+        api_created_at=None,
+        quality_json={},
+    )
+    stats = SimpleNamespace(release_id=10232, last_updated=now, torrent_count=1)
+    db = MagicMock()
+    db.execute.return_value.all.return_value = [stats]
+    db.scalar.return_value = 1
+    db.scalars.return_value.all.return_value = [archive]
+
+    monkeypatch.setattr(
+        rv,
+        "get_setting_value",
+        lambda *_a, **_k: "https://adminka.example/anime/release/{release_id}#torrents",
+    )
+    monkeypatch.setattr(
+        rv,
+        "load_release_meta_by_ids",
+        lambda _db, _ids: {
+            10232: ReleaseMetaView(
+                release_id=10232,
+                genres=[],
+                members=[],
+                is_blocked_by_geo=False,
+                is_blocked_by_copyrights=False,
+            )
+        },
+    )
+    monkeypatch.setattr(rv, "_latest_pipeline_by_hash", lambda *_a, **_k: {})
+    monkeypatch.setattr(rv, "_tracked_by_release_id", lambda *_a, **_k: {})
+    monkeypatch.setattr(rv, "_files_by_hash", lambda *_a, **_k: {})
+    monkeypatch.setattr(rv, "_recent_events_by_info_hash", lambda *_a, **_k: {})
+    monkeypatch.setattr(rv, "_disk_hashes_by_path", lambda *_a, **_k: {})
+    monkeypatch.setattr(rv, "_info_hashes_with_active_hash_job", lambda *_a, **_k: set())
+    monkeypatch.setattr(rv, "_active_file_paths_by_release", lambda *_a, **_k: {})
+    monkeypatch.setattr(rv, "resolve_anilibria_site_url", lambda: "https://anilibria.tv")
+    monkeypatch.setattr(rv, "unpaired_by_archive_id", lambda *_a, **_k: {})
+
+    group = list_release_groups(db, page=1, per_page=30)["groups"][0]
+    assert group.admin_url == "https://adminka.example/anime/release/10232#torrents"
+
+    monkeypatch.setattr(rv, "get_setting_value", lambda *_a, **_k: "")
+    group_off = list_release_groups(db, page=1, per_page=30)["groups"][0]
+    assert group_off.admin_url is None

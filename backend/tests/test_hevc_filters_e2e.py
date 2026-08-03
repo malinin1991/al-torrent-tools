@@ -967,6 +967,7 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
         last_updated=now,
         torrent_count=2,
         release_url=None,
+        admin_url=None,
         genres=[],
         torrents=[
             ReleaseTorrentRow(
@@ -1317,6 +1318,7 @@ def test_releases_html_show_hidden_members_and_blocks() -> None:
         last_updated=now,
         torrent_count=1,
         release_url=None,
+        admin_url=None,
         genres=["Комедия"],
         members=[
             {"role": "voicing", "role_label": "Озвучка", "nickname": "Zvukar"},

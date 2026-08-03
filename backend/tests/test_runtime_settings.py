@@ -56,3 +56,18 @@ def test_resolve_anilibria_settings_prefers_db_over_env(monkeypatch) -> None:
     assert resolved.base_url == "https://db.example/api"
     assert resolved.fallback_base_url == "https://env-fallback.example/api"
     assert resolved.bearer_token == "db-token"
+
+
+def test_get_setting_value_allow_empty_keeps_blank_over_default() -> None:
+    from app.services.runtime_settings import get_setting_value
+
+    class FakeDb:
+        def get(self, model, key):  # noqa: ANN001
+            _ = model, key
+            return SimpleNamespace(value="")
+
+    assert get_setting_value(FakeDb(), "anilibria_admin_url_template", "env-tpl") == "env-tpl"
+    assert (
+        get_setting_value(FakeDb(), "anilibria_admin_url_template", "env-tpl", allow_empty=True)
+        == ""
+    )

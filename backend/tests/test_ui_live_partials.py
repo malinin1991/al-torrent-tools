@@ -101,6 +101,7 @@ def test_releases_live_partial_has_sse_keys() -> None:
         category=None,
         last_updated=None,
         release_url=None,
+        admin_url=None,
     )
     request = MagicMock()
     html = templates.TemplateResponse(
