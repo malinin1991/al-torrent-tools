@@ -155,7 +155,10 @@ def _register_handlers(application: Application, bot_key: str) -> None:
         )
         application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
         application.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, addressed_text)
+            MessageHandler(
+                (filters.TEXT | filters.CAPTION) & ~filters.COMMAND,
+                addressed_text,
+            )
         )
         return
     application.add_handler(CommandHandler("start", start))

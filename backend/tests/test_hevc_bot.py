@@ -1741,7 +1741,7 @@ def test_start_and_help_list_error_on_separate_line(monkeypatch) -> None:
         assert "/status <release_id> — детали релиза" in lines
 
 
-def _message_update(text: str, chat_type: str) -> tuple[SimpleNamespace, AsyncMock]:
+def _message_update(text: str | None, chat_type: str) -> tuple[SimpleNamespace, AsyncMock]:
     reply = AsyncMock()
     update = SimpleNamespace(
         message=SimpleNamespace(text=text, reply_text=reply),
@@ -1754,7 +1754,10 @@ def _bot_context(username: str | None = "ActualHevcBot") -> SimpleNamespace:
     return SimpleNamespace(
         bot=SimpleNamespace(
             username=username,
-            get_me=AsyncMock(return_value=SimpleNamespace(username="ActualHevcBot")),
+            id=None if username is None else 42,
+            get_me=AsyncMock(
+                return_value=SimpleNamespace(username="ActualHevcBot", id=42)
+            ),
         )
     )
 
@@ -1891,6 +1894,97 @@ def test_group_mention_replies_without_acl(monkeypatch) -> None:
     access.assert_not_awaited()
     mention_reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[0])
     command_reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[0])
+
+
+def test_group_text_mention_without_at_username_replies(monkeypatch) -> None:
+    """Клиент часто тегает display name (text_mention), без @username в тексте."""
+    from app.telegram_bot import hevc_handlers
+
+    access = AsyncMock(return_value=False)
+    monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
+    monkeypatch.setattr(
+        hevc_handlers.random,
+        "choice",
+        lambda phrases: phrases[1],
+    )
+    update, reply = _message_update("Takagi, ты тут?", "supergroup")
+    update.message.entities = [
+        SimpleNamespace(
+            type="text_mention",
+            offset=0,
+            length=6,
+            user=SimpleNamespace(id=42, username="ActualHevcBot"),
+        )
+    ]
+
+    asyncio.run(hevc_handlers.addressed_text(update, _bot_context()))
+
+    access.assert_not_awaited()
+    reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[1])
+
+
+def test_group_reply_to_bot_is_ignored(monkeypatch) -> None:
+    """Ответ на сообщение бота без тега не триггерит фразу — иначе спам в треде."""
+    from app.telegram_bot import hevc_handlers
+
+    access = AsyncMock(return_value=True)
+    monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
+    update, reply = _message_update("эй", "group")
+    update.message.reply_to_message = SimpleNamespace(
+        from_user=SimpleNamespace(id=42)
+    )
+
+    asyncio.run(hevc_handlers.addressed_text(update, _bot_context()))
+
+    access.assert_not_awaited()
+    reply.assert_not_awaited()
+
+
+def test_group_reply_with_explicit_mention_still_replies(monkeypatch) -> None:
+    from app.telegram_bot import hevc_handlers
+
+    access = AsyncMock(return_value=False)
+    monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
+    monkeypatch.setattr(
+        hevc_handlers.random,
+        "choice",
+        lambda phrases: phrases[3],
+    )
+    update, reply = _message_update("@ActualHevcBot эй", "group")
+    update.message.reply_to_message = SimpleNamespace(
+        from_user=SimpleNamespace(id=42)
+    )
+
+    asyncio.run(hevc_handlers.addressed_text(update, _bot_context()))
+
+    access.assert_not_awaited()
+    reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[3])
+
+
+def test_group_caption_mention_replies(monkeypatch) -> None:
+    from app.telegram_bot import hevc_handlers
+
+    access = AsyncMock(return_value=False)
+    monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
+    monkeypatch.setattr(
+        hevc_handlers.random,
+        "choice",
+        lambda phrases: phrases[5],
+    )
+    update, reply = _message_update(None, "group")
+    update.message.caption = "смотри @ActualHevcBot"
+    update.message.text = None
+
+    asyncio.run(hevc_handlers.addressed_text(update, _bot_context()))
+
+    access.assert_not_awaited()
+    reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[5])
+
+
+def test_slice_utf16_uses_telegram_offsets() -> None:
+    from app.telegram_bot.hevc_handlers import _slice_utf16
+
+    assert _slice_utf16("😀 @ActualHevcBot", 3, len("@ActualHevcBot")) == "@ActualHevcBot"
 
 
 def test_private_random_replies_obey_acl(monkeypatch) -> None:

@@ -52,14 +52,32 @@ RANDOM_REPLIES = (
 )
 
 
-async def _bot_username(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+async def _bot_identity(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> tuple[str | None, int | None]:
     username = getattr(context.bot, "username", None)
-    if not isinstance(username, str) or not username.strip():
+    bot_id = getattr(context.bot, "id", None)
+    if (
+        not isinstance(username, str)
+        or not username.strip()
+        or not isinstance(bot_id, int)
+        or bot_id <= 0
+    ):
         bot = await context.bot.get_me()
         username = getattr(bot, "username", None)
-    if not isinstance(username, str):
-        return None
-    return username.strip().lstrip("@").casefold() or None
+        bot_id = getattr(bot, "id", None)
+    clean_username = (
+        username.strip().lstrip("@").casefold()
+        if isinstance(username, str)
+        else None
+    ) or None
+    clean_id = bot_id if isinstance(bot_id, int) and bot_id > 0 else None
+    return clean_username, clean_id
+
+
+async def _bot_username(context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    username, _ = await _bot_identity(context)
+    return username
 
 
 def _mentions_bot(text: str, username: str) -> bool:
@@ -70,6 +88,62 @@ def _mentions_bot(text: str, username: str) -> bool:
             flags=re.IGNORECASE,
         )
     )
+
+
+def _slice_utf16(text: str, offset: int, length: int) -> str:
+    """Telegram entity offset/length считаются в UTF-16 code units."""
+    encoded = text.encode("utf-16-le")
+    start = offset * 2
+    end = (offset + length) * 2
+    if start < 0 or end < start:
+        return ""
+    return encoded[start:end].decode("utf-16-le", errors="ignore")
+
+
+def _entity_type(entity: object) -> str:
+    raw = getattr(entity, "type", "")
+    value = getattr(raw, "value", raw)
+    return str(value).rsplit(".", 1)[-1].casefold()
+
+
+def _message_addresses_bot(
+    message: object,
+    username: str | None,
+    bot_id: int | None,
+) -> bool:
+    """Явный тег в тексте/caption или text_mention по id. Reply сам по себе не считается."""
+    text = getattr(message, "text", None) or ""
+    caption = getattr(message, "caption", None) or ""
+    if username:
+        if _mentions_bot(text, username) or _mentions_bot(caption, username):
+            return True
+
+    for entity, source in (
+        *((item, text) for item in getattr(message, "entities", None) or ()),
+        *(
+            (item, caption)
+            for item in getattr(message, "caption_entities", None) or ()
+        ),
+    ):
+        entity_type = _entity_type(entity)
+        user = getattr(entity, "user", None)
+        if user is not None:
+            if bot_id is not None and getattr(user, "id", None) == bot_id:
+                return True
+            mention_username = getattr(user, "username", None)
+            if (
+                username
+                and isinstance(mention_username, str)
+                and mention_username.casefold() == username
+            ):
+                return True
+        if entity_type == "mention" and username:
+            offset = int(getattr(entity, "offset", 0) or 0)
+            length = int(getattr(entity, "length", 0) or 0)
+            mention = _slice_utf16(source, offset, length)
+            if mention.lstrip("@").casefold() == username:
+                return True
+    return False
 
 
 def _command_targets_bot(text: str, username: str | None) -> bool:
@@ -90,7 +164,7 @@ async def unknown_command(
 
     В группе — всем, кто тегнул бота (без ACL). В личке — только одобренным.
     """
-    message = update.message
+    message = getattr(update, "effective_message", None) or update.message
     chat = update.effective_chat
     if message is None or chat is None:
         return
@@ -110,13 +184,13 @@ async def addressed_text(
 
     В группе — всем, кто тегнул (без ACL). В личке — только одобренным.
     """
-    message = update.message
+    message = getattr(update, "effective_message", None) or update.message
     chat = update.effective_chat
     if message is None or chat is None:
         return
     if not _is_private_chat(chat):
-        username = await _bot_username(context)
-        if username is None or not _mentions_bot(message.text or "", username):
+        username, bot_id = await _bot_identity(context)
+        if not _message_addresses_bot(message, username, bot_id):
             return
     if not await require_private_hevc_access(update):
         return
