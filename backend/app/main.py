@@ -70,6 +70,14 @@ from app.services.telegram_notify import (
     upsert_tracked_release,
 )
 from app.services.torrent_archive import resolve_torrent_storage_root
+from app.services.video_kensetsu import (
+    health as video_kensetsu_health,
+    normalize_video_kensetsu_base_url,
+    probe_and_store_health as video_kensetsu_probe_and_store,
+    resolve_video_kensetsu_base_url,
+    store_health_cache as video_kensetsu_store_health_cache,
+    video_kensetsu_ui_context,
+)
 from app.utils.datetime_fmt import as_utc_iso, utcnow
 
 
@@ -108,7 +116,21 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(api_router)
 
 base_path = Path(__file__).resolve().parent
-templates = Jinja2Templates(directory=str(base_path / "templates"))
+
+
+def _video_kensetsu_template_context(request: Request) -> dict:
+    """Глобальный UI-контекст для nav «Кодировщик» (только кэш health, без probe)."""
+    db = SessionLocal()
+    try:
+        return video_kensetsu_ui_context(db, refresh=False)
+    finally:
+        db.close()
+
+
+templates = Jinja2Templates(
+    directory=str(base_path / "templates"),
+    context_processors=[_video_kensetsu_template_context],
+)
 templates.env.filters["as_utc_iso"] = as_utc_iso
 templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
 templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
@@ -279,6 +301,8 @@ def update_settings(
     telegram_chat_id: str = Form(default=""),
     telegram_bot_api_base_url: str = Form(default=""),
     telegram_enabled: str | None = Form(default=None),
+    video_kensetsu_base_url: str = Form(default=""),
+    video_kensetsu_enabled: str | None = Form(default=None),
     scrape_pause_every: str = Form(default=str(settings.scrape_pause_every)),
     scrape_pause_sec: str = Form(default=str(settings.scrape_pause_sec)),
     ongoing_interval_sec: str = Form(default=str(settings.ongoing_interval_sec)),
@@ -309,6 +333,8 @@ def update_settings(
         "telegram_chat_id": telegram_chat_id,
         "telegram_bot_api_base_url": telegram_bot_api_base_url,
         "telegram_enabled": "true" if telegram_enabled == "on" else "false",
+        "video_kensetsu_base_url": normalize_video_kensetsu_base_url(video_kensetsu_base_url),
+        "video_kensetsu_enabled": "true" if video_kensetsu_enabled == "on" else "false",
         "scrape_pause_every": scrape_pause_every,
         "scrape_pause_sec": scrape_pause_sec,
         "ongoing_interval_sec": ongoing_interval_sec,
@@ -352,6 +378,11 @@ def update_settings(
         password=qb_slave_password,
     )
     db.commit()
+    # Health для ссылки «Кодировщик»: probe при enabled+URL, иначе сбрасываем кэш.
+    if form_data["video_kensetsu_enabled"] == "true" and form_data["video_kensetsu_base_url"]:
+        video_kensetsu_probe_and_store(db, timeout_sec=3.0, commit=True)
+    else:
+        video_kensetsu_store_health_cache(db, False, commit=True)
     return templates.TemplateResponse(request, "partials/settings_result.html", {"message": "Настройки сохранены", "ok": True})
 
 
@@ -427,6 +458,31 @@ async def telegram_test_settings(
         ok = True
     except Exception as exc:
         message = f"Telegram: ошибка — {exc}"
+        ok = False
+    return templates.TemplateResponse(
+        request,
+        "partials/settings_result.html",
+        {"message": message, "ok": ok},
+    )
+
+
+@app.post("/settings/video-kensetsu-test", response_class=HTMLResponse)
+async def video_kensetsu_test_settings(
+    request: Request,
+    video_kensetsu_base_url: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    base_url = normalize_video_kensetsu_base_url(
+        video_kensetsu_base_url.strip() or resolve_video_kensetsu_base_url(db)
+    )
+    try:
+        await video_kensetsu_health(base_url)
+        video_kensetsu_store_health_cache(db, True, commit=True)
+        message = f"Video Kensetsu: OK — HTTP 200, base={base_url}"
+        ok = True
+    except Exception as exc:
+        video_kensetsu_store_health_cache(db, False, commit=True)
+        message = f"Video Kensetsu: ошибка — {exc}"
         ok = False
     return templates.TemplateResponse(
         request,

@@ -26,6 +26,12 @@ from app.services.telegram_notify import (
     test_telegram_get_me,
 )
 from app.services.torrent_archive import resolve_torrent_storage_root
+from app.services.video_kensetsu import (
+    health as video_kensetsu_health,
+    is_video_kensetsu_enabled,
+    resolve_video_kensetsu_base_url,
+    store_health_cache as video_kensetsu_store_health_cache,
+)
 
 _APP_PACKAGES = (
     "fastapi",
@@ -92,6 +98,7 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
     )
     qb = {"master": master_status, "slave": slave_status}
     telegram = await _probe_telegram(db)
+    video_kensetsu = await _probe_video_kensetsu(db)
 
     storage = resolve_torrent_storage_root()
     from app.jobs.orphan_cleanup import media_root_writable_status
@@ -121,6 +128,7 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
         "database": database,
         "qb": qb,
         "telegram": telegram,
+        "video_kensetsu": video_kensetsu,
         "storage": {
             "path": str(storage),
             "exists": storage.exists(),
@@ -244,6 +252,36 @@ async def _probe_telegram(db: Session) -> dict[str, Any]:
         },
         "api": api,
     }
+
+
+async def _probe_video_kensetsu(db: Session) -> dict[str, Any]:
+    enabled = is_video_kensetsu_enabled(db)
+    base_url = resolve_video_kensetsu_base_url(db)
+    configured = bool(base_url)
+    result: dict[str, Any] = {
+        "enabled": enabled,
+        "configured": configured,
+        "base_url": base_url or None,
+        "ok": False,
+        "detail": "",
+    }
+    if not enabled:
+        result["detail"] = "Выключен в настройках"
+        video_kensetsu_store_health_cache(db, False, commit=True)
+        return result
+    if not configured:
+        result["detail"] = "URL не задан"
+        video_kensetsu_store_health_cache(db, False, commit=True)
+        return result
+    try:
+        await video_kensetsu_health(base_url, timeout_sec=5.0)
+        result["ok"] = True
+        result["detail"] = "HTTP 200"
+        video_kensetsu_store_health_cache(db, True, commit=True)
+    except Exception as exc:
+        result["detail"] = str(exc)
+        video_kensetsu_store_health_cache(db, False, commit=True)
+    return result
 
 
 def _telegram_bot_process_status(db: Session) -> dict[str, Any]:

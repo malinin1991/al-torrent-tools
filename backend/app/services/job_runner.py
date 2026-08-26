@@ -8,11 +8,12 @@ from app.utils.datetime_fmt import utcnow
 from typing import Any
 
 from sqlalchemy import func, select, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import Job, JobLog
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
 
 JobHandler = Callable[[Session, int, dict[str, Any]], Awaitable[None]]
 
@@ -55,7 +56,7 @@ class JobAlreadyRunningError(Exception):
 
 
 class JobStopRequested(Exception):
-    """Кооперативная остановка по запросу UI (статус stopping)."""
+    """Кооперативная остановка (stopping / cancelled)."""
 
 
 class UnknownJobTypeError(Exception):
@@ -155,12 +156,12 @@ def _job_last_activity_at(db: Session, job: Job) -> datetime | None:
 
 
 def is_stop_requested(db: Session, job_id: int) -> bool:
-    """True, если UI запросил Stop (статус stopping)."""
+    """True, если UI запросил Stop или слот уже cancelled (reclaim/shutdown)."""
     job = db.get(Job, job_id)
     if job is None:
         return False
     db.refresh(job)
-    return job.status == STATUS_STOPPING
+    return job.status in (STATUS_STOPPING, STATUS_CANCELLED)
 
 
 def request_stop(db: Session, job_id: int) -> Job:
@@ -197,6 +198,7 @@ def request_stop_latest_running(db: Session, job_type: str) -> Job:
 
 
 def _try_run_lock(db: Session, job_id: int) -> bool:
+    """Попытка взять run-lock (для reclaim: успех = runner мёртв)."""
     return bool(
         db.execute(
             text("SELECT pg_try_advisory_lock(:cls, :oid)"),
@@ -206,17 +208,45 @@ def _try_run_lock(db: Session, job_id: int) -> bool:
 
 
 def _unlock_run_lock(db: Session, job_id: int) -> None:
+    """Снять try-lock после reclaim на той же ORM-сессии."""
     db.execute(
         text("SELECT pg_advisory_unlock(:cls, :oid)"),
         {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
     )
 
 
-def _acquire_run_lock(db: Session, job_id: int) -> None:
-    db.execute(
-        text("SELECT pg_advisory_lock(:cls, :oid)"),
-        {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
-    )
+def _hold_run_lock(job_id: int) -> Connection:
+    """Отдельное raw-соединение с session advisory lock на весь run_job.
+
+    Нельзя держать lock на ORM Session джоба: reconnect / pool_pre_ping
+    меняет соединение → lock пропадает → reclaim ложно помечает сиротой.
+    """
+    conn = engine.connect()
+    try:
+        conn.execute(
+            text("SELECT pg_advisory_lock(:cls, :oid)"),
+            {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
+        )
+        # Session-level lock переживает commit; не оставляем idle-in-transaction.
+        conn.commit()
+        return conn
+    except Exception:
+        conn.close()
+        raise
+
+
+def _release_run_lock(conn: Connection | None, job_id: int) -> None:
+    """Снять run-lock и закрыть выделенное соединение."""
+    if conn is None or conn.closed:
+        return
+    try:
+        conn.execute(
+            text("SELECT pg_advisory_unlock(:cls, :oid)"),
+            {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def reclaim_orphan_jobs(
@@ -375,64 +405,78 @@ class JobRunner:
         if job.type not in self._handlers:
             raise ValueError(f"Тип джоба {job.type} не зарегистрирован")
 
-        # Держим session-lock, пока живёт runner; после kill PG отпустит lock.
-        _acquire_run_lock(db, job_id)
-        with _active_lock:
-            _active_job_ids.add(job_id)
-
-        job.status = STATUS_RUNNING
-        job.started_at = utcnow()
-        job.error = None
-        job.finished_at = None
-        db.commit()
-        self.add_log(db, job.id, f"Старт джоба {job.type}")
-
-        final_status = STATUS_SUCCESS
-        final_error: str | None = None
+        # Lock на отдельном соединении (не ORM Session): reconnect джоба lock не роняет.
+        lock_conn: Connection | None = None
         try:
-            await self._handlers[job.type](db, job.id, job.params_json or {})
-            db.refresh(job)
-            # Короткий джоб мог завершиться после Stop, но до чекпоинта в handler.
-            if job.status == STATUS_STOPPING:
-                raise JobStopRequested()
-            self.add_log(db, job.id, "Джоб завершен успешно")
-        except JobStopRequested:
-            final_status = STATUS_CANCELLED
-            final_error = "Остановлено пользователем"
-            self.add_log(db, job.id, "Джоб остановлен по запросу", level="warning")
-        except asyncio.CancelledError:
-            final_status = STATUS_CANCELLED
-            final_error = "Прервано (Ctrl+C / shutdown)"
-            self.add_log(db, job.id, "Джоб отменён (CancelledError)", level="warning")
-            raise
-        except Exception as exc:
-            final_status = STATUS_FAILED
-            final_error = str(exc)
-            self.add_log(db, job.id, f"Ошибка выполнения: {exc}", level="error")
-        finally:
+            lock_conn = _hold_run_lock(job_id)
+            with _active_lock:
+                _active_job_ids.add(job_id)
+
+            job.status = STATUS_RUNNING
+            job.started_at = utcnow()
+            job.error = None
+            job.finished_at = None
+            db.commit()
+            self.add_log(db, job.id, f"Старт джоба {job.type}")
+
+            final_status = STATUS_SUCCESS
+            final_error: str | None = None
             try:
+                await self._handlers[job.type](db, job.id, job.params_json or {})
                 db.refresh(job)
-                # UI Stop → stopping: после handler (или JobStopRequested) финализируем cancelled.
+                # Короткий джоб мог завершиться после Stop, но до чекпоинта в handler.
                 if job.status == STATUS_STOPPING:
+                    raise JobStopRequested()
+                # Reclaim уже cancelled — не пишем success и не воскрешаем слот в finally.
+                if job.status == STATUS_CANCELLED:
                     final_status = STATUS_CANCELLED
-                    if final_error is None:
-                        final_error = "Остановлено пользователем"
-                # Reclaim/shutdown мог уже пометить cancelled — не воскрешаем слот.
-                if job.status != STATUS_CANCELLED or final_status == STATUS_CANCELLED:
+                    final_error = job.error
+                else:
+                    self.add_log(db, job.id, "Джоб завершен успешно")
+            except JobStopRequested:
+                db.refresh(job)
+                # Reclaim уже cancelled — не затираем reason и не дублируем UI-stop лог.
+                if job.status == STATUS_CANCELLED:
+                    final_status = STATUS_CANCELLED
+                    final_error = job.error
+                else:
+                    final_status = STATUS_CANCELLED
+                    final_error = "Остановлено пользователем"
+                    self.add_log(db, job.id, "Джоб остановлен по запросу", level="warning")
+            except asyncio.CancelledError:
+                final_status = STATUS_CANCELLED
+                final_error = "Прервано (Ctrl+C / shutdown)"
+                self.add_log(db, job.id, "Джоб отменён (CancelledError)", level="warning")
+                raise
+            except Exception as exc:
+                final_status = STATUS_FAILED
+                final_error = str(exc)
+                self.add_log(db, job.id, f"Ошибка выполнения: {exc}", level="error")
+            finally:
+                db.refresh(job)
+                # Reclaim/shutdown уже финализировал — не воскрешаем и не затираем error.
+                if job.status == STATUS_CANCELLED:
+                    if job.finished_at is None:
+                        job.finished_at = utcnow()
+                else:
+                    # UI Stop → stopping: после handler финализируем cancelled.
+                    if job.status == STATUS_STOPPING:
+                        final_status = STATUS_CANCELLED
+                        if final_error is None:
+                            final_error = "Остановлено пользователем"
                     job.status = final_status
                     job.error = final_error
-                if job.finished_at is None:
-                    job.finished_at = utcnow()
+                    if job.finished_at is None:
+                        job.finished_at = utcnow()
                 db.commit()
                 db.refresh(job)
-            finally:
-                with _active_lock:
-                    _active_job_ids.discard(job_id)
-                try:
-                    _unlock_run_lock(db, job_id)
-                    db.commit()
-                except Exception:
-                    logger.exception("Не удалось снять run-lock для job_id=%s", job_id)
+        finally:
+            with _active_lock:
+                _active_job_ids.discard(job_id)
+            try:
+                _release_run_lock(lock_conn, job_id)
+            except Exception:
+                logger.exception("Не удалось снять run-lock для job_id=%s", job_id)
         return job
 
     def schedule_job(self, job_id: int) -> asyncio.Task[Any]:

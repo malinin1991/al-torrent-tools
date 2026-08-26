@@ -445,15 +445,36 @@
       list-style: disc;
     }
     .file-list li { margin: 2px 0; }
-    .file-list .file-download {
+    .file-list .file-download,
+    .file-list .file-copy-path,
+    .file-list .file-send-encoder {
       display: inline-flex;
       vertical-align: middle;
       margin-left: 4px;
       color: #9ad1ff;
       text-decoration: none;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
     }
-    .file-list .file-download:hover { color: #c5e4ff; }
-    .file-list .file-download svg { width: 14px; height: 14px; fill: currentColor; }
+    .file-list .file-download:hover,
+    .file-list .file-copy-path:hover,
+    .file-list .file-send-encoder:hover { color: #c5e4ff; }
+    .file-list .file-download svg,
+    .file-list .file-copy-path svg,
+    .file-list .file-send-encoder svg { width: 14px; height: 14px; fill: currentColor; }
+    #encoder-preset-dialog {
+      border: 1px solid #444;
+      border-radius: 8px;
+      background: #1b1b1b;
+      color: #eee;
+      padding: 16px;
+      min-width: min(360px, 92vw);
+    }
+    #encoder-preset-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+    #encoder-preset-dialog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #encoder-preset-dialog select.input { min-width: 220px; }
   </style>
 </head>
 <body>
@@ -466,6 +487,9 @@
       <a href="/releases">Релизы</a>
       <a href="/archive">Архив</a>
       <a href="/pipeline">Пайплайн</a>
+      {% if video_kensetsu_ok and video_kensetsu_base_url %}
+      <a href="{{ video_kensetsu_base_url }}" target="_blank" rel="noopener">Кодировщик</a>
+      {% endif %}
     </nav>
   </header>
   <main>
@@ -495,9 +519,188 @@
   let _downloadCheckBusy = false;
   const _DOWNLOAD_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg>';
+  const _COPY_PATH_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+  const _ENCODER_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6zm0 5h10v2H4v-2zm0 5h16v2H4v-2zm14-6.5l4 2.5-4 2.5v-5z"/></svg>';
+
+  function isEncoderUiEnabled() {
+    const marked = document.querySelector("[data-encoder-enabled]");
+    return marked && marked.getAttribute("data-encoder-enabled") === "1";
+  }
+
+  function formatApiErrorDetail(detail) {
+    if (detail == null || detail === "") return null;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            const loc = Array.isArray(item.loc)
+              ? item.loc.filter((part) => part !== "body").join(".")
+              : "";
+            const msg = item.msg || JSON.stringify(item);
+            return loc ? `${loc}: ${msg}` : msg;
+          }
+          return String(item);
+        })
+        .join("; ");
+    }
+    if (typeof detail === "object") {
+      return detail.msg || JSON.stringify(detail);
+    }
+    return String(detail);
+  }
+
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+
+  function ensureEncoderPresetDialog() {
+    let dialog = document.getElementById("encoder-preset-dialog");
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.id = "encoder-preset-dialog";
+    dialog.innerHTML =
+      '<form method="dialog" id="encoder-preset-form">' +
+      "<p style=\"margin:0 0 10px;\">Выберите пресет кодирования</p>" +
+      '<label class="row" style="margin-bottom:12px;">Пресет' +
+      '<select class="input" name="preset_id" id="encoder-preset-select" required></select>' +
+      "</label>" +
+      '<div class="row" style="justify-content:flex-end;">' +
+      '<button class="btn btn-secondary" value="cancel" type="submit" formnovalidate>Отмена</button>' +
+      '<button class="btn" value="ok" type="submit">Отправить</button>' +
+      "</div></form>";
+    document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  async function pickEncoderPreset() {
+    const dialog = ensureEncoderPresetDialog();
+    const select = dialog.querySelector("#encoder-preset-select");
+    select.innerHTML = "";
+    const resp = await fetch("/api/video-kensetsu/presets");
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(formatApiErrorDetail(err.detail) || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    const presets = data.presets || [];
+    if (!presets.length) throw new Error("Пресеты не найдены");
+    presets.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name || p.id;
+      select.appendChild(opt);
+    });
+    dialog.showModal();
+    return new Promise((resolve) => {
+      const onClose = () => {
+        dialog.removeEventListener("close", onClose);
+        if (dialog.returnValue === "ok") {
+          resolve(select.value || null);
+        } else {
+          resolve(null);
+        }
+      };
+      dialog.addEventListener("close", onClose);
+    });
+  }
+
+  function ensureCopyPathButton(slot) {
+    const fullPath = slot.getAttribute("data-full-path");
+    if (!fullPath || slot.querySelector(".file-copy-path")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-icon file-copy-path";
+    btn.title = "Копировать путь";
+    btn.setAttribute("aria-label", "Копировать путь");
+    btn.innerHTML = _COPY_PATH_ICON;
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        await copyTextToClipboard(fullPath);
+        btn.title = "Скопировано";
+        setTimeout(() => {
+          btn.title = "Копировать путь";
+        }, 1500);
+      } catch (_) {
+        btn.title = "Не удалось скопировать";
+      }
+    });
+    const download = slot.querySelector("a.file-download");
+    if (download) {
+      download.after(btn);
+    } else {
+      slot.appendChild(btn);
+    }
+  }
+
+  function ensureEncoderButton(slot) {
+    if (!isEncoderUiEnabled()) return;
+    const id = slot.getAttribute("data-file-id");
+    if (!id || slot.querySelector(".file-send-encoder")) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-icon file-send-encoder";
+    btn.title = "Отправить в кодировщик";
+    btn.setAttribute("aria-label", "Отправить в кодировщик");
+    btn.innerHTML = _ENCODER_ICON;
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const prevTitle = btn.title;
+      try {
+        btn.disabled = true;
+        btn.title = "Загрузка пресетов…";
+        const presetId = await pickEncoderPreset();
+        if (!presetId) {
+          btn.title = prevTitle;
+          return;
+        }
+        btn.title = "Отправка…";
+        const resp = await fetch(`/api/torrent-files/${encodeURIComponent(id)}/send-to-encoder`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ preset_id: presetId }),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`);
+        }
+        btn.title = "Отправлено";
+        setTimeout(() => {
+          btn.title = prevTitle;
+        }, 2000);
+      } catch (err) {
+        btn.title = err && err.message ? err.message : "Ошибка отправки";
+        setTimeout(() => {
+          btn.title = prevTitle;
+        }, 3500);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    slot.appendChild(btn);
+  }
 
   function enqueueDownloadableChecks(root) {
     const scope = root || document;
+    // Copy/encoder — только вместе с download, после /downloadable-files.
     scope.querySelectorAll(".torrent-files[data-download-check]:not([data-download-queued])").forEach((el) => {
       el.setAttribute("data-download-queued", "1");
       _downloadCheckQueue.push(el);
@@ -529,14 +732,18 @@
         });
         block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
           const id = slot.getAttribute("data-file-id");
-          if (!id || !ids.has(id) || slot.querySelector("a")) return;
-          const link = document.createElement("a");
-          link.className = "btn-icon file-download";
-          link.href = `/api/torrent-files/${id}/download`;
-          link.title = "Скачать файл";
-          link.setAttribute("download", "");
-          link.innerHTML = _DOWNLOAD_ICON;
-          slot.appendChild(link);
+          if (!id || !ids.has(id)) return;
+          if (!slot.querySelector("a.file-download")) {
+            const link = document.createElement("a");
+            link.className = "btn-icon file-download";
+            link.href = `/api/torrent-files/${id}/download`;
+            link.title = "Скачать файл";
+            link.setAttribute("download", "");
+            link.innerHTML = _DOWNLOAD_ICON;
+            slot.insertBefore(link, slot.firstChild);
+          }
+          ensureCopyPathButton(slot);
+          ensureEncoderButton(slot);
         });
       } catch (_) {
         /* сеть/сервер — слот остаётся пустым */

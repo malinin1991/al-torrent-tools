@@ -10,7 +10,11 @@
       {% else %}<span class="badge badge-muted file-ui-badge" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
       <code>{{ f.relative_path }}</code>
       {% if allow_file_downloads and f.file_id %}
-      <span class="file-download-slot" data-file-id="{{ f.file_id }}"></span>
+      <span
+        class="file-download-slot"
+        data-file-id="{{ f.file_id }}"
+        {% if f.full_path %}data-full-path="{{ f.full_path }}"{% endif %}
+      ></span>
       {% endif %}
     </li>
     {% endfor %}

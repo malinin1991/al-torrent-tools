@@ -31,6 +31,13 @@ from app.services.releases_view import (
 from app.services.runtime_settings import SECRET_SETTING_KEYS, get_setting_value, mask_settings_dict
 from app.services.system_status import collect_system_status
 from app.services.torrent_archive import TorrentArchiveService
+from app.services.video_kensetsu import (
+    encode as video_kensetsu_encode,
+    find_preset,
+    is_video_kensetsu_enabled,
+    list_presets as video_kensetsu_list_presets,
+    resolve_video_kensetsu_base_url,
+)
 from app.utils.datetime_fmt import as_utc_iso
 
 
@@ -486,6 +493,86 @@ def download_torrent_media_file(file_id: int, db: Session = Depends(get_db)) -> 
     if path is None:
         raise HTTPException(status_code=404, detail="Файл недоступен для скачивания")
     return FileResponse(path=path, filename=path.name, media_type="application/octet-stream")
+
+
+class SendToEncoderIn(BaseModel):
+    preset_id: str
+
+
+@router.get("/video-kensetsu/presets")
+async def video_kensetsu_presets(db: Session = Depends(get_db)) -> dict:
+    """Прокси списка пресетов Video Kensetsu (без CORS с браузера)."""
+    if not is_video_kensetsu_enabled(db):
+        raise HTTPException(status_code=400, detail="Video Kensetsu выключен в настройках")
+    base_url = resolve_video_kensetsu_base_url(db)
+    if not base_url:
+        raise HTTPException(status_code=400, detail="Не задан URL Video Kensetsu")
+    try:
+        presets = await video_kensetsu_list_presets(base_url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Video Kensetsu недоступен: {exc}") from exc
+    return {
+        "base_url": base_url,
+        "presets": [
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or item.get("id") or ""),
+                "description": item.get("description"),
+            }
+            for item in presets
+            if item.get("id")
+        ],
+    }
+
+
+@router.post("/torrent-files/{file_id}/send-to-encoder")
+async def send_torrent_file_to_encoder(
+    file_id: int,
+    body: SendToEncoderIn,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Отправить media-файл в Video Kensetsu с выбранным пресетом."""
+    if not is_video_kensetsu_enabled(db):
+        raise HTTPException(status_code=400, detail="Video Kensetsu выключен в настройках")
+    base_url = resolve_video_kensetsu_base_url(db)
+    if not base_url:
+        raise HTTPException(status_code=400, detail="Не задан URL Video Kensetsu")
+
+    row = db.get(TorrentFile, file_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+    if not torrent_allows_media_download(db, row.info_hash or ""):
+        raise HTTPException(status_code=404, detail="Файл недоступен для кодирования")
+    resolved = resolve_media_file_for_download(row)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Файл недоступен для кодирования")
+
+    encode_path = str(resolved)
+    if not encode_path:
+        raise HTTPException(status_code=404, detail="У файла нет пути для кодировщика")
+
+    preset_id = (body.preset_id or "").strip()
+    if not preset_id:
+        raise HTTPException(status_code=400, detail="Не передан preset_id")
+
+    try:
+        presets = await video_kensetsu_list_presets(base_url)
+        preset = find_preset(presets, preset_id)
+        if preset is None:
+            raise HTTPException(status_code=404, detail=f"Пресет не найден: {preset_id}")
+        result = await video_kensetsu_encode(base_url, path=encode_path, preset=preset)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Ошибка кодировщика: {exc}") from exc
+
+    return {
+        "ok": True,
+        "file_id": file_id,
+        "path": encode_path,
+        "preset_id": preset_id,
+        "result": result,
+    }
 
 
 @router.get("/torrents/{info_hash}/downloadable-files")

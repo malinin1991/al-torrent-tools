@@ -13,6 +13,7 @@
     data-ui-sse-channel="archive"
     data-ui-sse-url="/archive/live?search={{ search|urlencode }}&page={{ page }}"
     data-ui-sse-target="#archive-live"
+    data-encoder-enabled="{% if video_kensetsu_ok %}1{% else %}0{% endif %}"
   >
     {% include "partials/archive_live.html" %}
   </div>

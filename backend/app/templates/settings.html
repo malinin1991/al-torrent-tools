@@ -133,6 +133,30 @@
   </section>
 
   <section class="settings-group card">
+    <h2>Video kensetsu by GeeKaZ0iD</h2>
+    <p class="muted">Кодировщик: ссылка «Кодировщик» в верхней навигации и кнопка отправки файла с выбором пресета. Ссылка появляется при включённой интеграции, заданном URL и успешном health (HTTP 200). При сохранении настроек статус проверяется автоматически.</p>
+    <div class="grid">
+      <label>Base URL
+        <input class="input" name="video_kensetsu_base_url" value="{{ settings_map.get('video_kensetsu_base_url', '') }}" placeholder="http://192.168.1.254:3000" />
+      </label>
+      <label class="row" style="align-items:center; gap:10px; margin-top:24px;">
+        <input type="checkbox" name="video_kensetsu_enabled" value="on" {% if settings_map.get('video_kensetsu_enabled', '') in ['1', 'true', 'yes', 'on'] %}checked{% endif %} />
+        Интеграция включена
+      </label>
+      <div class="settings-hint">
+        <button
+          class="btn btn-secondary"
+          type="button"
+          hx-post="/settings/video-kensetsu-test"
+          hx-include="closest form"
+          hx-target="#settings-result"
+          hx-swap="innerHTML"
+        >Проверить подключение</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-group card">
     <h2>Джобы и интервалы</h2>
     <div class="grid">
       <label>Количество релизов до паузы

@@ -33,6 +33,7 @@
   data-ui-sse-channel="releases"
   data-ui-sse-url="/releases/live?search={{ search|urlencode }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}&page={{ page }}"
   data-ui-sse-target="#releases-live"
+  data-encoder-enabled="{% if video_kensetsu_ok %}1{% else %}0{% endif %}"
 >
   {% include "partials/releases_live.html" %}
 </div>

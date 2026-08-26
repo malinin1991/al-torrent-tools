@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.services import job_runner as job_runner_module
 from app.services.job_runner import (
     STATUS_CANCELLED,
     STATUS_PENDING,
@@ -201,6 +202,86 @@ def test_is_stop_requested() -> None:
     assert is_stop_requested(db, 13) is True
     job.status = STATUS_RUNNING
     assert is_stop_requested(db, 13) is False
+    job.status = STATUS_CANCELLED
+    assert is_stop_requested(db, 13) is True
+
+
+def _patch_run_lock(monkeypatch) -> MagicMock:
+    """Подмена dedicated lock-connection (без реальной БД)."""
+    lock_conn = MagicMock()
+    lock_conn.closed = False
+    monkeypatch.setattr(job_runner_module, "_hold_run_lock", lambda *_a, **_k: lock_conn)
+    monkeypatch.setattr(job_runner_module, "_release_run_lock", lambda *_a, **_k: None)
+    return lock_conn
+
+
+def test_run_job_holds_lock_on_separate_connection(monkeypatch) -> None:
+    """run-lock берётся через _hold_run_lock (engine.connect), не через ORM Session."""
+    import asyncio
+
+    runner = JobRunner()
+
+    async def handler(db: object, job_id: int, params: dict) -> None:
+        return None
+
+    runner.register("demo_lock", handler)
+    job = SimpleNamespace(
+        id=50,
+        type="demo_lock",
+        status=STATUS_PENDING,
+        params_json={},
+        started_at=None,
+        finished_at=None,
+        error=None,
+    )
+    db = MagicMock()
+    db.get.return_value = job
+
+    fake_conn = MagicMock()
+    fake_conn.closed = False
+    hold_calls: list[int] = []
+    release_calls: list[tuple[object, int]] = []
+
+    def fake_hold(job_id: int) -> object:
+        hold_calls.append(job_id)
+        return fake_conn
+
+    def fake_release(conn: object, job_id: int) -> None:
+        release_calls.append((conn, job_id))
+
+    monkeypatch.setattr(job_runner_module, "_hold_run_lock", fake_hold)
+    monkeypatch.setattr(job_runner_module, "_release_run_lock", fake_release)
+
+    # ORM Session не должна получать advisory lock execute от run_job.
+    db.execute.side_effect = AssertionError("run_job не должен брать lock через ORM Session")
+
+    result = asyncio.run(runner.run_job(db, 50))
+
+    assert hold_calls == [50]
+    assert release_calls == [(fake_conn, 50)]
+    assert result.status == STATUS_SUCCESS
+
+
+def test_hold_run_lock_uses_engine_not_session(monkeypatch) -> None:
+    """_hold_run_lock открывает engine.connect и берёт pg_advisory_lock там."""
+    fake_conn = MagicMock()
+    fake_conn.closed = False
+    connect_calls: list[object] = []
+
+    def fake_connect() -> object:
+        connect_calls.append(True)
+        return fake_conn
+
+    monkeypatch.setattr(job_runner_module.engine, "connect", fake_connect)
+
+    conn = job_runner_module._hold_run_lock(42)
+
+    assert conn is fake_conn
+    assert connect_calls == [True]
+    fake_conn.execute.assert_called()
+    sql = str(fake_conn.execute.call_args[0][0])
+    assert "pg_advisory_lock" in sql
+    fake_conn.commit.assert_called()
 
 
 def test_run_job_finalizes_stop_requested_as_cancelled(monkeypatch) -> None:
@@ -223,11 +304,92 @@ def test_run_job_finalizes_stop_requested_as_cancelled(monkeypatch) -> None:
     )
     db = MagicMock()
     db.get.return_value = job
-    db.execute.return_value = MagicMock()
-    monkeypatch.setattr("app.services.job_runner._acquire_run_lock", lambda *_a, **_k: None)
-    monkeypatch.setattr("app.services.job_runner._unlock_run_lock", lambda *_a, **_k: None)
+    _patch_run_lock(monkeypatch)
 
     result = asyncio.run(runner.run_job(db, 99))
 
     assert result.status == STATUS_CANCELLED
     assert result.error == "Остановлено пользователем"
+
+
+def test_run_job_cancelled_mid_run_via_is_stop_requested(monkeypatch) -> None:
+    """Handler видит cancelled через is_stop_requested и останавливается."""
+    import asyncio
+
+    runner = JobRunner()
+    orphan_reason = "Джоб-сирота (процесс умер) помечен как cancelled"
+
+    async def handler(db: object, job_id: int, params: dict) -> None:
+        if is_stop_requested(db, job_id):
+            raise JobStopRequested()
+
+    runner.register("demo_cancel_mid", handler)
+    job = SimpleNamespace(
+        id=77,
+        type="demo_cancel_mid",
+        status=STATUS_PENDING,
+        params_json={},
+        started_at=None,
+        finished_at=None,
+        error=None,
+    )
+    db = MagicMock()
+    db.get.return_value = job
+
+    # После старта (status=running) handler увидит cancelled — как после reclaim.
+    def _refresh(obj: object) -> None:
+        if obj is job and job.status == STATUS_RUNNING:
+            job.status = STATUS_CANCELLED
+            job.error = orphan_reason
+            job.finished_at = utcnow()
+
+    db.refresh.side_effect = _refresh
+    _patch_run_lock(monkeypatch)
+
+    result = asyncio.run(runner.run_job(db, 77))
+
+    assert result.status == STATUS_CANCELLED
+    assert result.error == orphan_reason
+
+
+def test_run_job_no_success_log_when_already_cancelled(monkeypatch) -> None:
+    """После handler слот уже cancelled — без лога «завершен успешно»."""
+    import asyncio
+
+    runner = JobRunner()
+    logged: list[str] = []
+    orphan_reason = "Джоб-сирота (процесс умер) помечен как cancelled"
+
+    async def handler(db: object, job_id: int, params: dict) -> None:
+        # Имитация: reclaim отменил слот пока handler работал.
+        job.status = STATUS_CANCELLED
+        job.error = orphan_reason
+        job.finished_at = utcnow()
+
+    runner.register("demo_orphan_cancel", handler)
+    job = SimpleNamespace(
+        id=88,
+        type="demo_orphan_cancel",
+        status=STATUS_PENDING,
+        params_json={},
+        started_at=None,
+        finished_at=None,
+        error=None,
+    )
+    db = MagicMock()
+    db.get.return_value = job
+    _patch_run_lock(monkeypatch)
+
+    orig_add_log = runner.add_log
+
+    def tracking_add_log(db_arg: object, job_id: int, message: str, level: str = "info") -> None:
+        logged.append(message)
+        return orig_add_log(db_arg, job_id, message, level)
+
+    monkeypatch.setattr(runner, "add_log", tracking_add_log)
+
+    result = asyncio.run(runner.run_job(db, 88))
+
+    assert result.status == STATUS_CANCELLED
+    assert "Джоб завершен успешно" not in logged
+    assert result.error == orphan_reason
