@@ -300,7 +300,12 @@ def _current_avc_has_checking(
     active_hashes: set[str],
     disk_hashes_by_path: dict[str, DiskFileHash],
 ) -> bool:
-    """Overlay checking только для файлов текущего сравниваемого AVC."""
+    """Overlay checking только для файлов текущего сравниваемого AVC.
+
+    UI «проверка» на части состава (при ok на остальных) — is_checking в БД /
+    stored-hash overlay, а не только torrent-wide hash_torrent: активный hash
+    job пометил бы все ok/changed файлы как checking.
+    """
     current_avc = next(
         (row for row in archives if int(row.id) == item.archive_id),
         None,
@@ -310,7 +315,8 @@ def _current_avc_has_checking(
     info_hash = str(current_avc.info_hash or "").strip().lower()
     current_files = files_by_version.get(_archive_file_key(current_avc), [])
     for row in current_files:
-        disk_hash = disk_hashes_by_path.get(str(row.full_path or ""))
+        full_path = str(getattr(row, "full_path", None) or "")
+        disk_hash = disk_hashes_by_path.get(full_path)
         status = file_status_for_ui(
             relative_path=str(row.relative_path or ""),
             full_path=row.full_path,
@@ -318,6 +324,8 @@ def _current_avc_has_checking(
             hash_job_active=info_hash in active_hashes,
             in_torrent=True,
             ui_status=row.ui_status,
+            incomplete=False,
+            is_checking=bool(getattr(row, "is_checking", False)),
         )
         if status == UI_STATUS_CHECKING:
             return True
@@ -415,7 +423,7 @@ def _file_state_by_release(
             )
         ).all()
         for job in jobs:
-            params = job.params_json if isinstance(job.params_json, dict) else {}
+            params = job.params_json if isinstance(getattr(job, "params_json", None), dict) else {}
             info_hash = str(params.get("info_hash") or "").strip().lower()
             if info_hash in current_hashes:
                 active_hashes.add(info_hash)
@@ -519,11 +527,7 @@ def query_hevc_statuses(
             or (archive.release_alias if archive is not None else None)
             or str(rid)
         )
-        title = (
-            (release.title if release is not None else None)
-            or (archive.anime_name if archive is not None else None)
-            or alias
-        )
+        title = (release.title if release is not None else None) or ""
         result.append(
             HevcReleaseStatus(
                 release_id=rid,
@@ -537,9 +541,11 @@ def query_hevc_statuses(
             )
         )
     if kind == "overdue":
-        result.sort(key=lambda row: (-row.max_overdue_hours, row.title.casefold()))
+        result.sort(
+            key=lambda row: (-row.max_overdue_hours, (row.title or row.alias).casefold())
+        )
     else:
-        result.sort(key=lambda row: row.title.casefold())
+        result.sort(key=lambda row: (row.title or row.alias).casefold())
     return result
 
 
@@ -572,9 +578,7 @@ def query_release_detail(
         or archive.release_alias
         or str(release_id)
     )
-    title = (
-        (release.title if release is not None else None) or archive.anime_name or alias
-    )
+    title = (release.title if release is not None else None) or ""
     executors = _executors_by_release(db, [int(release_id)])
     changes, checking_release_ids = _file_state_by_release(
         db, [int(release_id)], archives, items
@@ -591,8 +595,13 @@ def query_release_detail(
     )
 
 
+def _html_or_dash(value: str | None) -> str:
+    text = (value or "").strip()
+    return html.escape(text) if text else "—"
+
+
 def _release_link(row: HevcReleaseStatus) -> str:
-    title = html.escape(row.title)
+    title = html.escape((row.title or "").strip() or row.alias)
     alias = html.escape(row.alias, quote=True)
     return f'<a href="{ANILIBRIA_RELEASE_URL}/{alias}">{title}</a>'
 
@@ -656,10 +665,12 @@ def format_release_detail(
     *,
     max_len: int = TELEGRAM_TEXT_LIMIT,
 ) -> str:
-    lines = [f"🎬 <b>{_release_link(row)}</b>"]
-    if row.original_title:
-        lines.append(f"Оригинал: {html.escape(row.original_title)}")
-    lines.append(f"Исполнители: {html.escape(', '.join(row.executors) or '—')}")
+    lines = [
+        f"🎬 <b>{_release_link(row)}</b>",
+        f"Название: {_html_or_dash(row.title)}",
+        f"Оригинальное название: {_html_or_dash(row.original_title)}",
+        f"За HEVC отвечает: {html.escape(', '.join(row.executors) or '—')}",
+    ]
     if not row.items:
         lines.extend(["", "Нет AVC, требующих HEVC"])
     for item in sorted(row.items, key=lambda value: value.torrent_id):

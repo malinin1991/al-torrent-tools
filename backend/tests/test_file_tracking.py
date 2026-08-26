@@ -1395,7 +1395,7 @@ def test_sync_empty_prior_composition_does_not_heal_new(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """has_prior=True, но состав prior пуст/неизвестен → sticky new не лечим в ok."""
-    from app.services.file_tracker import TorrentFile, UI_STATUS_NEW
+    from app.services.file_tracker import TorrentFile, UI_STATUS_NEW, UI_STATUS_OK
 
     media = tmp_path / "anilibria"
     media.mkdir()
@@ -3019,13 +3019,25 @@ def test_file_status_for_ui_sticky_semantics() -> None:
         )
         == "changed"
     )
-    # checking — временный оверлей
+    # checking — временный оверлей из колонки / job
     assert (
         file_status_for_ui(
             relative_path="p.mkv",
             full_path="/media/p.mkv",
             ui_status="ok",
             hash_job_active=True,
+            in_torrent=True,
+            incomplete=False,
+        )
+        == "checking"
+    )
+    assert (
+        file_status_for_ui(
+            relative_path="p.mkv",
+            full_path="/media/p.mkv",
+            ui_status="ok",
+            is_checking=True,
+            incomplete=False,
             in_torrent=True,
         )
         == "checking"
@@ -3045,7 +3057,10 @@ def test_file_status_for_ui_sticky_semantics() -> None:
 
 
 def test_file_status_for_ui_partial_qb_is_checking(tmp_path: Path) -> None:
-    """ok/changed + только .!qB на диске → проверка; new остаётся new."""
+    """ok/changed + только .!qB на диске → проверка; new остаётся new.
+
+    UI-путь передаёт incomplete=False и читает is_checking из БД, без диска.
+    """
     from app.services.file_tracker import file_status_for_ui
 
     media = tmp_path / "show"
@@ -3077,6 +3092,27 @@ def test_file_status_for_ui_partial_qb_is_checking(tmp_path: Path) -> None:
         )
         == "new"
     )
+    # UI-путь: .!qB на диске без is_checking не даёт overlay
+    assert (
+        file_status_for_ui(
+            relative_path="ep01.mkv",
+            full_path=str(complete),
+            ui_status="ok",
+            incomplete=False,
+            is_checking=False,
+        )
+        == "ok"
+    )
+    assert (
+        file_status_for_ui(
+            relative_path="ep01.mkv",
+            full_path=str(complete),
+            ui_status="ok",
+            incomplete=False,
+            is_checking=True,
+        )
+        == "checking"
+    )
     # Соседний .!qB при уже complete-файле не даёт checking
     complete.write_bytes(b"done")
     assert (
@@ -3087,6 +3123,55 @@ def test_file_status_for_ui_partial_qb_is_checking(tmp_path: Path) -> None:
         )
         == "ok"
     )
+
+
+def test_apply_checking_flag_does_not_touch_ui_status() -> None:
+    from app.services.file_tracker import apply_checking_flag
+
+    row = SimpleNamespace(ui_status="changed", is_checking=False)
+    assert apply_checking_flag(row, True) is True
+    assert row.is_checking is True
+    assert row.ui_status == "changed"
+    assert apply_checking_flag(row, True) is False
+    assert apply_checking_flag(row, False) is True
+    assert row.is_checking is False
+    assert row.ui_status == "changed"
+
+
+def test_checking_flag_from_path_partial_and_complete(tmp_path: Path) -> None:
+    from app.services.file_tracker import checking_flag_from_path
+
+    media = tmp_path / "ep.mkv"
+    Path(str(media) + ".!qB").write_bytes(b"part")
+    assert checking_flag_from_path(str(media)) is True
+    media.write_bytes(b"done")
+    assert checking_flag_from_path(str(media)) is False
+    assert checking_flag_from_path(None) is False
+
+
+def test_hash_checking_overlay_sets_and_clears_after_settle(tmp_path: Path) -> None:
+    """hash_torrent → is_checking true; после settle без .!qB → false."""
+    from app.services.file_tracker import FileTrackerService
+
+    complete = tmp_path / "ok.mkv"
+    complete.write_bytes(b"done")
+    partial = tmp_path / "part.mkv"
+    Path(str(partial) + ".!qB").write_bytes(b"part")
+    rows = [
+        SimpleNamespace(full_path=str(complete), is_checking=False, ui_status="ok", updated_at=None),
+        SimpleNamespace(full_path=str(partial), is_checking=False, ui_status="changed", updated_at=None),
+    ]
+    db = MagicMock()
+    service = FileTrackerService(db)
+    service._apply_hash_checking_overlay(rows, active=True)  # type: ignore[attr-defined]
+    assert rows[0].is_checking is True
+    assert rows[1].is_checking is True
+    assert rows[0].ui_status == "ok"
+    assert rows[1].ui_status == "changed"
+    service._apply_hash_checking_overlay(rows, active=False)  # type: ignore[attr-defined]
+    assert rows[0].is_checking is False
+    assert rows[1].is_checking is True
+    db.commit.assert_called()
 
 
 def test_settle_ui_status_rules() -> None:

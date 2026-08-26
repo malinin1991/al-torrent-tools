@@ -304,6 +304,8 @@ class TorrentFile(Base):
     full_path: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     # Sticky статус для UI: new|ok|changed — не пересчитывается с диска.
     ui_status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok", index=True)
+    # Временный overlay «проверка» (.!qB / hash_torrent). Не писать в ui_status.
+    is_checking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

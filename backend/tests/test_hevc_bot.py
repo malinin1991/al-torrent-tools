@@ -77,14 +77,18 @@ def _hevc_file(
     path: str,
     status: str,
     torrent_id: int,
+    *,
+    full_path: str | None = None,
+    is_checking: bool = False,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         release_id=7,
         torrent_id=torrent_id,
         info_hash=info_hash,
         relative_path=path,
-        full_path=f"/media/{info_hash}/{path}",
+        full_path=full_path or f"/media/{info_hash}/{path}",
         ui_status=status,
+        is_checking=is_checking,
     )
 
 
@@ -93,13 +97,15 @@ def _hevc_item(
     current_archive_id: int,
     current_torrent_id: int,
     hevc_archive_id: int,
+    rip_family: str = "WEBRip 1080p",
+    episodes: str = "1-5",
 ) -> UnpairedAvc:
     return UnpairedAvc(
         archive_id=current_archive_id,
         release_id=7,
         torrent_id=current_torrent_id,
-        rip_family="WEBRip 1080p",
-        episodes="1-5",
+        rip_family=rip_family,
+        episodes=episodes,
         created_at=datetime(2026, 1, 14),
         age_hours=48,
         missing=False,
@@ -463,55 +469,134 @@ def test_changes_keep_equal_basenames_at_distinct_exact_paths() -> None:
     ]
 
 
-def _checking_file_state(
-    active_hashes: set[str],
+_CHECKING_PLACEHOLDER = (
+    "Изменения файлов после HEVC (sticky) появятся позже, "
+    "так как новые файлы ещё не проверены."
+)
+
+
+def _mebius_dust_file_state(
+    *,
+    checking_indexes: set[int] | None = None,
+    active_hashes: set[str] | None = None,
 ) -> tuple[list, bool]:
+    """AVC #39699 WEB-DL 1080p серии 1-7: 01-05 ok, 06 ok, 07 changed."""
+    checking_indexes = checking_indexes or set()
     archives = [
         _hevc_archive(
             archive_id=1,
-            torrent_id=105,
+            torrent_id=39680,
             info_hash="hevc",
             codec="HEVC",
-            created_at=datetime(2026, 1, 2),
+            created_at=datetime(2026, 8, 20),
+            episodes="1-7",
+            rip_type="WEB-DL",
         ),
         _hevc_archive(
             archive_id=2,
-            torrent_id=100,
+            torrent_id=39650,
             info_hash="base",
             codec="AVC",
-            created_at=datetime(2026, 1, 1),
+            created_at=datetime(2026, 8, 19),
+            episodes="1-7",
+            rip_type="WEB-DL",
             superseded=True,
         ),
         _hevc_archive(
             archive_id=3,
-            torrent_id=120,
+            torrent_id=39699,
             info_hash="current",
             codec="AVC",
-            created_at=datetime(2026, 1, 14),
+            created_at=datetime(2026, 8, 26, 9, 33),
+            episodes="1-7",
+            rip_type="WEB-DL",
         ),
     ]
-    files = [
-        _hevc_file("hevc", "show/hevc.mkv", "changed", 105),
-        _hevc_file("base", "show/01.mkv", "changed", 100),
-        _hevc_file("current", "show/01.mkv", "changed", 120),
-        _hevc_file("current", "show/02.mkv", "new", 120),
-    ]
+    files = [_hevc_file("hevc", "Mebius_Dust/Mebius_Dust_[01].mkv", "ok", 39680)]
+    for index in range(1, 8):
+        name = f"Mebius_Dust/Mebius_Dust_[{index:02d}].mkv"
+        files.append(_hevc_file("base", name, "ok", 39650))
+        status = "changed" if index == 7 else "ok"
+        files.append(
+            _hevc_file(
+                "current",
+                name,
+                status,
+                39699,
+                is_checking=index in checking_indexes,
+            )
+        )
     changes, checking_ids = _aggregate_file_state(
         archives,
         files,
-        [_hevc_item(current_archive_id=3, current_torrent_id=120, hevc_archive_id=1)],
-        active_hashes=active_hashes,
+        [
+            _hevc_item(
+                current_archive_id=3,
+                current_torrent_id=39699,
+                hevc_archive_id=1,
+                rip_family="WEB-DL 1080p",
+                episodes="1-7",
+            )
+        ],
+        active_hashes=active_hashes or set(),
         disk_hashes_by_path={},
     )
     return changes[7], 7 in checking_ids
 
 
-def test_current_avc_checking_hides_partial_changes_with_exact_message() -> None:
-    changes, checking = _checking_file_state({"current"})
+def test_hevc_file_state_reads_checking_from_db_without_disk(monkeypatch) -> None:
+    """_file_state_by_release не смотрит .!qB: overlay только из колонки + hash job."""
+    from app.services import hevc_bot as mod
+
+    monkeypatch.setattr(
+        "app.services.torrent_files_meta.is_partial_only",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("disk overlay forbidden")),
+    )
+    archives = [
+        _hevc_archive(
+            archive_id=3,
+            torrent_id=39699,
+            info_hash="current",
+            codec="AVC",
+            created_at=datetime(2026, 8, 26),
+        )
+    ]
+    files = [
+        _hevc_file(
+            "current",
+            "a.mkv",
+            "changed",
+            39699,
+            full_path="/missing/a.mkv",
+            is_checking=True,
+        )
+    ]
+    items = [
+        _hevc_item(current_archive_id=3, current_torrent_id=39699, hevc_archive_id=1)
+    ]
+    db = MagicMock()
+    db.scalars.return_value.all.side_effect = [
+        files,
+        [],  # hash jobs
+        [],  # disk hashes
+    ]
+    changes, checking_ids = mod._file_state_by_release(db, [7], archives, items)
+    assert 7 in checking_ids
+    assert 7 in changes
+
+
+def test_hevc_bot_module_has_no_partial_disk_helper() -> None:
+    import app.services.hevc_bot as mod
+
+    assert not hasattr(mod, "is_partial_only")
+    changes, checking = _mebius_dust_file_state(checking_indexes={6, 7})
+    assert [row.status for row in changes if row.status != "ok"] == ["changed"]
+    assert changes[-1].basename == "Mebius_Dust_[07].mkv"
+
     row = HevcReleaseStatus(
         release_id=7,
-        alias="show",
-        title="Show",
+        alias="mebius-dust",
+        title="Mebius Dust",
         original_title=None,
         executors=[],
         changes=changes,
@@ -519,23 +604,77 @@ def test_current_avc_checking_hides_partial_changes_with_exact_message() -> None
     )
 
     text = format_release_detail(row)
-    message = (
-        "Изменения файлов после HEVC (sticky) появятся позже, "
-        "так как новые файлы ещё не проверены."
-    )
     assert checking is True
-    assert message in text
+    assert text.endswith(_CHECKING_PLACEHOLDER)
+    assert _CHECKING_PLACEHOLDER in text
     assert "Изменения файлов после HEVC (sticky):" not in text
-    assert "01.mkv — changed" not in text
-    assert "02.mkv — new" not in text
+    assert "changed" not in text
+    assert "Mebius_Dust_[07].mkv" not in text
+    assert "Mebius_Dust_[06].mkv" not in text
 
 
 def test_checking_in_historical_or_hevc_does_not_hide_current_changes() -> None:
-    changes, checking = _checking_file_state({"base", "hevc"})
+    archives = [
+        _hevc_archive(
+            archive_id=1,
+            torrent_id=39680,
+            info_hash="hevc",
+            codec="HEVC",
+            created_at=datetime(2026, 8, 20),
+            episodes="1-7",
+            rip_type="WEB-DL",
+        ),
+        _hevc_archive(
+            archive_id=2,
+            torrent_id=39650,
+            info_hash="base",
+            codec="AVC",
+            created_at=datetime(2026, 8, 19),
+            episodes="1-7",
+            rip_type="WEB-DL",
+            superseded=True,
+        ),
+        _hevc_archive(
+            archive_id=3,
+            torrent_id=39699,
+            info_hash="current",
+            codec="AVC",
+            created_at=datetime(2026, 8, 26, 9, 33),
+            episodes="1-7",
+            rip_type="WEB-DL",
+        ),
+    ]
+    files = [
+        _hevc_file("hevc", "Mebius_Dust/Mebius_Dust_[01].mkv", "ok", 39680, is_checking=True)
+    ]
+    for index in range(1, 8):
+        name = f"Mebius_Dust/Mebius_Dust_[{index:02d}].mkv"
+        files.append(
+            _hevc_file("base", name, "ok", 39650, is_checking=index == 7)
+        )
+        status = "changed" if index == 7 else "ok"
+        files.append(_hevc_file("current", name, status, 39699))
+    changes, checking_ids = _aggregate_file_state(
+        archives,
+        files,
+        [
+            _hevc_item(
+                current_archive_id=3,
+                current_torrent_id=39699,
+                hevc_archive_id=1,
+                rip_family="WEB-DL 1080p",
+                episodes="1-7",
+            )
+        ],
+        active_hashes=set(),
+        disk_hashes_by_path={},
+    )
+    checking = 7 in checking_ids
+    changes = changes[7]
     row = HevcReleaseStatus(
         release_id=7,
-        alias="show",
-        title="Show",
+        alias="mebius-dust",
+        title="Mebius Dust",
         original_title=None,
         executors=[],
         changes=changes,
@@ -545,17 +684,16 @@ def test_checking_in_historical_or_hevc_does_not_hide_current_changes() -> None:
     text = format_release_detail(row)
     assert checking is False
     assert "Изменения файлов после HEVC (sticky):" in text
-    assert "✏️ 01.mkv — changed" in text
-    assert "➕ 02.mkv — new" in text
-    assert "появятся позже" not in text
+    assert "✏️ Mebius_Dust_[07].mkv — changed" in text
+    assert _CHECKING_PLACEHOLDER not in text
 
 
 def test_changes_return_automatically_after_current_avc_settles() -> None:
-    changes, checking = _checking_file_state(set())
+    changes, checking = _mebius_dust_file_state(checking_indexes=set())
     row = HevcReleaseStatus(
         release_id=7,
-        alias="show",
-        title="Show",
+        alias="mebius-dust",
+        title="Mebius Dust",
         original_title=None,
         executors=[],
         changes=changes,
@@ -564,9 +702,87 @@ def test_changes_return_automatically_after_current_avc_settles() -> None:
 
     text = format_release_detail(row)
     assert checking is False
-    assert "✏️ 01.mkv — changed" in text
-    assert "➕ 02.mkv — new" in text
-    assert "появятся позже" not in text
+    assert "✏️ Mebius_Dust_[07].mkv — changed" in text
+    assert _CHECKING_PLACEHOLDER not in text
+
+
+def test_current_avc_db_checking_hides_changed_without_hash_job_or_disk() -> None:
+    """is_checking в БД на 06+07, без media-тома и без hash_torrent."""
+    files = [_hevc_file("hevc", "Mebius_Dust/hevc.mkv", "ok", 39680, full_path=None)]
+    archives = [
+        _hevc_archive(
+            archive_id=1,
+            torrent_id=39680,
+            info_hash="hevc",
+            codec="HEVC",
+            created_at=datetime(2026, 8, 20),
+            episodes="1-7",
+            rip_type="WEB-DL",
+        ),
+        _hevc_archive(
+            archive_id=2,
+            torrent_id=39650,
+            info_hash="base",
+            codec="AVC",
+            created_at=datetime(2026, 8, 19),
+            episodes="1-7",
+            rip_type="WEB-DL",
+            superseded=True,
+        ),
+        _hevc_archive(
+            archive_id=3,
+            torrent_id=39699,
+            info_hash="current",
+            codec="AVC",
+            created_at=datetime(2026, 8, 26, 9, 33),
+            episodes="1-7",
+            rip_type="WEB-DL",
+        ),
+    ]
+    for index in range(1, 8):
+        name = f"Mebius_Dust/Mebius_Dust_[{index:02d}].mkv"
+        files.append(_hevc_file("base", name, "ok", 39650, full_path=None))
+        status = "changed" if index == 7 else "ok"
+        files.append(
+            _hevc_file(
+                "current",
+                name,
+                status,
+                39699,
+                full_path=None,
+                is_checking=index in {6, 7},
+            )
+        )
+
+    changes, checking_ids = _aggregate_file_state(
+        archives,
+        files,
+        [
+            _hevc_item(
+                current_archive_id=3,
+                current_torrent_id=39699,
+                hevc_archive_id=1,
+                rip_family="WEB-DL 1080p",
+                episodes="1-7",
+            )
+        ],
+        active_hashes=set(),
+        disk_hashes_by_path={},
+    )
+    row = HevcReleaseStatus(
+        release_id=7,
+        alias="mebius-dust",
+        title="Mebius Dust",
+        original_title=None,
+        executors=[],
+        changes=changes[7],
+        changes_checking=7 in checking_ids,
+    )
+    text = format_release_detail(row)
+    assert 7 in checking_ids
+    assert _CHECKING_PLACEHOLDER in text
+    assert "changed" not in text
+    assert "Mebius_Dust_[07].mkv" not in text
 
 
 def test_detail_shows_only_new_and_changed_file_changes() -> None:
@@ -600,7 +816,10 @@ def test_detail_shows_only_new_and_changed_file_changes() -> None:
     )
     text = format_release_detail(row)
     assert "Show &lt;test&gt;" in text
-    assert "Original &amp; title" in text
+    assert "Название: Show &lt;test&gt;" in text
+    assert "Оригинальное название: Original &amp; title" in text
+    assert "Show &lt;test&gt; / Original" not in text
+    assert "Оригинал:" not in text
     assert "26.08.2026 12:00 MSK" in text
     assert "расхождение типов" in text
     assert "a&amp;b.mkv" in text
@@ -610,7 +829,8 @@ def test_detail_shows_only_new_and_changed_file_changes() -> None:
     assert " — ok" not in text
     assert "Изменения файлов после HEVC (sticky)" in text
     assert "Статусы файлов после HEVC (sticky)" not in text
-    assert "Исполнители: —" in text
+    assert "За HEVC отвечает: —" in text
+    assert "Исполнители:" not in text
 
 
 def test_detail_reports_no_file_changes_when_only_ok_remains() -> None:
@@ -717,7 +937,42 @@ def test_type_mismatch_has_dedicated_error_list_format() -> None:
     assert "расхождение типов AVC/HEVC" in text
     assert "https://anilibria.top/anime/releases/release/show" in text
     assert "неизвестно" in text
+    assert "За HEVC отвечает:" not in text
+    assert "Исполнители:" not in text
     assert "просрочка" not in text
+
+
+def test_detail_header_splits_titles_and_hevc_owner() -> None:
+    both = HevcReleaseStatus(
+        release_id=7,
+        alias="show",
+        title="Русское",
+        original_title="Mebius Dust",
+        executors=["Coder"],
+    )
+    header = format_release_detail(both).split("\n\n", 1)[0]
+    assert "Название: Русское" in header
+    assert "Оригинальное название: Mebius Dust" in header
+    assert "За HEVC отвечает: Coder" in header
+    assert "Русское / Mebius Dust" not in header
+    assert "Оригинал:" not in header
+    assert "Исполнители:" not in header
+    lines = header.splitlines()
+    assert "Название: Русское" in lines
+    assert "Оригинальное название: Mebius Dust" in lines
+    assert "За HEVC отвечает: Coder" in lines
+
+    empty = HevcReleaseStatus(
+        release_id=7,
+        alias="show",
+        title="",
+        original_title=None,
+        executors=[],
+    )
+    empty_text = format_release_detail(empty)
+    assert "Название: —" in empty_text
+    assert "Оригинальное название: —" in empty_text
+    assert "За HEVC отвечает: —" in empty_text
 
 
 def test_error_list_empty_case() -> None:
@@ -783,8 +1038,8 @@ def _mock_status_rows(monkeypatch, items: list[UnpairedAvc]) -> None:
         lambda db, ids: {},
     )
     monkeypatch.setattr(
-        "app.services.hevc_bot._changes_by_release",
-        lambda db, ids, archives, selected: {},
+        "app.services.hevc_bot._file_state_by_release",
+        lambda db, ids, archives, selected: ({}, set()),
     )
 
 
@@ -874,6 +1129,50 @@ def test_release_detail_ignored_only_avc_uses_neutral_text(monkeypatch) -> None:
     text = format_release_detail(row)
     assert "Нет AVC, требующих HEVC" in text
     assert "Актуальная HEVC-пара" not in text
+
+
+def test_release_detail_uses_release_titles_not_concatenated_anime_name(
+    monkeypatch,
+) -> None:
+    archive = SimpleNamespace(
+        id=1,
+        release_id=7,
+        torrent_id=70,
+        release_alias="show",
+        anime_name="Русское / Mebius Dust",
+        ignore_hevc=True,
+    )
+    release = SimpleNamespace(
+        release_id=7,
+        release_alias="show",
+        title=None,
+        original_title="Mebius Dust",
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_bot._load_release_rows",
+        lambda db: ([archive], {7: release}),
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_bot.find_unpaired_avc",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_bot._executors_by_release",
+        lambda db, ids: {},
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_bot._file_state_by_release",
+        lambda db, ids, archives, items: ({}, set()),
+    )
+
+    row = query_release_detail(MagicMock(), 7)
+
+    assert row is not None
+    assert row.title == ""
+    text = format_release_detail(row)
+    assert "Название: —" in text
+    assert "Оригинальное название: Mebius Dust" in text
+    assert "Русское / Mebius Dust" not in text
 
 
 def test_status_list_filters_old_missing_items_per_item_in_mixed_release(

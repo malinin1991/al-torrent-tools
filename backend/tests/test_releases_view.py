@@ -6,7 +6,6 @@ from app.services.releases_view import (
     _build_file_rows,
     _info_hashes_with_active_hash_job,
     _recent_events_by_info_hash,
-    format_bytes,
     format_torrent_files_summary,
     list_release_groups,
 )
@@ -533,9 +532,13 @@ def test_build_file_rows_sorted_by_filename_desc(monkeypatch, tmp_path: Path) ->
 
 
 def test_list_downloadable_file_ids_only_active(tmp_path: Path, monkeypatch) -> None:
-    from app.services.releases_view import list_downloadable_file_ids, probe_torrent_media_files
+    from app.services.releases_view import list_downloadable_file_ids
 
     monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.releases_view._info_hashes_with_active_hash_job",
+        lambda _db, _hashes: set(),
+    )
     media = tmp_path / "ep.mkv"
     media.write_bytes(b"data")
     info_hash = "ab" * 20
@@ -546,6 +549,8 @@ def test_list_downloadable_file_ids_only_active(tmp_path: Path, monkeypatch) -> 
         info_hash=info_hash,
         ui_status="ok",
         full_path=str(media),
+        relative_path="ep.mkv",
+        is_checking=False,
     )
     db = MagicMock()
     db.scalar.return_value = archive
@@ -566,6 +571,10 @@ def test_probe_torrent_media_files_checking_and_downloadable(
     from app.services.releases_view import probe_torrent_media_files
 
     monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.releases_view._info_hashes_with_active_hash_job",
+        lambda _db, _hashes: set(),
+    )
     show = tmp_path / "Show"
     show.mkdir()
     ok_file = show / "ep02.mkv"
@@ -581,13 +590,73 @@ def test_probe_torrent_media_files_checking_and_downloadable(
         info_hash=info_hash, superseded=False, api_present=True
     )
     db.scalars.return_value.all.return_value = [
-        SimpleNamespace(id=1, ui_status="ok", full_path=str(partial)),
-        SimpleNamespace(id=2, ui_status="ok", full_path=str(ok_file)),
-        SimpleNamespace(id=3, ui_status="new", full_path=str(new_partial)),
+        SimpleNamespace(
+            id=1,
+            ui_status="ok",
+            full_path=str(partial),
+            relative_path="ep01.mkv",
+            is_checking=True,
+        ),
+        SimpleNamespace(
+            id=2,
+            ui_status="ok",
+            full_path=str(ok_file),
+            relative_path="ep02.mkv",
+            is_checking=False,
+        ),
+        SimpleNamespace(
+            id=3,
+            ui_status="new",
+            full_path=str(new_partial),
+            relative_path="ep03.mkv",
+            is_checking=True,
+        ),
     ]
     probe = probe_torrent_media_files(db, info_hash)
     assert probe.downloadable_ids == [2]
     assert probe.checking_ids == [1]
+
+
+def test_probe_checking_from_db_not_disk_partial(tmp_path: Path, monkeypatch) -> None:
+    """.!qB на диске без is_checking не даёт checking_ids; флаг в БД — даёт."""
+    from app.services.releases_view import probe_torrent_media_files
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.releases_view._info_hashes_with_active_hash_job",
+        lambda _db, _hashes: set(),
+    )
+    show = tmp_path / "Show"
+    show.mkdir()
+    disk_partial = show / "ep01.mkv"
+    Path(str(disk_partial) + ".!qB").write_bytes(b"part")
+    complete = show / "ep02.mkv"
+    complete.write_bytes(b"ok")
+    info_hash = "ee" * 20
+    db = MagicMock()
+    db.scalar.return_value = SimpleNamespace(
+        info_hash=info_hash, superseded=False, api_present=True
+    )
+    db.scalars.return_value.all.return_value = [
+        SimpleNamespace(
+            id=1,
+            ui_status="ok",
+            full_path=str(disk_partial),
+            relative_path="ep01.mkv",
+            is_checking=False,
+        ),
+        SimpleNamespace(
+            id=2,
+            ui_status="changed",
+            full_path=str(complete),
+            relative_path="ep02.mkv",
+            is_checking=True,
+        ),
+    ]
+    probe = probe_torrent_media_files(db, info_hash)
+    assert probe.checking_ids == [2]
+    assert 1 not in probe.checking_ids
+    assert probe.downloadable_ids == [2]
 
 
 def test_natural_name_key_orders_unpadded() -> None:
@@ -603,7 +672,7 @@ def test_natural_name_key_orders_unpadded() -> None:
 
 
 def test_build_file_rows_ssr_skips_disk_partial_overlay(tmp_path: Path) -> None:
-    """SSR не смотрит .!qB — sticky ok остаётся ok (оверлей в фоне)."""
+    """SSR не смотрит .!qB — sticky ok остаётся ok без is_checking в БД."""
     from app.services.releases_view import _build_file_rows
 
     show = tmp_path / "Show"
@@ -619,10 +688,67 @@ def test_build_file_rows_ssr_skips_disk_partial_overlay(tmp_path: Path) -> None:
             selected=True,
             full_path=str(partial),
             ui_status="ok",
+            is_checking=False,
         ),
     ]
     rows = _build_file_rows(files, {})
     assert rows[0].status == "ok"
+
+
+def test_build_file_rows_checking_from_db_flag() -> None:
+    from app.services.releases_view import _build_file_rows
+
+    files = [
+        SimpleNamespace(
+            id=1,
+            relative_path="Show/ep01.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/Show/ep01.mkv",
+            ui_status="ok",
+            is_checking=True,
+        ),
+        SimpleNamespace(
+            id=2,
+            relative_path="Show/ep02.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/Show/ep02.mkv",
+            ui_status="changed",
+            is_checking=True,
+        ),
+        SimpleNamespace(
+            id=3,
+            relative_path="Show/ep03.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/Show/ep03.mkv",
+            ui_status="new",
+            is_checking=True,
+        ),
+    ]
+    rows = {r.relative_path: r for r in _build_file_rows(files, {})}
+    assert rows["Show/ep01.mkv"].status == "checking"
+    assert rows["Show/ep02.mkv"].status == "checking"
+    assert rows["Show/ep03.mkv"].status == "new"
+
+
+def test_build_file_rows_checking_cleared_shows_sticky() -> None:
+    from app.services.releases_view import _build_file_rows
+
+    files = [
+        SimpleNamespace(
+            id=1,
+            relative_path="Show/ep07.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/Show/ep07.mkv",
+            ui_status="changed",
+            is_checking=False,
+        ),
+    ]
+    rows = _build_file_rows(files, {}, hash_job_active=False)
+    assert rows[0].status == "changed"
 
 
 def test_file_is_downloadable_rules(tmp_path: Path, monkeypatch) -> None:

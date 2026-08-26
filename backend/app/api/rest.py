@@ -577,7 +577,7 @@ async def send_torrent_file_to_encoder(
 
 @router.get("/torrents/{info_hash}/downloadable-files")
 def list_torrent_downloadable_files(info_hash: str, db: Session = Depends(get_db)) -> dict:
-    """Фоновая подгрузка: кнопки скачивания + оверлей «проверка» для .!qB."""
+    """Фоновая подгрузка: кнопки скачивания + overlay «проверка» из БД."""
     normalized = sanitize_info_hash(info_hash) or (info_hash or "").strip().lower()
     probe = probe_torrent_media_files(db, normalized)
     return {

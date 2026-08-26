@@ -242,7 +242,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
         by_hash.setdefault(item.info_hash, []).append(item)
 
     # Ленивый импорт: file_tracker импортирует из этого модуля не нужно, но избегаем циклов.
-    from app.services.file_tracker import FileTrackerService
+    from app.services.file_tracker import FileTrackerService, apply_checking_flag, checking_flag_from_path
 
     tracker = FileTrackerService(db)
 
@@ -306,6 +306,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                         selected=item.selected,
                         full_path=item.full_path,
                         ui_status=initial_status,
+                        is_checking=checking_flag_from_path(item.full_path),
                         created_at=now,
                         updated_at=now,
                     )
@@ -318,6 +319,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                 row.selected = item.selected
                 row.full_path = item.full_path
                 row.updated_at = now
+                apply_checking_flag(row, checking_flag_from_path(item.full_path))
                 # Лечим ложный sticky new: inventory мог создать строки до появления prior.
                 # Пустой состав prior — не лечим (first_seen=True).
                 if has_prior_version:

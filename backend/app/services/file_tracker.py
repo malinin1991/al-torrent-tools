@@ -141,6 +141,18 @@ class FileTrackerService:
         self._db.add(JobLog(job_id=self._job_id, level=level, message=message))
         self._db.commit()
 
+    def _apply_hash_checking_overlay(self, rows: list[TorrentFile], *, active: bool) -> None:
+        """Overlay is_checking: hash_torrent идёт → true; иначе true только при .!qB.
+
+        Sticky ui_status не трогаем.
+        """
+        now = utcnow()
+        for row in rows:
+            wanted = True if active else checking_flag_from_path(getattr(row, "full_path", None))
+            if apply_checking_flag(row, wanted):
+                row.updated_at = now
+        self._db.commit()
+
     def sync_torrent_composition(
         self,
         *,
@@ -243,6 +255,8 @@ class FileTrackerService:
             ).all()
         )
         rows_by_rel = {row.relative_path: row for row in rows}
+        # Пока идёт hash_torrent — overlay «проверка» в БД (UI/HEVC без обхода диска).
+        self._apply_hash_checking_overlay(rows, active=True)
 
         # Хеши предыдущей версии этого torrent_id (rel → content_hash) до перезаписи диска.
         prior_hash = result.prior_info_hash or self._prior_version_hash(
@@ -289,29 +303,34 @@ class FileTrackerService:
         )
         is_baseline = not has_prior_version
         settled_rels: set[str] = set()
-        if to_hash:
-            self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
-            stop_fn = None
-            if self._job_id is not None:
-                from app.services.job_runner import is_stop_requested
+        from app.services.job_runner import JobStopRequested
 
-                job_id = self._job_id
-                stop_fn = lambda: is_stop_requested(self._db, job_id)
-            stats = hash_paths_parallel(
-                self._db,
-                to_hash,
-                workers=workers,
-                log_fn=lambda msg: self._log(msg, "info"),
-                should_stop=stop_fn,
-            )
-            result.hashed = stats["hashed"]
-            result.gated = stats["gated"]
-            result.errors += stats.get("errors", 0)
-            if stats.get("stopped"):
-                from app.services.job_runner import JobStopRequested
+        try:
+            if to_hash:
+                self._log(f"hash_torrent: хеширование files={len(to_hash)}, workers={workers}", "debug")
+                stop_fn = None
+                if self._job_id is not None:
+                    from app.services.job_runner import is_stop_requested
 
-                self._log("hash_torrent: остановка по запросу (прогресс хешей сохранён)", "warning")
-                raise JobStopRequested()
+                    job_id = self._job_id
+
+                    def _stop_requested() -> bool:
+                        return is_stop_requested(self._db, job_id)
+
+                    stop_fn = _stop_requested
+                stats = hash_paths_parallel(
+                    self._db,
+                    to_hash,
+                    workers=workers,
+                    log_fn=lambda msg: self._log(msg, "info"),
+                    should_stop=stop_fn,
+                )
+                result.hashed = stats["hashed"]
+                result.gated = stats["gated"]
+                result.errors += stats.get("errors", 0)
+                if stats.get("stopped"):
+                    self._log("hash_torrent: остановка по запросу (прогресс хешей сохранён)", "warning")
+                    raise JobStopRequested()
             for full, rel in path_to_rel.items():
                 new_row = self._db.scalar(
                     select(DiskFileHash).where(DiskFileHash.full_path == full).limit(1)
@@ -368,6 +387,9 @@ class FileTrackerService:
                 if tr is not None:
                     hash_transitions.append(tr)
                 settled_rels.add(rel)
+        except JobStopRequested:
+            self._apply_hash_checking_overlay(rows, active=False)
+            raise
 
         # Первый торрент: после hash-settle добавления остаются new (финальный статус версии).
         # Unselected / без пути / missing: settle без mismatch не трогает sticky new.
@@ -399,6 +421,9 @@ class FileTrackerService:
             self._db.commit()
         elif to_hash:
             self._db.commit()
+
+        # После settle: complete без .!qB → false; частичные остаются true.
+        self._apply_hash_checking_overlay(rows, active=False)
 
         result.hash_ui_transitions = list(hash_transitions)
         if hash_transitions:
@@ -1792,6 +1817,26 @@ def mark_missing_api_present_false(db: Session, seen_torrent_ids: set[int]) -> i
     return int(result.rowcount or 0)
 
 
+def apply_checking_flag(row: Any, is_checking: bool) -> bool:
+    """Пишет torrent_files.is_checking, не трогает sticky ui_status."""
+    wanted = bool(is_checking)
+    current = bool(getattr(row, "is_checking", False))
+    if current is wanted:
+        return False
+    row.is_checking = wanted
+    return True
+
+
+def checking_flag_from_path(full_path: str | None) -> bool:
+    """Worker/inventory: .!qB без complete-файла → checking overlay."""
+    if not full_path:
+        return False
+    try:
+        return bool(is_partial_only(full_path))
+    except OSError:
+        return False
+
+
 def file_status_for_ui(
     *,
     relative_path: str,
@@ -1802,6 +1847,7 @@ def file_status_for_ui(
     in_torrent: bool = True,
     ui_status: str | None = None,
     incomplete: bool | None = None,
+    is_checking: bool = False,
 ) -> str:
     """Бейдж для UI: sticky-статус торрента + временный «проверка».
 
@@ -1812,8 +1858,8 @@ def file_status_for_ui(
     - ok — хеш совпал с предыдущей версией / baseline (первый торрент) после settle
 
     Временный:
-    - checking — идёт hash_torrent, либо известный файл снова в .!qB
-      (кусок не сошёлся / докачка) — после complete + hash снова ok/changed
+    - checking — колонка is_checking, либо job hash_torrent, либо (если
+      caller не передал incomplete) известный файл снова в .!qB на диске
     """
     del relative_path  # только для сигнатуры/логов вызывающего
     if not in_torrent or latest_kind == KIND_REMOVED:
@@ -1828,8 +1874,10 @@ def file_status_for_ui(
         else:
             stored = UI_STATUS_OK
 
-    is_inc = incomplete
-    if is_inc is None and full_path:
+    is_inc = bool(is_checking)
+    if incomplete is not None:
+        is_inc = is_inc or bool(incomplete)
+    elif not is_inc and full_path:
         try:
             is_inc = is_partial_only(full_path)
         except OSError:

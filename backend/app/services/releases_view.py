@@ -26,6 +26,7 @@ from app.db.models import (
 from app.services.file_tracker import (
     KIND_ORPHAN,
     KIND_REMOVED,
+    UI_STATUS_CHECKING,
     UI_STATUS_REMOVED,
     file_status_for_ui,
     resolve_orphan_scan_root,
@@ -886,6 +887,7 @@ def _build_file_rows(
             in_torrent=True,
             ui_status=getattr(item, "ui_status", None),
             incomplete=False,
+            is_checking=bool(getattr(item, "is_checking", False)),
         )
         full_path = item.full_path
         rows.append(
@@ -978,9 +980,9 @@ class TorrentMediaProbe:
 
 
 def probe_torrent_media_files(db: Session, info_hash: str) -> TorrentMediaProbe:
-    """Один проход по диску: кого можно скачать и кого показать как «проверка».
+    """Кнопки скачивания с диска + overlay «проверка» из БД (is_checking / hash_torrent).
 
-    Только api_present и не superseded. SSR диск не трогает.
+    Только api_present и не superseded. «проверка» не сканирует .!qB.
     """
     if _active_archive_for_hash(db, info_hash) is None:
         return TorrentMediaProbe()
@@ -989,36 +991,48 @@ def probe_torrent_media_files(db: Session, info_hash: str) -> TorrentMediaProbe:
     rows = list(
         db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all()
     )
-    candidates: list[tuple[TorrentFile, str]] = []
+    if not rows:
+        return TorrentMediaProbe()
+
+    hash_job_active = normalized in _info_hashes_with_active_hash_job(db, [normalized])
+    checking: list[int] = []
+    download_candidates: list[tuple[TorrentFile, str]] = []
     for row in rows:
         status = (row.ui_status or "").strip().lower() or "ok"
+        ui = file_status_for_ui(
+            relative_path=str(row.relative_path or ""),
+            full_path=row.full_path,
+            hash_job_active=hash_job_active,
+            in_torrent=True,
+            ui_status=status,
+            incomplete=False,
+            is_checking=bool(getattr(row, "is_checking", False)),
+        )
+        if ui == UI_STATUS_CHECKING and row.id is not None:
+            checking.append(int(row.id))
         if status not in _DOWNLOADABLE_STATUSES:
             continue
         if not row.full_path or row.id is None:
             continue
-        candidates.append((row, status))
-    if not candidates:
-        return TorrentMediaProbe()
-
-    paths = [row.full_path for row, _ in candidates if row.full_path]
-    media_root = resolve_media_root().resolve()
-    existing, partial = _scan_media_presence(paths, media_root=media_root)
+        download_candidates.append((row, status))
 
     downloadable: list[int] = []
-    checking: list[int] = []
-    for row, status in candidates:
-        full = row.full_path or ""
-        canon = str(complete_path_for(full))
-        if canon in partial and status in {"ok", "changed"}:
-            checking.append(int(row.id))
-            continue
-        if _file_is_downloadable(
-            status=status,
-            full_path=full,
-            media_root=media_root,
-            existing_resolved=existing,
-        ):
-            downloadable.append(int(row.id))
+    if download_candidates:
+        paths = [row.full_path for row, _ in download_candidates if row.full_path]
+        media_root = resolve_media_root().resolve()
+        existing, partial = _scan_media_presence(paths, media_root=media_root)
+        for row, status in download_candidates:
+            full = row.full_path or ""
+            canon = str(complete_path_for(full))
+            if canon in partial:
+                continue
+            if _file_is_downloadable(
+                status=status,
+                full_path=full,
+                media_root=media_root,
+                existing_resolved=existing,
+            ):
+                downloadable.append(int(row.id))
     return TorrentMediaProbe(downloadable_ids=downloadable, checking_ids=checking)
 
 
@@ -1192,7 +1206,7 @@ def _info_hashes_with_active_hash_job(db: Session, info_hashes: list[str]) -> se
     ).all()
     active: set[str] = set()
     for job in rows:
-        params = job.params_json or {}
+        params = job.params_json if isinstance(getattr(job, "params_json", None), dict) else {}
         key = str(params.get("info_hash") or "").strip().lower()
         if key and key in wanted:
             active.add(key)
