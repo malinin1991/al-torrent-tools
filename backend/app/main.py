@@ -60,11 +60,23 @@ from app.services.releases_view import (
     list_release_groups,
 )
 from app.services.system_status import collect_system_status
+from app.services.telegram_access import (
+    ACCESS_STATUSES,
+    HEVC_BOT_KEY,
+    STATUS_APPROVED,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+    SUBJECT_CHAT,
+    SUBJECT_USER,
+    list_access_rows,
+    set_access_status,
+)
 from app.services.ui_events import parse_channels, sse_event_stream
 from app.services.telegram_notify import (
     SOURCE_UI,
     enqueue_tracking_toggle_notification,
     normalize_telegram_bot_api_base,
+    resolve_hevc_bot_test_credentials,
     resolve_telegram_bot_api_base,
     test_telegram_get_me,
     upsert_tracked_release,
@@ -268,6 +280,9 @@ def settings_page(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
     has_anilibria_token = bool((settings_map.get("anilibria_bearer_token") or "").strip())
     has_anilibria_passkey = bool((settings_map.get("anilibria_passkey") or "").strip())
     has_telegram_token = bool((settings_map.get("telegram_bot_token") or "").strip())
+    has_telegram_hevc_token = bool(
+        (settings_map.get("telegram_hevc_bot_token") or "").strip()
+    )
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -276,6 +291,7 @@ def settings_page(request: Request, db: Session = Depends(get_db)) -> HTMLRespon
             "has_anilibria_token": has_anilibria_token,
             "has_anilibria_passkey": has_anilibria_passkey,
             "has_telegram_token": has_telegram_token,
+            "has_telegram_hevc_token": has_telegram_hevc_token,
         },
     )
 
@@ -301,6 +317,9 @@ def update_settings(
     telegram_chat_id: str = Form(default=""),
     telegram_bot_api_base_url: str = Form(default=""),
     telegram_enabled: str | None = Form(default=None),
+    telegram_hevc_bot_token: str = Form(default=""),
+    telegram_hevc_bot_api_base_url: str = Form(default=""),
+    telegram_hevc_enabled: str | None = Form(default=None),
     video_kensetsu_base_url: str = Form(default=""),
     video_kensetsu_enabled: str | None = Form(default=None),
     scrape_pause_every: str = Form(default=str(settings.scrape_pause_every)),
@@ -333,6 +352,9 @@ def update_settings(
         "telegram_chat_id": telegram_chat_id,
         "telegram_bot_api_base_url": telegram_bot_api_base_url,
         "telegram_enabled": "true" if telegram_enabled == "on" else "false",
+        "telegram_hevc_bot_token": telegram_hevc_bot_token,
+        "telegram_hevc_bot_api_base_url": telegram_hevc_bot_api_base_url,
+        "telegram_hevc_enabled": "true" if telegram_hevc_enabled == "on" else "false",
         "video_kensetsu_base_url": normalize_video_kensetsu_base_url(video_kensetsu_base_url),
         "video_kensetsu_enabled": "true" if video_kensetsu_enabled == "on" else "false",
         "scrape_pause_every": scrape_pause_every,
@@ -466,6 +488,36 @@ async def telegram_test_settings(
     )
 
 
+@app.post("/settings/telegram-hevc-test", response_class=HTMLResponse)
+async def telegram_hevc_test_settings(
+    request: Request,
+    telegram_hevc_bot_token: str = Form(default=""),
+    telegram_hevc_bot_api_base_url: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    try:
+        token, base_url = resolve_hevc_bot_test_credentials(
+            form_token=telegram_hevc_bot_token,
+            form_base_url=telegram_hevc_bot_api_base_url,
+            saved_token=get_setting_value(db, "telegram_hevc_bot_token", ""),
+            saved_base_url=get_setting_value(
+                db, "telegram_hevc_bot_api_base_url", ""
+            ),
+        )
+        me = await test_telegram_get_me(token=token, base_url=base_url)
+        username = me.get("username") or me.get("first_name") or me.get("id")
+        message = f"Telegram HEVC: OK — @{username} (id={me.get('id')}), base={base_url}"
+        ok = True
+    except Exception as exc:
+        message = f"Telegram HEVC: ошибка — {exc}"
+        ok = False
+    return templates.TemplateResponse(
+        request,
+        "partials/settings_result.html",
+        {"message": message, "ok": ok},
+    )
+
+
 @app.post("/settings/video-kensetsu-test", response_class=HTMLResponse)
 async def video_kensetsu_test_settings(
     request: Request,
@@ -582,6 +634,114 @@ def remove_extra_url(request: Request, row_id: int, db: Session = Depends(get_db
         db.commit()
     rows = db.scalars(select(ExtraUrl).order_by(ExtraUrl.id.desc())).all()
     return templates.TemplateResponse(request, "partials/extra_urls_table.html", {"rows": rows})
+
+
+_ACCESS_STATUS_OPTIONS = (
+    (STATUS_PENDING, "Ожидает"),
+    (STATUS_APPROVED, "Одобрен"),
+    (STATUS_REJECTED, "Отклонён"),
+)
+
+
+def _telegram_access_context(
+    db: Session,
+    *,
+    user_status: str | None,
+    chat_status: str | None,
+) -> dict:
+    normalized_user_status = (user_status or "").strip().lower()
+    normalized_chat_status = (chat_status or "").strip().lower()
+    if normalized_user_status not in ACCESS_STATUSES:
+        normalized_user_status = ""
+    if normalized_chat_status not in ACCESS_STATUSES:
+        normalized_chat_status = ""
+    return {
+        "users": list_access_rows(
+            db,
+            bot_key=HEVC_BOT_KEY,
+            subject_type=SUBJECT_USER,
+            status=normalized_user_status or None,
+        ),
+        "chats": list_access_rows(
+            db,
+            bot_key=HEVC_BOT_KEY,
+            subject_type=SUBJECT_CHAT,
+            status=normalized_chat_status or None,
+        ),
+        "user_status": normalized_user_status,
+        "chat_status": normalized_chat_status,
+        "access_status_options": _ACCESS_STATUS_OPTIONS,
+    }
+
+
+@app.get("/telegram-access", response_class=HTMLResponse)
+def telegram_access_page(
+    request: Request,
+    user_status: str | None = Query(default=None),
+    chat_status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = _telegram_access_context(
+        db,
+        user_status=user_status,
+        chat_status=chat_status,
+    )
+    return templates.TemplateResponse(request, "telegram_access.html", context)
+
+
+@app.get("/telegram-access/live", response_class=HTMLResponse)
+def telegram_access_live(
+    request: Request,
+    user_status: str | None = Query(default=None),
+    chat_status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = _telegram_access_context(
+        db,
+        user_status=user_status,
+        chat_status=chat_status,
+    )
+    return templates.TemplateResponse(
+        request,
+        "partials/telegram_access_lists.html",
+        context,
+    )
+
+
+@app.post("/telegram-access/{access_id}/{decision}", response_class=HTMLResponse)
+def decide_telegram_access(
+    request: Request,
+    access_id: int,
+    decision: str,
+    user_status: str = Form(default=""),
+    chat_status: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    status_by_decision = {
+        "approve": STATUS_APPROVED,
+        "reject": STATUS_REJECTED,
+    }
+    status = status_by_decision.get(decision.strip().lower())
+    if status is None:
+        raise HTTPException(status_code=400, detail="Неизвестное решение доступа")
+    row = set_access_status(
+        db,
+        access_id,
+        status,
+        bot_key=HEVC_BOT_KEY,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Заявка доступа не найдена")
+    context = _telegram_access_context(
+        db,
+        user_status=user_status,
+        chat_status=chat_status,
+    )
+    return templates.TemplateResponse(
+        request,
+        "partials/telegram_access_lists.html",
+        context,
+    )
 
 
 @app.get("/jobs", response_class=HTMLResponse)

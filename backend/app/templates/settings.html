@@ -133,6 +133,39 @@
   </section>
 
   <section class="settings-group card">
+    <h2>Telegram — HEVC</h2>
+    <p class="muted">Отдельный бот статусов и просрочек AVC. Доступ пользователей и групп модерируется независимо.</p>
+    <div class="grid">
+      <label>Токен HEVC-бота
+        <input class="input" type="password" name="telegram_hevc_bot_token" value="" placeholder="Оставьте пустым, чтобы не менять" autocomplete="off" />
+      </label>
+      <label>Bot API base URL
+        <input class="input" name="telegram_hevc_bot_api_base_url" value="{{ settings_map.get('telegram_hevc_bot_api_base_url', '') }}" placeholder="пусто = https://api.telegram.org" />
+      </label>
+      <label class="row" style="align-items:center; gap:10px; margin-top:24px;">
+        <input type="checkbox" name="telegram_hevc_enabled" value="on" {% if settings_map.get('telegram_hevc_enabled', '') in ['1', 'true', 'yes', 'on'] %}checked{% endif %} />
+        HEVC-бот включён
+      </label>
+      <div class="settings-hint">
+        {% if has_telegram_hevc_token %}
+        <span class="badge badge-ok">Токен сохранён</span>
+        {% else %}
+        <span class="badge badge-warn">Токен не задан</span>
+        {% endif %}
+        <button
+          class="btn btn-secondary"
+          type="button"
+          hx-post="/settings/telegram-hevc-test"
+          hx-include="closest form"
+          hx-target="#settings-result"
+          hx-swap="innerHTML"
+        >Проверить HEVC-бота (getMe)</button>
+        <a class="btn btn-secondary" href="/telegram-access">Управление доступом</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-group card">
     <h2>Video kensetsu by GeeKaZ0iD</h2>
     <p class="muted">Кодировщик: ссылка «Кодировщик» в верхней навигации и кнопка отправки файла с выбором пресета. Ссылка появляется при включённой интеграции, заданном URL и успешном health (HTTP 200). При сохранении настроек статус проверяется автоматически.</p>
     <div class="grid">

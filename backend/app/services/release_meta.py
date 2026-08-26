@@ -25,6 +25,7 @@ class ReleaseMetaView:
     release_id: int
     release_alias: str | None = None
     title: str | None = None
+    original_title: str | None = None
     genres: list[str] = field(default_factory=list)
     members: list[dict[str, str]] = field(default_factory=list)
     # None = ключ ещё не писали из API — UI может взять fallback из quality_json.
@@ -78,9 +79,11 @@ def upsert_release_meta(
     if isinstance(alias, str) and alias.strip():
         row.release_alias = alias.strip()
 
-    main, _english = extract_release_names(release_payload)
+    main, original = extract_release_names(release_payload)
     if main:
         row.title = main
+    if original:
+        row.original_title = original
 
     if "genres" in release_payload:
         genres = extract_release_genres(release_payload)
@@ -140,6 +143,7 @@ def load_release_meta_by_ids(
             release_id=int(row.release_id),
             release_alias=row.release_alias,
             title=row.title,
+            original_title=row.original_title,
             genres=[str(g) for g in genres if isinstance(g, str) and g.strip()],
             members=members,
             is_blocked_by_geo=row.is_blocked_by_geo,

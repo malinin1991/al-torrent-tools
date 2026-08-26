@@ -1,6 +1,18 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -80,6 +92,7 @@ class Release(Base):
     release_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     release_alias: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    original_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     genres_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # None = ещё не синхронизировано с API (fallback на quality_json в UI).
     is_blocked_by_geo: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
@@ -139,12 +152,17 @@ class TelegramOutbox(Base):
     """Очередь исходящих Telegram-сообщений (ретраи при недоступности API)."""
 
     __tablename__ = "telegram_outbox"
+    __table_args__ = (
+        UniqueConstraint("bot_key", "dedupe_key", name="uq_telegram_outbox_bot_dedupe"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     pipeline_id: Mapped[int | None] = mapped_column(
         ForeignKey("torrent_pipeline.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
+    bot_key: Mapped[str] = mapped_column(String(32), nullable=False, default="primary", index=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
     payload_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
@@ -152,6 +170,49 @@ class TelegramOutbox(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TelegramBotAccess(Base):
+    """Заявка Telegram-пользователя или чата на доступ к конкретному боту."""
+
+    __tablename__ = "telegram_bot_access"
+    __table_args__ = (
+        UniqueConstraint(
+            "bot_key",
+            "subject_type",
+            "telegram_id",
+            name="uq_telegram_bot_access_subject",
+        ),
+        CheckConstraint(
+            "subject_type IN ('user', 'chat')",
+            name="ck_telegram_bot_access_subject_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected')",
+            name="ck_telegram_bot_access_status",
+        ),
+        Index(
+            "ix_telegram_bot_access_bot_subject_status",
+            "bot_key",
+            "subject_type",
+            "status",
+        ),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class TorrentPipeline(Base):

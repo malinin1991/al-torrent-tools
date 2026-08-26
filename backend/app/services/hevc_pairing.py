@@ -67,17 +67,19 @@ _WS_RE = re.compile(r"\s+")
 _WEBRIP_RE = re.compile(r"^web[\s_-]?rip$", re.IGNORECASE)
 _WEBDL_RE = re.compile(r"^web[\s_-]?dl$", re.IGNORECASE)
 
-# Эпизодный старт батча: regular / ova / film.
-# Все film-like ярлыки → один ключ ("film",) для presence/missing.
+# Эпизодный старт батча: regular / ova / film / special.
+# Все ярлыки одного семантического типа → общий ключ для presence/missing,
+# но film и special намеренно остаются разными слотами.
 # overdue по-прежнему требует точный torrent_description (exact_pair_key).
 _FILM_RE = re.compile(
     r"^(?:"
-    r"фильм|film|"
-    r"п\s*/\s*ф(?:\s+фильм)?|"
+    r"фильм|film|movie|"
+    r"п\s*(?:/|\.)?\s*[фм]\.?(?:\s+фильм)?|"
     r"полнометражный(?:\s+фильм)?"
-    r")$",
+    r")\.?$",
     re.IGNORECASE,
 )
+_SPECIAL_RE = re.compile(r"^(?:спешл|specials?)\.?$", re.IGNORECASE)
 _OVA_ALONE_RE = re.compile(r"^ova$", re.IGNORECASE)
 _OVA_RANGE_RE = re.compile(r"^ova\s+(\d+)(?:\s*-\s*(\d+))?$", re.IGNORECASE)
 _REGULAR_RE = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?$")
@@ -101,11 +103,17 @@ def _field_text(value: Any) -> str | None:
 
 
 def normalize_episodes(description: str | None) -> str:
-    """Канонический текст эпизодов для exact/presence: strip + casefold.
+    """Канонический текст эпизодов для exact/presence.
 
-    ФИЛЬМ/Фильм/фильм и OVA/ova — один ярлык (exact_pair_key и парсинг старта).
+    Варианты регистра и синонимы film/special сводятся внутри своего
+    семантического типа. Остальные описания получают только strip + casefold.
     """
-    return (description or "").strip().casefold()
+    folded = _WS_RE.sub(" ", (description or "").strip().casefold())
+    if _FILM_RE.fullmatch(folded):
+        return "film"
+    if _SPECIAL_RE.fullmatch(folded):
+        return "special"
+    return folded
 
 
 def batch_start_key(description: str | None) -> BatchStartKey | None:
@@ -126,6 +134,9 @@ def episode_span(
 
     if _FILM_RE.match(folded):
         return (("film",), 1, 1)
+
+    if _SPECIAL_RE.match(folded):
+        return (("special",), 1, 1)
 
     if _OVA_ALONE_RE.match(folded):
         return (("ova", 1), 1, 1)
@@ -481,10 +492,14 @@ class UnpairedAvc:
     hevc_outdated: bool = False
     paired_hevc_info_hash: str | None = None
     paired_hevc_torrent_id: int | None = None
+    paired_hevc_archive_id: int | None = None
     batch_start: BatchStartKey | None = None
     ignore_hevc: bool = False
     # True = age считали от api_created_at (красный бейдж); False = fallback system created_at.
     age_from_api: bool = False
+    # Время загрузки именно этого активного AVC; created_at выше может быть
+    # историческим якорем SLA всего presence-слота.
+    upload_created_at: datetime | None = None
 
     @property
     def status(self) -> HevcPairStatus:
@@ -505,6 +520,30 @@ def _archive_attr(row: Any, name: str, default: Any = None) -> Any:
     if isinstance(row, dict):
         return row.get(name, default)
     return getattr(row, name, default)
+
+
+def archive_is_newer_than_hevc(avc: Any, hevc: Any) -> bool:
+    """Сравнить AVC и HEVC в той же шкале порядка, что и overdue."""
+    hevc_qj = _archive_attr(hevc, "quality_json")
+    hevc_qj = hevc_qj if isinstance(hevc_qj, dict) else None
+    raw_hash = _archive_attr(hevc, "info_hash")
+    info_hash = raw_hash.strip().lower() or None if isinstance(raw_hash, str) else None
+    return _avc_is_newer_than_hevc(
+        avc_torrent_id=int(_archive_attr(avc, "torrent_id") or 0),
+        avc_created_at=_archive_attr(avc, "created_at"),
+        avc_api_created_at=_archive_attr(avc, "api_created_at"),
+        hevc=_HevcPairRef(
+            created_at=_archive_attr(hevc, "created_at"),
+            info_hash=info_hash,
+            torrent_id=int(_archive_attr(hevc, "torrent_id") or 0),
+            archive_id=int(_archive_attr(hevc, "id") or 0),
+            rip_type=rip_type_key(
+                quality_json=hevc_qj,
+                torrent_type=_archive_attr(hevc, "torrent_type"),
+            ),
+            api_created_at=_archive_attr(hevc, "api_created_at"),
+        ),
+    )
 
 
 def _archive_is_active(row: Any) -> bool:
@@ -826,9 +865,11 @@ def find_unpaired_avc(
                     paired_hevc_torrent_id=(
                         pair_ref.torrent_id if pair_ref and pair_ref.torrent_id else None
                     ),
+                    paired_hevc_archive_id=pair_ref.archive_id if pair_ref else None,
                     batch_start=draft.presence[2] if draft.presence is not None else None,
                     ignore_hevc=bool(_archive_attr(draft.row, "ignore_hevc", False)),
                     age_from_api=age_from_api,
+                    upload_created_at=draft.sla_created,
                 )
             )
     return unpaired
@@ -1066,18 +1107,35 @@ def sync_hevc_pair_events_for_release(
             "overdue": bool(item.overdue) if item and not ignored else False,
             "type_mismatch": bool(item.type_mismatch) if item and not ignored else False,
             "ignore_hevc": ignored,
+            "prev_hevc_status_event_id": (
+                int(last.id)
+                if last is not None and isinstance(getattr(last, "id", None), int)
+                else 0
+            ),
         }
         message = "Игнор HEVC" if ignored else _need_message(new_state)
-        record_pipeline_event(
-            db,
-            pipeline.id,
-            event_type="hevc_status",
-            message=message,
-            job_id=job_id,
-            from_status=prev_state if last is not None else None,
-            to_status=new_state,
-            details=details,
-            commit=True,
-        )
+        try:
+            event = record_pipeline_event(
+                db,
+                pipeline.id,
+                event_type="hevc_status",
+                message=message,
+                job_id=job_id,
+                from_status=prev_state if last is not None else None,
+                to_status=new_state,
+                details=details,
+                commit=False,
+            )
+            if new_state == "overdue":
+                from app.services.hevc_notifications import (
+                    enqueue_overdue_event_notifications,
+                )
+
+                enqueue_overdue_event_notifications(db, event, commit=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(event)
         emitted += 1
     return emitted

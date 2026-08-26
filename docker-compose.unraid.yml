@@ -110,5 +110,30 @@ services:
       retries: 3
       start_period: 60s
 
+  telegram-hevc-bot:
+    image: registry.mageek.su/al-torrent-tools:latest
+    pull_policy: always
+    container_name: altt_telegram_hevc
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: prod
+      ALTT_TELEGRAM_PROFILE: hevc
+      ALTT_TELEGRAM_HEALTH_FILE: /tmp/altt_telegram_hevc_healthy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    command:
+      ["sh", "/app/scripts/entrypoint.sh", "python", "-m", "app.telegram_bot", "--profile", "hevc"]
+    healthcheck:
+      test: ["CMD", "python", "/app/scripts/healthcheck_telegram.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
 volumes:
   altt_pg_data:

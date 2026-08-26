@@ -16,7 +16,9 @@ from app.services.telegram_notify import (
     enqueue_pipeline_telegram_notification,
     enqueue_tracking_toggle_notification,
     escape_markdown_v2,
+    is_terminal_user_dm_error,
     normalize_telegram_bot_api_base,
+    resolve_hevc_bot_test_credentials,
     upsert_tracked_release,
 )
 
@@ -48,6 +50,51 @@ def test_normalize_telegram_bot_api_base_empty_and_no_scheme() -> None:
     assert normalize_telegram_bot_api_base("") == "https://api.telegram.org"
     assert normalize_telegram_bot_api_base("   ") == "https://api.telegram.org"
     assert normalize_telegram_bot_api_base("proxy.example:8081") == "https://proxy.example:8081"
+
+
+def test_resolve_hevc_bot_test_credentials_never_mixes_saved_token_with_custom_url() -> None:
+    saved_token = "saved-hevc-token"
+    saved_url = "https://saved.example"
+
+    token, url = resolve_hevc_bot_test_credentials(
+        form_token="",
+        form_base_url="",
+        saved_token=saved_token,
+        saved_base_url=saved_url,
+    )
+    assert (token, url) == (saved_token, saved_url)
+
+    token, url = resolve_hevc_bot_test_credentials(
+        form_token="",
+        form_base_url=saved_url,
+        saved_token=saved_token,
+        saved_base_url=saved_url,
+    )
+    assert (token, url) == (saved_token, saved_url)
+
+    token, url = resolve_hevc_bot_test_credentials(
+        form_token="form-token",
+        form_base_url="https://evil.example",
+        saved_token=saved_token,
+        saved_base_url=saved_url,
+    )
+    assert (token, url) == ("form-token", "https://evil.example")
+
+    with pytest.raises(ValueError, match="нестандартного Bot API URL"):
+        resolve_hevc_bot_test_credentials(
+            form_token="",
+            form_base_url="https://evil.example",
+            saved_token=saved_token,
+            saved_base_url=saved_url,
+        )
+
+
+def test_is_terminal_user_dm_error_only_for_positive_chat_ids() -> None:
+    dm_error = "Forbidden: bot can't initiate conversation with a user"
+    assert is_terminal_user_dm_error(dm_error, "777") is True
+    assert is_terminal_user_dm_error("HTTP 403", "777") is True
+    assert is_terminal_user_dm_error(dm_error, "-100500") is False
+    assert is_terminal_user_dm_error("HTTP 500", "777") is False
     assert normalize_telegram_bot_api_base("http://proxy.example") == "http://proxy.example"
 
 
@@ -382,6 +429,133 @@ def test_send_outbox_message_omits_parse_mode_when_absent(monkeypatch: pytest.Mo
     assert captured["json"]["parse_mode"] == "MarkdownV2"
 
 
+def test_fetch_pending_outbox_is_scoped_by_bot_key() -> None:
+    from app.services.telegram_outbox import fetch_pending_outbox
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []
+    fetch_pending_outbox(db, bot_key="hevc", limit=7)
+    statement = db.scalars.call_args.args[0]
+    sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "telegram_outbox.bot_key = 'hevc'" in sql
+    assert "LIMIT 7" in sql
+
+
+def test_send_outbox_message_forwards_inline_keyboard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import httpx
+
+    from app.services.telegram_outbox import send_outbox_message
+
+    captured: dict = {}
+
+    class _Resp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            return {"ok": True}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json=None):
+            captured["json"] = json
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    markup = {
+        "inline_keyboard": [[{"text": "Детали", "callback_data": "status:1"}]]
+    }
+    asyncio.run(
+        send_outbox_message(
+            token="t",
+            base_url="https://api.telegram.org",
+            chat_id="-1",
+            payload={"text": "x", "reply_markup": markup},
+        )
+    )
+    assert captured["json"]["reply_markup"] == markup
+
+
+def test_each_outbox_profile_uses_its_own_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from app.db.models import Setting
+    from app.services import telegram_outbox
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_send(*, token, base_url, chat_id, payload):  # noqa: ANN001
+        sent.append((token, chat_id))
+
+    class FakeDb:
+        def __init__(self, values: dict[str, str], item: SimpleNamespace) -> None:
+            self.values = values
+            self.item = item
+
+        def get(self, model, key):  # noqa: ANN001
+            assert model is Setting
+            value = self.values.get(key)
+            return SimpleNamespace(value=value) if value is not None else None
+
+        def scalars(self, statement):  # noqa: ANN001
+            return SimpleNamespace(all=lambda: [self.item])
+
+        def scalar(self, statement):  # noqa: ANN001
+            return "approved"
+
+        def commit(self) -> None:
+            return None
+
+    monkeypatch.setattr(telegram_outbox, "send_outbox_message", fake_send)
+    monkeypatch.setattr(telegram_outbox, "mark_outbox_sent", lambda db, item: None)
+    primary_item = SimpleNamespace(
+        id=1,
+        chat_id="-1",
+        payload_json={"text": "primary"},
+    )
+    hevc_item = SimpleNamespace(
+        id=2,
+        chat_id="-2",
+        payload_json={"text": "hevc"},
+    )
+    asyncio.run(
+        telegram_outbox.drain_outbox(
+            FakeDb(
+                {
+                    "telegram_bot_token": "primary-token",
+                    "telegram_enabled": "true",
+                },
+                primary_item,
+            ),
+            bot_key="primary",
+        )
+    )
+    asyncio.run(
+        telegram_outbox.drain_outbox(
+            FakeDb(
+                {
+                    "telegram_hevc_bot_token": "hevc-token",
+                    "telegram_hevc_enabled": "true",
+                },
+                hevc_item,
+            ),
+            bot_key="hevc",
+        )
+    )
+    assert sent == [("primary-token", "-1"), ("hevc-token", "-2")]
+
+
 def test_toggle_release_tracking_notifies_only_on_enabled_change(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.main import toggle_release_tracking
 
@@ -460,3 +634,55 @@ def test_toggle_release_tracking_notifies_only_on_enabled_change(monkeypatch: py
         request, release_id=1, enabled=None, release_alias="a", title="FormSpam", db=db
     )
     assert calls == [{"enabled": False, "title": "DB Title", "commit": False}]
+
+
+def test_telegram_hevc_test_settings_rejects_custom_url_without_form_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from app.main import telegram_hevc_test_settings
+
+    captured: dict = {}
+
+    def fake_get_setting(db, key, default=""):  # noqa: ANN001
+        values = {
+            "telegram_hevc_bot_token": "saved-token",
+            "telegram_hevc_bot_api_base_url": "https://saved.example",
+        }
+        return values.get(key, default)
+
+    async def fake_get_me(*, token, base_url):  # noqa: ANN001
+        captured["token"] = token
+        captured["base_url"] = base_url
+        return {"username": "bot", "id": 1}
+
+    monkeypatch.setattr("app.main.get_setting_value", fake_get_setting)
+    monkeypatch.setattr("app.main.test_telegram_get_me", fake_get_me)
+    monkeypatch.setattr(
+        "app.main.templates.TemplateResponse",
+        lambda request, name, ctx: ctx,
+    )
+
+    blocked = asyncio.run(
+        telegram_hevc_test_settings(
+            MagicMock(),
+            telegram_hevc_bot_token="",
+            telegram_hevc_bot_api_base_url="https://evil.example",
+            db=MagicMock(),
+        )
+    )
+    assert blocked["ok"] is False
+    assert "токен" in blocked["message"].casefold()
+    assert captured == {}
+
+    saved_pair = asyncio.run(
+        telegram_hevc_test_settings(
+            MagicMock(),
+            telegram_hevc_bot_token="",
+            telegram_hevc_bot_api_base_url="",
+            db=MagicMock(),
+        )
+    )
+    assert saved_pair["ok"] is True
+    assert captured == {"token": "saved-token", "base_url": "https://saved.example"}

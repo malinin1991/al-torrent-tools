@@ -1,0 +1,69 @@
+{% macro access_table(title, rows, empty_text) %}
+<div class="card">
+  <h2>{{ title }}</h2>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th style="width:15%;">Telegram ID</th>
+        <th style="width:20%;">Username</th>
+        <th>Название</th>
+        <th style="width:13%;">Статус</th>
+        <th style="width:18%;">Обновлено</th>
+        <th style="width:19%;">Решение</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr id="telegram-access-{{ row.id }}">
+        <td><code>{{ row.telegram_id }}</code></td>
+        <td>{% if row.username %}@{{ row.username }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{{ row.title or "—" }}</td>
+        <td>
+          {% if row.status == "approved" %}
+          <span class="badge badge-ok">одобрен</span>
+          {% elif row.status == "rejected" %}
+          <span class="badge badge-danger">отклонён</span>
+          {% else %}
+          <span class="badge badge-warn">ожидает</span>
+          {% endif %}
+        </td>
+        <td><time class="local-time" datetime="{{ row.updated_at|as_utc_iso }}">{{ row.updated_at }}</time></td>
+        <td>
+          <div class="row">
+            <button
+              class="btn"
+              type="button"
+              hx-post="/telegram-access/{{ row.id }}/approve"
+              hx-target="#telegram-access-lists"
+              hx-swap="innerHTML"
+              hx-include="#telegram-access-filters"
+              {% if row.status == "approved" %}disabled{% endif %}
+            >Одобрить</button>
+            <button
+              class="btn btn-danger"
+              type="button"
+              hx-post="/telegram-access/{{ row.id }}/reject"
+              hx-target="#telegram-access-lists"
+              hx-swap="innerHTML"
+              hx-include="#telegram-access-filters"
+              {% if row.status == "rejected" %}disabled{% endif %}
+            >Отклонить</button>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">{{ empty_text }}</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+<form id="telegram-access-filters" style="display:none;">
+  <input type="hidden" name="user_status" value="{{ user_status }}" />
+  <input type="hidden" name="chat_status" value="{{ chat_status }}" />
+</form>
+{{ access_table("Пользователи", users, "Пользовательских заявок нет") }}
+{{ access_table("Группы и чаты", chats, "Заявок от групп и чатов нет") }}

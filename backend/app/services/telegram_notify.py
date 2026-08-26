@@ -21,11 +21,24 @@ TG_STATUS_SENT = "sent"
 OUTBOX_PENDING = "pending"
 OUTBOX_SENT = "sent"
 OUTBOX_FAILED = "failed"
+OUTBOX_CANCELLED = "cancelled"
+
+_USER_DM_TERMINAL_MARKERS = (
+    "can't initiate conversation",
+    "cannot initiate conversation",
+    "bot can't initiate conversation with a user",
+    "forbidden: bot was blocked by the user",
+    "bot was blocked by the user",
+    "user is deactivated",
+    "chat not found",
+    "forbidden: bot was blocked",
+)
 
 SOURCE_BOT = "bot"
 SOURCE_UI = "ui"
 
 DEFAULT_BOT_API_BASE = "https://api.telegram.org"
+PRIMARY_BOT_KEY = "primary"
 
 # Лимиты текста для TG notify (Telegram message ≤ 4096).
 _TRACK_NOTIFY_TITLE_MAX = 300
@@ -60,6 +73,49 @@ def normalize_telegram_bot_api_base(base_url: str | None) -> str:
     if not raw.lower().startswith(("http://", "https://")):
         raw = f"https://{raw}"
     return raw.rstrip("/")
+
+
+def resolve_hevc_bot_test_credentials(
+    *,
+    form_token: str,
+    form_base_url: str,
+    saved_token: str,
+    saved_base_url: str,
+) -> tuple[str, str]:
+    """Не смешивает сохранённый HEVC-токен с произвольным Bot API URL из запроса.
+
+    Нестандартный URL из формы требует токен в той же форме. Иначе тестируем
+    только сохранённую пару URL+token (токен из формы может заменить сохранённый
+    при том же URL).
+    """
+    token_from_form = (form_token or "").strip()
+    url_from_form = (form_base_url or "").strip()
+    token_saved = (saved_token or "").strip()
+    saved_url = normalize_telegram_bot_api_base(saved_base_url)
+
+    if url_from_form:
+        request_url = normalize_telegram_bot_api_base(url_from_form)
+        if request_url != saved_url and not token_from_form:
+            raise ValueError(
+                "Для нестандартного Bot API URL укажите HEVC-токен в той же форме"
+            )
+        return token_from_form or token_saved, request_url
+    return token_from_form or token_saved, saved_url
+
+
+def is_terminal_user_dm_error(error: str, chat_id: str) -> bool:
+    """Постоянные 4xx Telegram в ЛС: бот не может первым писать пользователю."""
+    raw_id = str(chat_id or "").strip()
+    if not raw_id or raw_id.startswith("-"):
+        return False
+    folded = (error or "").casefold()
+    if any(marker in folded for marker in _USER_DM_TERMINAL_MARKERS):
+        return True
+    if "http 403" in folded or folded.strip() == "403":
+        return True
+    if "http 401" in folded:
+        return True
+    return False
 
 
 def build_telegram_api_url(base_url: str | None, token: str, method: str) -> str:
@@ -325,6 +381,7 @@ def enqueue_file_changes_notification(
     }
     outbox = TelegramOutbox(
         pipeline_id=None,
+        bot_key=PRIMARY_BOT_KEY,
         chat_id=chat_id,
         payload_json=payload,
         status=OUTBOX_PENDING,
@@ -366,6 +423,7 @@ def enqueue_tracking_toggle_notification(
     }
     outbox = TelegramOutbox(
         pipeline_id=None,
+        bot_key=PRIMARY_BOT_KEY,
         chat_id=chat_id,
         payload_json=payload,
         status=OUTBOX_PENDING,
@@ -516,6 +574,7 @@ def enqueue_pipeline_telegram_notification(
     db.add(
         TelegramOutbox(
             pipeline_id=pipeline.id,
+            bot_key=PRIMARY_BOT_KEY,
             chat_id=chat_id,
             payload_json=payload,
             status=OUTBOX_PENDING,
@@ -568,6 +627,20 @@ def mark_outbox_attempt_failed(db: Session, outbox: TelegramOutbox, error: str) 
         pipeline = db.get(TorrentPipeline, outbox.pipeline_id)
         if pipeline is not None and pipeline.tg_status != TG_STATUS_SENT:
             pipeline.tg_status = TG_STATUS_PENDING
+    db.commit()
+
+
+def mark_outbox_failed(db: Session, outbox: TelegramOutbox, error: str) -> None:
+    """Терминальная ошибка: больше не ретраим (dead-letter)."""
+    outbox.attempts = int(outbox.attempts or 0) + 1
+    outbox.last_error = (error or "")[:2000]
+    outbox.status = OUTBOX_FAILED
+    db.commit()
+
+
+def mark_outbox_cancelled(db: Session, outbox: TelegramOutbox, reason: str) -> None:
+    outbox.last_error = (reason or "")[:2000]
+    outbox.status = OUTBOX_CANCELLED
     db.commit()
 
 

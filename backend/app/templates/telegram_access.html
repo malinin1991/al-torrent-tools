@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Доступ к HEVC Telegram-боту</h1>
+<div class="card">
+  <form
+    class="grid"
+    hx-get="/telegram-access/live"
+    hx-target="#telegram-access-lists"
+    hx-swap="innerHTML"
+    hx-trigger="change"
+  >
+    <label>Статус пользователей
+      <select name="user_status">
+        <option value="" {% if not user_status %}selected{% endif %}>Все</option>
+        {% for value, label in access_status_options %}
+        <option value="{{ value }}" {% if user_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Статус чатов
+      <select name="chat_status">
+        <option value="" {% if not chat_status %}selected{% endif %}>Все</option>
+        {% for value, label in access_status_options %}
+        <option value="{{ value }}" {% if chat_status == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+</div>
+<div id="telegram-access-lists">
+  {% include "partials/telegram_access_lists.html" %}
+</div>
+{% endblock %}

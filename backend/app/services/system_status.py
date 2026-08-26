@@ -14,14 +14,25 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import QbClient, TelegramOutbox, TrackedRelease
+from app.db.models import QbClient, TelegramBotAccess, TelegramOutbox, TrackedRelease
 from app.services.qbittorrent import test_qb_connection
-from app.services.runtime_settings import build_anilibria_client, get_setting_value, resolve_anilibria_settings
+from app.services.runtime_settings import (
+    build_anilibria_client,
+    get_setting_value,
+    resolve_anilibria_settings,
+    resolve_telegram_bot_settings,
+)
+from app.services.telegram_access import (
+    HEVC_BOT_KEY,
+    STATUS_APPROVED,
+    SUBJECT_CHAT,
+)
 from app.services.telegram_notify import (
     OUTBOX_PENDING,
     get_telegram_bot_token,
     get_telegram_chat_id,
     is_telegram_enabled,
+    normalize_telegram_bot_api_base,
     resolve_telegram_bot_api_base,
     test_telegram_get_me,
 )
@@ -98,6 +109,7 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
     )
     qb = {"master": master_status, "slave": slave_status}
     telegram = await _probe_telegram(db)
+    telegram_hevc = await _probe_hevc_telegram(db)
     video_kensetsu = await _probe_video_kensetsu(db)
 
     storage = resolve_torrent_storage_root()
@@ -128,6 +140,7 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
         "database": database,
         "qb": qb,
         "telegram": telegram,
+        "telegram_hevc": telegram_hevc,
         "video_kensetsu": video_kensetsu,
         "storage": {
             "path": str(storage),
@@ -186,10 +199,13 @@ async def _probe_telegram(db: Session) -> dict[str, Any]:
         select(func.count()).select_from(TrackedRelease).where(TrackedRelease.enabled.is_(True))
     ) or 0
     pending_outbox = db.scalar(
-        select(func.count()).select_from(TelegramOutbox).where(TelegramOutbox.status == OUTBOX_PENDING)
+        select(func.count()).select_from(TelegramOutbox).where(
+            TelegramOutbox.status == OUTBOX_PENDING,
+            TelegramOutbox.bot_key == "primary",
+        )
     ) or 0
 
-    bot_process = _telegram_bot_process_status(db)
+    bot_process = _telegram_bot_process_status(db, "primary")
     api: dict[str, Any] = {
         "ok": False,
         "detail": "Токен не задан",
@@ -254,6 +270,69 @@ async def _probe_telegram(db: Session) -> dict[str, Any]:
     }
 
 
+async def _probe_hevc_telegram(db: Session) -> dict[str, Any]:
+    config = resolve_telegram_bot_settings(db, HEVC_BOT_KEY)
+    base_url = normalize_telegram_bot_api_base(config.api_base_url)
+    approved_groups = db.scalar(
+        select(func.count()).select_from(TelegramBotAccess).where(
+            TelegramBotAccess.bot_key == HEVC_BOT_KEY,
+            TelegramBotAccess.subject_type == SUBJECT_CHAT,
+            TelegramBotAccess.status == STATUS_APPROVED,
+        )
+    ) or 0
+    pending_outbox = db.scalar(
+        select(func.count()).select_from(TelegramOutbox).where(
+            TelegramOutbox.status == OUTBOX_PENDING,
+            TelegramOutbox.bot_key == HEVC_BOT_KEY,
+        )
+    ) or 0
+    process = _telegram_bot_process_status(db, HEVC_BOT_KEY)
+    api: dict[str, Any] = {
+        "ok": False,
+        "detail": "Токен не задан",
+        "username": None,
+        "bot_id": None,
+    }
+    if config.token:
+        try:
+            me = await test_telegram_get_me(token=config.token, base_url=base_url)
+            username = me.get("username")
+            api = {
+                "ok": True,
+                "detail": "API отвечает",
+                "username": f"@{username}" if username else None,
+                "bot_id": me.get("id"),
+            }
+        except Exception as exc:
+            api["detail"] = str(exc)
+    configured = bool(config.token)
+    if not config.enabled:
+        detail, ok = "Выключен в настройках", False
+    elif not configured:
+        detail, ok = "Не настроен: токен", False
+    elif process["ok"] is True:
+        detail, ok = "Сервис работает", True
+    elif process["ok"] is False:
+        detail, ok = process["detail"], False
+    else:
+        detail, ok = "Настроен (heartbeat ещё не получен)", False
+    return {
+        "enabled": config.enabled,
+        "configured": configured,
+        "has_token": bool(config.token),
+        "base_url": base_url,
+        "approved_groups": int(approved_groups),
+        "pending_outbox": int(pending_outbox),
+        "bot": {
+            "ok": ok,
+            "detail": detail,
+            "heartbeat_at": process.get("heartbeat_at"),
+            "heartbeat_age_sec": process.get("age_sec"),
+        },
+        "api": api,
+    }
+
+
 async def _probe_video_kensetsu(db: Session) -> dict[str, Any]:
     enabled = is_video_kensetsu_enabled(db)
     base_url = resolve_video_kensetsu_base_url(db)
@@ -284,10 +363,11 @@ async def _probe_video_kensetsu(db: Session) -> dict[str, Any]:
     return result
 
 
-def _telegram_bot_process_status(db: Session) -> dict[str, Any]:
+def _telegram_bot_process_status(db: Session, bot_key: str = "primary") -> dict[str, Any]:
     from datetime import datetime, timezone
 
-    raw = get_setting_value(db, "telegram_bot_heartbeat_at", "").strip()
+    heartbeat_key = resolve_telegram_bot_settings(db, bot_key).heartbeat_key
+    raw = get_setting_value(db, heartbeat_key, "").strip()
     if not raw:
         return {"ok": None, "detail": "Нет heartbeat", "heartbeat_at": None, "age_sec": None}
     try:

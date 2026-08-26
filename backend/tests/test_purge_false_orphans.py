@@ -69,21 +69,18 @@ def test_purge_false_orphan_events_removes_foreign_and_keeps_local(tmp_path: Pat
     ]
     files = [SimpleNamespace(torrent_id=torrent_id, full_path=str(ep.resolve()))]
 
-    call_n = {"n": 0}
-
-    def scalars_side_effect(_stmt):  # noqa: ANN001
-        call_n["n"] += 1
-        mock = MagicMock()
-        mock.all.return_value = events if call_n["n"] == 1 else files
-        return mock
-
     db = MagicMock()
-    db.scalars.side_effect = scalars_side_effect
     captured: dict[str, set[int]] = {}
+    query_results = iter((events, files))
 
     def execute(stmt):  # noqa: ANN001
-        captured["ids"] = _in_ids_from_delete(stmt)
-        return MagicMock()
+        if getattr(stmt, "is_delete", False):
+            ids = _in_ids_from_delete(stmt)
+            captured["ids"] = ids
+            return MagicMock()
+        result = MagicMock()
+        result.all.return_value = next(query_results)
+        return result
 
     db.execute.side_effect = execute
 
@@ -100,7 +97,7 @@ def test_purge_false_orphan_events_removes_foreign_and_keeps_local(tmp_path: Pat
 
 def test_purge_false_orphan_events_noop_when_empty() -> None:
     db = MagicMock()
-    db.scalars.return_value.all.return_value = []
+    db.execute.return_value.all.return_value = []
     stats = purge_false_orphan_events(db, media_root=Path("/anilibria"), commit=False)
     assert stats == {
         "orphan_events_scanned": 0,
@@ -108,4 +105,4 @@ def test_purge_false_orphan_events_noop_when_empty() -> None:
         "orphan_events_kept": 0,
         "orphan_duplicates_removed": 0,
     }
-    db.execute.assert_not_called()
+    db.execute.assert_called_once()

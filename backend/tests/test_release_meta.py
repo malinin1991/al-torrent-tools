@@ -49,6 +49,7 @@ def test_upsert_release_meta_creates_row_and_members() -> None:
     assert row.release_id == 42
     assert row.release_alias == "spy-x-family-3"
     assert row.title == "Семья шпиона 3"
+    assert row.original_title == "Spy x Family S3"
     assert row.genres_json == ["Экшен", "Комедия"]
     assert row.is_blocked_by_geo is True
     assert row.is_blocked_by_copyrights is False
@@ -85,6 +86,22 @@ def test_upsert_sparse_payload_does_not_clear_blocks() -> None:
     db.execute.assert_not_called()  # members key отсутствует
 
 
+def test_upsert_release_meta_uses_alternative_title_fallback() -> None:
+    existing = Release(release_id=42, updated_at=datetime(2026, 1, 1))
+    db = MagicMock()
+    db.get.return_value = existing
+
+    upsert_release_meta(
+        db,
+        42,
+        {"name": {"main": "Основное", "alternative": "Original fallback"}},
+        commit=False,
+    )
+
+    assert existing.title == "Основное"
+    assert existing.original_title == "Original fallback"
+
+
 def test_upsert_empty_members_clears_composition() -> None:
     existing = Release(release_id=7, updated_at=datetime(2026, 1, 1))
     db = MagicMock()
@@ -106,6 +123,7 @@ def test_load_release_meta_by_ids_maps_members() -> None:
         release_id=5,
         release_alias="a",
         title="T",
+        original_title="Original T",
         genres_json=["G"],
         is_blocked_by_geo=False,
         is_blocked_by_copyrights=True,
@@ -135,6 +153,7 @@ def test_load_release_meta_by_ids_maps_members() -> None:
     by_id = load_release_meta_by_ids(db, [5])
     assert set(by_id) == {5}
     view = by_id[5]
+    assert view.original_title == "Original T"
     assert view.genres == ["G"]
     assert view.is_blocked_by_copyrights is True
     assert [m["nickname"] for m in view.members] == ["B", "A"]  # sort_order
@@ -200,9 +219,6 @@ def test_list_release_groups_block_fallback_when_meta_null(monkeypatch) -> None:
     group = list_release_groups(db, page=1, per_page=30)["groups"][0]
     assert group.is_blocked_by_geo is True
     assert group.is_blocked_by_copyrights is True
-
-    from app.services import releases_view as rv
-    from app.services.release_meta import ReleaseMetaView
 
     now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
     archive = SimpleNamespace(

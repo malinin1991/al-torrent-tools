@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import sys
 import time
+import os
 from pathlib import Path
 
-HEALTH_FILE = Path("/tmp/altt_telegram_healthy")
+HEALTH_FILE = Path(
+    os.environ.get("ALTT_TELEGRAM_HEALTH_FILE", "/tmp/altt_telegram_healthy")
+)
 MAX_AGE_SEC = 180
 
 

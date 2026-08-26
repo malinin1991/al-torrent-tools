@@ -80,8 +80,17 @@ def purge_false_orphan_events(
     from app.services.torrent_files_meta import resolve_media_root
 
     root_media = media_root or resolve_media_root()
+    # Выбираем только исторически существующие колонки: этот data-fix вызывается
+    # из migration 0009, до добавления FileChangeEvent.info_hash в 0011.
     orphans = list(
-        db.scalars(select(FileChangeEvent).where(FileChangeEvent.kind == KIND_ORPHAN)).all()
+        db.execute(
+            select(
+                FileChangeEvent.id,
+                FileChangeEvent.torrent_id,
+                FileChangeEvent.relative_path,
+                FileChangeEvent.full_path,
+            ).where(FileChangeEvent.kind == KIND_ORPHAN)
+        ).all()
     )
     if not orphans:
         return {
@@ -94,8 +103,10 @@ def purge_false_orphan_events(
     torrent_ids = {int(e.torrent_id) for e in orphans if e.torrent_id is not None}
     files_by_torrent: dict[int, list[str]] = {}
     if torrent_ids:
-        for row in db.scalars(
-            select(TorrentFile).where(TorrentFile.torrent_id.in_(torrent_ids))
+        for row in db.execute(
+            select(TorrentFile.torrent_id, TorrentFile.full_path).where(
+                TorrentFile.torrent_id.in_(torrent_ids)
+            )
         ).all():
             if row.full_path:
                 files_by_torrent.setdefault(int(row.torrent_id), []).append(row.full_path)

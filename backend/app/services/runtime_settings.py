@@ -15,6 +15,7 @@ SECRET_SETTING_KEYS = frozenset(
         "qb_master_password",
         "qb_slave_password",
         "telegram_bot_token",
+        "telegram_hevc_bot_token",
     }
 )
 
@@ -27,6 +28,15 @@ class AniLibriaRuntimeSettings:
     passkey: str
     request_retries: int
     retry_delay_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramBotRuntimeSettings:
+    bot_key: str
+    enabled: bool
+    token: str
+    api_base_url: str
+    heartbeat_key: str
 
 
 def get_setting_value(
@@ -72,6 +82,30 @@ def build_anilibria_client(db: Session | None = None) -> AniLibriaClient:
         passkey=resolved.passkey,
         request_retries=resolved.request_retries,
         retry_delay_ms=resolved.retry_delay_ms,
+    )
+
+
+def resolve_telegram_bot_settings(
+    db: Session | None,
+    bot_key: str,
+) -> TelegramBotRuntimeSettings:
+    """Настройки primary/hevc без смешивания токенов и heartbeat."""
+    normalized = (bot_key or "primary").strip().lower()
+    if normalized == "primary":
+        prefix = "telegram"
+        heartbeat_key = "telegram_bot_heartbeat_at"
+    elif normalized == "hevc":
+        prefix = "telegram_hevc"
+        heartbeat_key = "telegram_hevc_bot_heartbeat_at"
+    else:
+        raise ValueError(f"Неизвестный профиль Telegram-бота: {bot_key}")
+    enabled = get_setting_value(db, f"{prefix}_enabled", "false").strip().lower()
+    return TelegramBotRuntimeSettings(
+        bot_key=normalized,
+        enabled=enabled in {"1", "true", "yes", "on"},
+        token=get_setting_value(db, f"{prefix}_bot_token", "").strip(),
+        api_base_url=get_setting_value(db, f"{prefix}_bot_api_base_url", "").strip(),
+        heartbeat_key=heartbeat_key,
     )
 
 

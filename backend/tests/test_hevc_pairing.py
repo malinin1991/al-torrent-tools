@@ -16,6 +16,7 @@ from app.services.hevc_pairing import (
     hevc_covers_avc_episodes,
     normalize_rip_type,
     overdue_hours_past_sla,
+    quality_key,
     release_ids_matching_hevc_filter,
     rip_family_key,
     sync_hevc_pair_events_for_release,
@@ -77,6 +78,47 @@ def _row(
     )
 
 
+def test_quality_key_extracts_from_type_when_quality_missing() -> None:
+    """Runtime: 360p…720p из type/type_text, если отдельного quality нет."""
+    assert (
+        quality_key(
+            quality_json={
+                "type": {"label": "WEBRip 720p"},
+                "codec": {"label": "AVC"},
+            },
+            torrent_type="",
+        )
+        == "720p"
+    )
+    assert (
+        quality_key(
+            quality_json={"type": "BDRip 480p", "codec": "AVC"},
+            torrent_type="unused",
+        )
+        == "480p"
+    )
+    assert (
+        quality_key(
+            quality_json={
+                "type": {"value": "WEBRip 360p"},
+                "codec": {"label": "AVC"},
+            },
+            torrent_type="",
+        )
+        == "360p"
+    )
+    assert (
+        quality_key(
+            quality_json={
+                "type": {"label": "WEBRip 1080p"},
+                "codec": {"label": "AVC"},
+            },
+            torrent_type="",
+        )
+        == "1080p"
+    )
+
+
 def test_batch_start_key_regular_ova_film() -> None:
     assert batch_start_key("1-12") == ("regular", 1)
     assert batch_start_key("347-350") == ("regular", 347)
@@ -93,10 +135,19 @@ def test_batch_start_key_regular_ova_film() -> None:
     assert batch_start_key("П/Ф ФИЛЬМ") == ("film",)
     assert batch_start_key("п/ф") == ("film",)
     assert batch_start_key("п / ф фильм") == ("film",)
+    assert batch_start_key("П/м фильм") == ("film",)
+    assert batch_start_key("п / М ФИЛЬМ") == ("film",)
+    assert batch_start_key("п.м. фильм") == ("film",)
     assert batch_start_key("полнометражный фильм") == ("film",)
     assert batch_start_key("Полнометражный") == ("film",)
+    assert batch_start_key("Movie") == ("film",)
+    assert batch_start_key("MOVIE.") == ("film",)
+    assert batch_start_key("Спешл") == ("special",)
+    assert batch_start_key("СПЕШЛ.") == ("special",)
+    assert batch_start_key("Special") == ("special",)
+    assert batch_start_key("Specials") == ("special",)
     assert batch_start_key("") is None
-    assert batch_start_key("Specials") is None
+    assert batch_start_key("Movie Special") is None
     # Регистр не создаёт разные start-key.
     assert batch_start_key("ФИЛЬМ") == batch_start_key("Фильм") == ("film",)
     assert batch_start_key("OVA") == batch_start_key("ova") == ("ova", 1)
@@ -177,6 +228,118 @@ def test_pf_film_pairs_with_film_label() -> None:
     assert release_ids_matching_hevc_filter(
         covered_rows, hevc_filter="missing", now=now
     ) == set()
+
+
+def _real_api_qj(*, rip_type: str, codec: str) -> dict:
+    return {
+        "type": {"value": rip_type, "description": rip_type},
+        "quality": {"value": "1080p", "description": "1080p"},
+        "codec": {
+            "label": codec,
+            "value": "x264/AVC" if codec == "AVC" else "x265/HEVC",
+            "description": "x264/AVC" if codec == "AVC" else "x265/HEVC",
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("avc_description", "hevc_description"),
+    [
+        ("П/м фильм", "п.м. ФИЛЬМ"),
+        ("Movie", "П / М фильм"),
+        ("Спешл", "SPECIAL"),
+        ("Specials.", "спешл."),
+    ],
+)
+def test_semantic_movie_and_special_pairs_with_real_api_metadata(
+    avc_description: str,
+    hevc_description: str,
+) -> None:
+    """API-like AVC/HEVC отличаются кодеком и вариантом того же semantic type."""
+    now = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=24001,
+            episodes=avc_description,
+            codec="AVC",
+            torrent_type="BDRip 1080p AVC",
+            quality_json=_real_api_qj(rip_type="BDRip", codec="AVC"),
+            created_at=now,
+            api_created_at=now,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=24002,
+            episodes=hevc_description,
+            codec="HEVC",
+            torrent_type="BDRip 1080p HEVC",
+            quality_json=_real_api_qj(rip_type="BDRip", codec="HEVC"),
+            created_at=now,
+            api_created_at=now,
+        ),
+    ]
+
+    assert find_unpaired_avc(rows, now=now) == []
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="missing", now=now
+    ) == set()
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="overdue", now=now
+    ) == set()
+
+
+def test_movie_special_and_cross_rip_do_not_form_false_exact_pairs() -> None:
+    """Movie≠Special; WEBRip↔WEB-DL остаётся mismatch, а не корректной парой."""
+    now = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    semantic_mismatch = [
+        _row(
+            archive_id=1,
+            episodes="П/м фильм",
+            codec="AVC",
+            quality_json=_real_api_qj(rip_type="BDRip", codec="AVC"),
+            torrent_type="BDRip 1080p AVC",
+            created_at=now,
+        ),
+        _row(
+            archive_id=2,
+            episodes="Спешл",
+            codec="HEVC",
+            quality_json=_real_api_qj(rip_type="BDRip", codec="HEVC"),
+            torrent_type="BDRip 1080p HEVC",
+            created_at=now,
+        ),
+    ]
+    unpaired = find_unpaired_avc(semantic_mismatch, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is True
+    assert unpaired[0].batch_start == ("film",)
+
+    cross_rip = [
+        _row(
+            archive_id=3,
+            episodes="Special",
+            codec="AVC",
+            rip_type="WEBRip",
+            quality_json=_real_api_qj(rip_type="WEBRip", codec="AVC"),
+            torrent_type="WEBRip 1080p AVC",
+            created_at=now,
+        ),
+        _row(
+            archive_id=4,
+            episodes="Спешл",
+            codec="HEVC",
+            rip_type="WEB-DL",
+            quality_json=_real_api_qj(rip_type="WEB-DL", codec="HEVC"),
+            torrent_type="WEB-DL 1080p HEVC",
+            created_at=now,
+        ),
+    ]
+    unpaired = find_unpaired_avc(cross_rip, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is False
+    assert unpaired[0].type_mismatch is True
+    assert unpaired[0].status == "type_mismatch"
 
 
 def test_rip_family_from_quality_json() -> None:
@@ -1038,6 +1201,45 @@ def test_sync_hevc_pair_events_clears_when_same_type_pair_appears(
     assert recorded[0]["to_status"] == "ok"
 
 
+def test_sync_hevc_pair_events_clears_after_ignore_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Следующий sync после data migration пишет missing→ok с причиной ignore."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    avc = _row(
+        archive_id=1,
+        release_id=99,
+        episodes="1-4",
+        codec="AVC",
+        quality="720p",
+        created_at=now,
+        info_hash="aa" * 20,
+        ignore_hevc=True,
+    )
+    pipeline = SimpleNamespace(id=7, info_hash="aa" * 20, status="done")
+    last = SimpleNamespace(
+        to_status="missing",
+        details_json={"missing": True, "ignore_hevc": False},
+    )
+    recorded: list[dict] = []
+
+    def fake_record(db, pipeline_id, **kwargs):
+        recorded.append({"pipeline_id": pipeline_id, **kwargs})
+        return SimpleNamespace(id=1, pipeline_id=pipeline_id, **kwargs)
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc]
+    db.scalar.side_effect = [pipeline, last]
+
+    assert sync_hevc_pair_events_for_release(db, 99, now=now) == 1
+    assert recorded[0]["from_status"] == "missing"
+    assert recorded[0]["to_status"] == "ok"
+    assert recorded[0]["message"] == "Игнор HEVC"
+    assert recorded[0]["details"]["reason"] == "ignore_hevc"
+    assert recorded[0]["details"]["ignore_hevc"] is True
+
+
 def test_sync_type_mismatch_message(monkeypatch: pytest.MonkeyPatch) -> None:
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     avc = _row(
@@ -1105,6 +1307,11 @@ def test_sync_emits_transition_missing_to_overdue(
         return SimpleNamespace(id=1, **kwargs)
 
     monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    notified: list[tuple[int, bool]] = []
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.enqueue_overdue_event_notifications",
+        lambda db, event, *, commit: notified.append((event.id, commit)) or 0,
+    )
     db = MagicMock()
     db.scalars.return_value.all.return_value = [avc, hevc]
     db.scalar.side_effect = [pipeline, SimpleNamespace(to_status="missing")]
@@ -1115,6 +1322,51 @@ def test_sync_emits_transition_missing_to_overdue(
     assert recorded[0]["message"] == "Просрочка HEVC"
     assert recorded[0]["details"]["missing"] is False
     assert recorded[0]["details"]["overdue"] is True
+    assert recorded[0]["commit"] is False
+    assert notified == [(1, False)]
+
+
+def test_sync_rolls_back_event_when_overdue_outbox_enqueue_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
+    avc = _row(
+        archive_id=1,
+        episodes="1-12",
+        codec="AVC",
+        created_at=now - timedelta(hours=HEVC_SLA_HOURS + 1),
+        info_hash="aa" * 20,
+        torrent_id=10,
+    )
+    hevc = _row(
+        archive_id=2,
+        episodes="1-11",
+        codec="HEVC",
+        created_at=now,
+        info_hash="bb" * 20,
+        torrent_id=11,
+    )
+    pipeline = SimpleNamespace(id=3, info_hash="aa" * 20, status="done")
+
+    def fake_record(db, pipeline_id, **kwargs):
+        return SimpleNamespace(id=1, pipeline_id=pipeline_id, **kwargs)
+
+    def fail_enqueue(db, event, *, commit):
+        raise RuntimeError("outbox unavailable")
+
+    monkeypatch.setattr("app.services.pipeline.record_pipeline_event", fake_record)
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.enqueue_overdue_event_notifications",
+        fail_enqueue,
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [avc, hevc]
+    db.scalar.side_effect = [pipeline, SimpleNamespace(to_status="missing")]
+
+    with pytest.raises(RuntimeError, match="outbox unavailable"):
+        sync_hevc_pair_events_for_release(db, 1, now=now)
+    db.rollback.assert_called_once()
+    db.commit.assert_not_called()
 
 
 def test_sync_aged_avc_alone_stays_missing(
