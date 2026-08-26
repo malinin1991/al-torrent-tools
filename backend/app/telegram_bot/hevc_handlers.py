@@ -78,10 +78,18 @@ def _command_targets_bot(text: str, username: str | None) -> bool:
     return not separator or (username is not None and target.casefold() == username)
 
 
+def _is_private_chat(chat: object) -> bool:
+    return getattr(chat, "type", None) == "private"
+
+
 async def unknown_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
+    """Случайный ответ на неизвестную команду, адресованную боту.
+
+    В группе — всем, кто тегнул бота (без ACL). В личке — только одобренным.
+    """
     message = update.message
     chat = update.effective_chat
     if message is None or chat is None:
@@ -89,7 +97,7 @@ async def unknown_command(
     username = await _bot_username(context)
     if not _command_targets_bot(message.text or "", username):
         return
-    if not await check_hevc_access(update):
+    if not await require_private_hevc_access(update):
         return
     await message.reply_text(random.choice(RANDOM_REPLIES))
 
@@ -98,15 +106,19 @@ async def addressed_text(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
+    """Случайный ответ на упоминание бота / любой текст в личке.
+
+    В группе — всем, кто тегнул (без ACL). В личке — только одобренным.
+    """
     message = update.message
     chat = update.effective_chat
     if message is None or chat is None:
         return
-    if chat.type != "private":
+    if not _is_private_chat(chat):
         username = await _bot_username(context)
         if username is None or not _mentions_bot(message.text or "", username):
             return
-    if not await check_hevc_access(update):
+    if not await require_private_hevc_access(update):
         return
     await message.reply_text(random.choice(RANDOM_REPLIES))
 
@@ -149,6 +161,17 @@ async def check_hevc_access(
     return False
 
 
+async def require_private_hevc_access(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE | None = None,
+) -> bool:
+    """В группе публичные команды доступны всем; ACL только в личке."""
+    chat = update.effective_chat
+    if chat is not None and not _is_private_chat(chat):
+        return True
+    return await check_hevc_access(update, context)
+
+
 async def group_membership(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -163,7 +186,7 @@ async def group_membership(
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await check_hevc_access(update) or update.message is None:
+    if not await require_private_hevc_access(update) or update.message is None:
         return
     await update.message.reply_text(
         "🎞 HEVC Status Bot\n\n"
@@ -193,7 +216,7 @@ def _details_keyboard(rows: list[object]) -> InlineKeyboardMarkup | None:
 
 
 async def overdue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await check_hevc_access(update) or update.message is None:
+    if not await require_private_hevc_access(update) or update.message is None:
         return
     nickname = " ".join(context.args).strip() or None
     try:
@@ -212,7 +235,7 @@ async def overdue(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await check_hevc_access(update) or update.message is None:
+    if not await require_private_hevc_access(update) or update.message is None:
         return
     if context.args:
         try:
@@ -238,7 +261,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def error(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await check_hevc_access(update) or update.message is None:
+    if not await require_private_hevc_access(update) or update.message is None:
         return
     try:
         with SessionLocal() as db:
@@ -282,7 +305,7 @@ async def _send_detail(update: Update, release_id: int) -> None:
 async def status_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if not await check_hevc_access(update) or update.callback_query is None:
+    if not await require_private_hevc_access(update) or update.callback_query is None:
         return
     data = update.callback_query.data or ""
     try:

@@ -1623,7 +1623,7 @@ def test_group_addition_runs_auto_pending_access(monkeypatch) -> None:
     check.assert_awaited_once_with(update, context)
 
 
-def test_status_callback_rechecks_acl_before_details(monkeypatch) -> None:
+def test_status_callback_rechecks_acl_in_private(monkeypatch) -> None:
     from app.telegram_bot import hevc_handlers
 
     access = AsyncMock(return_value=False)
@@ -1632,11 +1632,43 @@ def test_status_callback_rechecks_acl_before_details(monkeypatch) -> None:
     monkeypatch.setattr(hevc_handlers, "_send_detail", send_detail)
     update = SimpleNamespace(
         callback_query=SimpleNamespace(data="status:7"),
+        effective_chat=SimpleNamespace(type="private"),
     )
     context = MagicMock()
     asyncio.run(hevc_handlers.status_callback(update, context))
-    access.assert_awaited_once_with(update)
+    access.assert_awaited_once_with(update, None)
     send_detail.assert_not_awaited()
+
+
+def test_group_commands_skip_acl(monkeypatch) -> None:
+    """В общем чате публичные команды доступны всем без ACL."""
+    from app.telegram_bot import hevc_handlers
+
+    access = AsyncMock(return_value=False)
+    query = MagicMock(return_value=[])
+    send_detail = AsyncMock()
+    monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
+    monkeypatch.setattr(hevc_handlers, "query_hevc_statuses", query)
+    monkeypatch.setattr(hevc_handlers, "SessionLocal", MagicMock())
+    monkeypatch.setattr(hevc_handlers, "_send_detail", send_detail)
+
+    error_update, error_reply = _message_update("/error", "group")
+    asyncio.run(hevc_handlers.error(error_update, SimpleNamespace(args=[])))
+    assert query.call_count == 1
+    error_reply.assert_awaited()
+
+    start_update, start_reply = _message_update("/start", "supergroup")
+    asyncio.run(hevc_handlers.start(start_update, SimpleNamespace(args=[])))
+    start_reply.assert_awaited()
+
+    callback_update = SimpleNamespace(
+        callback_query=SimpleNamespace(data="status:7", answer=AsyncMock()),
+        effective_chat=SimpleNamespace(type="group"),
+    )
+    asyncio.run(hevc_handlers.status_callback(callback_update, MagicMock()))
+    send_detail.assert_awaited_once_with(callback_update, 7)
+
+    access.assert_not_awaited()
 
 
 def test_error_rechecks_acl_before_query(monkeypatch) -> None:
@@ -1650,7 +1682,7 @@ def test_error_rechecks_acl_before_query(monkeypatch) -> None:
 
     asyncio.run(hevc_handlers.error(update, SimpleNamespace(args=[])))
 
-    access.assert_awaited_once_with(update)
+    access.assert_awaited_once_with(update, None)
     query.assert_not_called()
     reply.assert_not_awaited()
 
@@ -1686,7 +1718,8 @@ def test_error_list_has_detail_button_and_shared_callback(monkeypatch) -> None:
     send_detail = AsyncMock()
     monkeypatch.setattr(hevc_handlers, "_send_detail", send_detail)
     callback_update = SimpleNamespace(
-        callback_query=SimpleNamespace(data="status:7"),
+        callback_query=SimpleNamespace(data="status:7", answer=AsyncMock()),
+        effective_chat=SimpleNamespace(type="private"),
     )
     asyncio.run(
         hevc_handlers.status_callback(callback_update, SimpleNamespace(args=[]))
@@ -1752,7 +1785,7 @@ def test_group_mention_uses_runtime_bot_username_and_random_choice(
 ) -> None:
     from app.telegram_bot import hevc_handlers
 
-    access = AsyncMock(return_value=True)
+    access = AsyncMock(return_value=False)
     monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
     monkeypatch.setattr(
         hevc_handlers.random,
@@ -1765,14 +1798,14 @@ def test_group_mention_uses_runtime_bot_username_and_random_choice(
     asyncio.run(hevc_handlers.addressed_text(update, context))
 
     context.bot.get_me.assert_awaited_once()
-    access.assert_awaited_once_with(update)
+    access.assert_not_awaited()
     reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[4])
 
 
 def test_unknown_command_addressed_to_bot_gets_random_reply(monkeypatch) -> None:
     from app.telegram_bot import hevc_handlers
 
-    access = AsyncMock(return_value=True)
+    access = AsyncMock(return_value=False)
     monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
     monkeypatch.setattr(
         hevc_handlers.random,
@@ -1783,7 +1816,7 @@ def test_unknown_command_addressed_to_bot_gets_random_reply(monkeypatch) -> None
 
     asyncio.run(hevc_handlers.unknown_command(update, _bot_context()))
 
-    access.assert_awaited_once_with(update)
+    access.assert_not_awaited()
     reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[8])
 
 
@@ -1801,7 +1834,7 @@ def test_private_text_gets_random_reply(monkeypatch) -> None:
 
     asyncio.run(hevc_handlers.addressed_text(update, _bot_context()))
 
-    access.assert_awaited_once_with(update)
+    access.assert_awaited_once_with(update, None)
     reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[-1])
 
 
@@ -1819,7 +1852,7 @@ def test_private_unknown_command_gets_random_reply(monkeypatch) -> None:
 
     asyncio.run(hevc_handlers.unknown_command(update, _bot_context()))
 
-    access.assert_awaited_once_with(update)
+    access.assert_awaited_once_with(update, None)
     reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[2])
 
 
@@ -1836,19 +1869,44 @@ def test_plain_group_text_is_ignored_before_acl(monkeypatch) -> None:
     reply.assert_not_awaited()
 
 
-def test_random_reply_handlers_obey_acl(monkeypatch) -> None:
+def test_group_mention_replies_without_acl(monkeypatch) -> None:
+    """В чате тег бота отвечает всем; ACL не спрашиваем."""
     from app.telegram_bot import hevc_handlers
 
     access = AsyncMock(return_value=False)
     monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
+    monkeypatch.setattr(
+        hevc_handlers.random,
+        "choice",
+        lambda phrases: phrases[0],
+    )
     mention, mention_reply = _message_update("@ActualHevcBot привет", "group")
-    command, command_reply = _message_update("/unknown", "private")
+    command, command_reply = _message_update(
+        "/unknown@ActualHevcBot", "supergroup"
+    )
 
     asyncio.run(hevc_handlers.addressed_text(mention, _bot_context()))
     asyncio.run(hevc_handlers.unknown_command(command, _bot_context()))
 
+    access.assert_not_awaited()
+    mention_reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[0])
+    command_reply.assert_awaited_once_with(hevc_handlers.RANDOM_REPLIES[0])
+
+
+def test_private_random_replies_obey_acl(monkeypatch) -> None:
+    """В личке случайные ответы — только одобренным."""
+    from app.telegram_bot import hevc_handlers
+
+    access = AsyncMock(return_value=False)
+    monkeypatch.setattr(hevc_handlers, "check_hevc_access", access)
+    text, text_reply = _message_update("Привет", "private")
+    command, command_reply = _message_update("/unknown", "private")
+
+    asyncio.run(hevc_handlers.addressed_text(text, _bot_context()))
+    asyncio.run(hevc_handlers.unknown_command(command, _bot_context()))
+
     assert access.await_count == 2
-    mention_reply.assert_not_awaited()
+    text_reply.assert_not_awaited()
     command_reply.assert_not_awaited()
 
 
