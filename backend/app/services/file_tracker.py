@@ -31,6 +31,7 @@ from app.services.torrent_files_meta import (
     complete_path_for,
     extract_qb_content_path,
     extract_qb_file_priorities,
+    extract_qb_file_progress,
     extract_qb_save_path,
     is_incomplete_path,
     is_junk_file,
@@ -142,7 +143,7 @@ class FileTrackerService:
         self._db.commit()
 
     def _apply_hash_checking_overlay(self, rows: list[TorrentFile], *, active: bool) -> None:
-        """Overlay is_checking: hash_torrent идёт → true; иначе true только при .!qB.
+        """Overlay is_checking: hash_torrent идёт → true; иначе .!qB (progress master — inventory/probe).
 
         Sticky ui_status не трогаем.
         """
@@ -1191,7 +1192,9 @@ class FileTrackerService:
         # Сначала резолвим пути — для baseline нужен batched lookup хэшей без .!qB.
         prepared_metas: list[tuple[Any, str, bool, str | None, bool]] = []
         resolved_for_hash_lookup: list[str] = []
-        save_path, content_path, priorities = self._qb_paths_and_priorities(normalized_hash)
+        qb_layout = self._qb_paths_and_priorities(normalized_hash)
+        save_path, content_path, priorities = qb_layout[0], qb_layout[1], qb_layout[2]
+        progress_by_index: dict[int, float] = qb_layout[3] if len(qb_layout) > 3 else {}
         for meta in file_metas:
             rel_norm = normalize_rel_path(meta.relative_path)
             current_paths.add(rel_norm)
@@ -1359,6 +1362,14 @@ class FileTrackerService:
                 )
                 if tr is not None:
                     ui_transitions.append(tr)
+            apply_checking_flag(
+                row,
+                checking_flag_from_sources(
+                    full_path,
+                    qb_progress=progress_by_index.get(meta.file_index),
+                    selected=selected,
+                ),
+            )
             result.files_upserted += 1
 
         self._log(
@@ -1655,13 +1666,13 @@ class FileTrackerService:
 
     def _qb_paths_and_priorities(
         self, info_hash: str
-    ) -> tuple[str | None, str | None, dict[int, int]]:
+    ) -> tuple[str | None, str | None, dict[int, int], dict[int, float]]:
         master = self._db.scalar(
             select(QbClient).where(QbClient.role == "master", QbClient.enabled.is_(True)).limit(1)
         )
         if master is None:
             self._log("hash_torrent: master qB не настроен — пути без priority", "warning")
-            return None, None, {}
+            return None, None, {}, {}
         try:
             qb = qbittorrentapi.Client(
                 host=master.host,
@@ -1673,15 +1684,16 @@ class FileTrackerService:
             torrents = qb.torrents_info(hashes=info_hash)
             if not torrents:
                 self._log(f"hash_torrent: торрент {info_hash[:12]}… нет на master", "warning")
-                return None, None, {}
+                return None, None, {}, {}
             save_path = extract_qb_save_path(torrents[0])
             content_path = extract_qb_content_path(torrents[0])
             qb_files = qb.torrents_files(torrent_hash=info_hash)
             priorities = extract_qb_file_priorities(qb_files)
-            return save_path, content_path, priorities
+            progress = extract_qb_file_progress(qb_files)
+            return save_path, content_path, priorities, progress
         except Exception as exc:
             self._log(f"hash_torrent: ошибка qB master: {exc}", "warning")
-            return None, None, {}
+            return None, None, {}, {}
 
 
 def resolve_orphan_scan_root(
@@ -1820,8 +1832,8 @@ def mark_missing_api_present_false(db: Session, seen_torrent_ids: set[int]) -> i
 def apply_checking_flag(row: Any, is_checking: bool) -> bool:
     """Пишет torrent_files.is_checking, не трогает sticky ui_status."""
     wanted = bool(is_checking)
-    current = bool(getattr(row, "is_checking", False))
-    if current is wanted:
+    current_raw = getattr(row, "is_checking", None)
+    if current_raw is not None and bool(current_raw) is wanted:
         return False
     row.is_checking = wanted
     return True
@@ -1834,6 +1846,29 @@ def checking_flag_from_path(full_path: str | None) -> bool:
     try:
         return bool(is_partial_only(full_path))
     except OSError:
+        return False
+
+
+def checking_flag_from_sources(
+    full_path: str | None,
+    *,
+    qb_progress: float | None = None,
+    selected: bool = True,
+) -> bool:
+    """Overlay «проверка»: .!qB без complete, либо выбранный файл на master с progress < 1.
+
+    Sticky ui_status не трогаем: ok/changed остаются в БД, UI показывает «проверка»,
+    пока qB ещё качает или проверяет куски.
+    """
+    if checking_flag_from_path(full_path):
+        return True
+    if not selected:
+        return False
+    if qb_progress is None:
+        return False
+    try:
+        return float(qb_progress) < 1.0
+    except (TypeError, ValueError):
         return False
 
 
@@ -1858,8 +1893,9 @@ def file_status_for_ui(
     - ok — хеш совпал с предыдущей версией / baseline (первый торрент) после settle
 
     Временный:
-    - checking — колонка is_checking, либо job hash_torrent, либо (если
-      caller не передал incomplete) известный файл снова в .!qB на диске
+    - checking — колонка is_checking (в т.ч. progress<1 на master), либо
+      job hash_torrent, либо (если caller не передал incomplete) известный
+      файл снова в .!qB на диске
     """
     del relative_path  # только для сигнатуры/логов вызывающего
     if not in_torrent or latest_kind == KIND_REMOVED:

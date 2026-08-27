@@ -757,6 +757,61 @@ def test_sync_composition_prior_keeps_existing_ok(
     assert synced.first_seen_paths == {ep02}
 
 
+def test_sync_composition_checking_from_master_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prior-path → sticky ok, но progress<1 на master → is_checking (UI «проверка»)."""
+    from app.services.file_tracker import TorrentFile, UI_STATUS_OK
+
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    info_hash = "cf" * 20
+    ep05 = "Show/ep05.mkv"
+    ep04 = "Show/ep04.mkv"
+    (media / "Show").mkdir()
+    (media / ep04).write_bytes(b"done")
+    (media / ep05).write_bytes(b"old")
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []
+    created: list[object] = []
+    db.add.side_effect = lambda obj: created.append(obj)
+
+    service = FileTrackerService(db)
+    monkeypatch.setattr(service, "_prior_version_hash", lambda **_k: "prev")
+    monkeypatch.setattr(service, "_prior_version_files", lambda **_k: {ep04: None, ep05: None})
+    monkeypatch.setattr(service, "_persist_events", lambda **_k: [])
+    monkeypatch.setattr(
+        service,
+        "_qb_paths_and_priorities",
+        lambda _h: (str(media), str(media), {}, {0: 1.0, 1: 0.15}),
+    )
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: media)
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_full_path",
+        lambda base, rel, **_k: media / rel,
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.parse_torrent_file_list",
+        lambda _b: [
+            SimpleNamespace(relative_path=ep04, size=1, file_index=0),
+            SimpleNamespace(relative_path=ep05, size=2, file_index=1),
+        ],
+    )
+
+    service._sync_composition(  # type: ignore[attr-defined]
+        normalized_hash=info_hash,
+        torrent_id=1,
+        release_id=2,
+        torrent_bytes=b"x",
+    )
+    rows = {r.relative_path: r for r in created if isinstance(r, TorrentFile)}
+    assert rows[ep04].ui_status == UI_STATUS_OK
+    assert rows[ep04].is_checking is False
+    assert rows[ep05].ui_status == UI_STATUS_OK
+    assert rows[ep05].is_checking is True
+
+
 def test_sync_heals_false_sticky_new_when_prior_appears(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3147,6 +3202,21 @@ def test_checking_flag_from_path_partial_and_complete(tmp_path: Path) -> None:
     media.write_bytes(b"done")
     assert checking_flag_from_path(str(media)) is False
     assert checking_flag_from_path(None) is False
+
+
+def test_checking_flag_from_sources_qb_progress(tmp_path: Path) -> None:
+    """Выбранный файл на master с progress < 1 → checking, даже если complete уже на диске."""
+    from app.services.file_tracker import checking_flag_from_sources
+
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"old-complete")
+    assert checking_flag_from_sources(str(media), qb_progress=0.4, selected=True) is True
+    assert checking_flag_from_sources(str(media), qb_progress=1.0, selected=True) is False
+    assert checking_flag_from_sources(str(media), qb_progress=0.0, selected=False) is False
+    assert checking_flag_from_sources(str(media), qb_progress=None, selected=True) is False
+    Path(str(media) + ".!qB").write_bytes(b"part")
+    media.unlink()
+    assert checking_flag_from_sources(str(media), qb_progress=1.0, selected=True) is True
 
 
 def test_hash_checking_overlay_sets_and_clears_after_settle(tmp_path: Path) -> None:

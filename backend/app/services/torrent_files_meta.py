@@ -132,25 +132,56 @@ def extract_qb_content_path(torrent_info: Any) -> str | None:
     return None
 
 
+def _qb_file_index(item: Any) -> int | None:
+    index = getattr(item, "index", None)
+    if index is None and isinstance(item, dict):
+        index = item.get("index")
+    if index is None:
+        return None
+    try:
+        return int(index)
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_qb_file_priorities(qb_files: Any) -> dict[int, int]:
     """index → priority (0 = не выбран)."""
     priorities: dict[int, int] = {}
     if not qb_files:
         return priorities
     for item in qb_files:
-        index = getattr(item, "index", None)
-        if index is None and isinstance(item, dict):
-            index = item.get("index")
+        index = _qb_file_index(item)
+        if index is None:
+            continue
         priority = getattr(item, "priority", None)
         if priority is None and isinstance(item, dict):
             priority = item.get("priority")
-        if index is None:
-            continue
         try:
-            priorities[int(index)] = int(priority or 0)
+            priorities[index] = int(priority or 0)
         except (TypeError, ValueError):
             continue
     return priorities
+
+
+def extract_qb_file_progress(qb_files: Any) -> dict[int, float]:
+    """index → progress 0..1 (доля проверенных/скачанных кусков файла на master)."""
+    progress: dict[int, float] = {}
+    if not qb_files:
+        return progress
+    for item in qb_files:
+        index = _qb_file_index(item)
+        if index is None:
+            continue
+        raw = getattr(item, "progress", None)
+        if raw is None and isinstance(item, dict):
+            raw = item.get("progress")
+        if raw is None:
+            continue
+        try:
+            progress[index] = float(raw)
+        except (TypeError, ValueError):
+            continue
+    return progress
 
 
 def resolve_full_path(

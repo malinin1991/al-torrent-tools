@@ -18,6 +18,7 @@ from app.services.torrent_files_meta import (
     extract_qb_content_path,
     extract_qb_file_name,
     extract_qb_file_priorities,
+    extract_qb_file_progress,
     extract_qb_save_path,
     extract_qb_torrent_hash,
     is_under_media_root,
@@ -38,6 +39,7 @@ class InventoryFile:
     selected: bool
     full_path: str
     folder_key: str
+    progress: float | None = None
 
 
 @dataclass
@@ -65,6 +67,47 @@ def connect_master(db: Session) -> qbittorrentapi.Client | None:
     )
     qb.auth_log_in()
     return qb
+
+
+def fetch_master_file_progress(db: Session, info_hash: str) -> dict[int, float] | None:
+    """index → progress 0..1. None если master недоступен / нет состава — флаги не трогаем."""
+    normalized = (info_hash or "").strip().lower()
+    if not normalized:
+        return None
+    try:
+        qb = connect_master(db)
+        if qb is None:
+            return None
+        files = qb.torrents_files(torrent_hash=normalized) or []
+    except Exception:
+        return None
+    if not files:
+        return None
+    return extract_qb_file_progress(files)
+
+
+def refresh_checking_flags_from_master(db: Session, info_hash: str) -> bool:
+    """Обновить is_checking по progress qB master. True если что-то изменилось."""
+    from app.services.file_tracker import apply_checking_flag, checking_flag_from_sources
+
+    progress_by_index = fetch_master_file_progress(db, info_hash)
+    if progress_by_index is None:
+        return False
+    normalized = (info_hash or "").strip().lower()
+    rows = list(db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all())
+    dirty = False
+    for row in rows:
+        idx = int(getattr(row, "file_index", 0) or 0)
+        wanted = checking_flag_from_sources(
+            getattr(row, "full_path", None),
+            qb_progress=progress_by_index.get(idx),
+            selected=bool(getattr(row, "selected", True)),
+        )
+        if apply_checking_flag(row, wanted):
+            dirty = True
+    if dirty:
+        db.commit()
+    return dirty
 
 
 def load_cleanup_rules(db: Session) -> list[CleanupRule]:
@@ -177,6 +220,7 @@ def build_inventory(
 
         result.valid_hashes.add(torrent.hash)
         priorities = extract_qb_file_priorities(qb_files)
+        progress_by_index = extract_qb_file_progress(qb_files)
         for qb_file in qb_files:
             rel_name = extract_qb_file_name(qb_file)
             if not rel_name:
@@ -198,6 +242,7 @@ def build_inventory(
             selected = True
             if priorities:
                 selected = priorities.get(file_index, 0) > 0
+            file_progress = progress_by_index.get(file_index)
             resolved = resolve_full_path(
                 save_path,
                 rel_name,
@@ -217,6 +262,7 @@ def build_inventory(
                     selected=selected,
                     full_path=str(resolved.resolve()),
                     folder_key=folder_key,
+                    progress=file_progress,
                 )
             )
 
@@ -242,7 +288,7 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
         by_hash.setdefault(item.info_hash, []).append(item)
 
     # Ленивый импорт: file_tracker импортирует из этого модуля не нужно, но избегаем циклов.
-    from app.services.file_tracker import FileTrackerService, apply_checking_flag, checking_flag_from_path
+    from app.services.file_tracker import FileTrackerService, apply_checking_flag, checking_flag_from_sources
 
     tracker = FileTrackerService(db)
 
@@ -306,7 +352,11 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                         selected=item.selected,
                         full_path=item.full_path,
                         ui_status=initial_status,
-                        is_checking=checking_flag_from_path(item.full_path),
+                        is_checking=checking_flag_from_sources(
+                            item.full_path,
+                            qb_progress=item.progress,
+                            selected=item.selected,
+                        ),
                         created_at=now,
                         updated_at=now,
                     )
@@ -319,7 +369,14 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                 row.selected = item.selected
                 row.full_path = item.full_path
                 row.updated_at = now
-                apply_checking_flag(row, checking_flag_from_path(item.full_path))
+                apply_checking_flag(
+                    row,
+                    checking_flag_from_sources(
+                        item.full_path,
+                        qb_progress=item.progress,
+                        selected=item.selected,
+                    ),
+                )
                 # Лечим ложный sticky new: inventory мог создать строки до появления prior.
                 # Пустой состав prior — не лечим (first_seen=True).
                 if has_prior_version:

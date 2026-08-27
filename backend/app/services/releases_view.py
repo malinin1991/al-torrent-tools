@@ -980,14 +980,18 @@ class TorrentMediaProbe:
 
 
 def probe_torrent_media_files(db: Session, info_hash: str) -> TorrentMediaProbe:
-    """Кнопки скачивания с диска + overlay «проверка» из БД (is_checking / hash_torrent).
+    """Кнопки скачивания с диска + overlay «проверка» (is_checking / master progress / hash_torrent).
 
-    Только api_present и не superseded. «проверка» не сканирует .!qB.
+    Только api_present и не superseded. «проверка» не сканирует .!qB на диске:
+    live-флаг берём из qB master (progress < 1) и колонки is_checking.
     """
     if _active_archive_for_hash(db, info_hash) is None:
         return TorrentMediaProbe()
 
     normalized = (info_hash or "").strip().lower()
+    from app.services.qb_inventory import refresh_checking_flags_from_master
+
+    refresh_checking_flags_from_master(db, normalized)
     rows = list(
         db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all()
     )

@@ -728,7 +728,7 @@
           const badge = li.querySelector(".file-ui-badge");
           if (!badge) return;
           badge.className = "badge badge-warn file-ui-badge";
-          badge.title = "Файл снова качается (.!qB) — после complete будет проверка хеша";
+          badge.title = "Качается или проверяется на master";
           badge.textContent = "проверка";
         });
         block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {

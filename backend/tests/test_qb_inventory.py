@@ -356,6 +356,67 @@ def test_upsert_inventory_persists_is_checking_from_partial(
     assert rows["Show/ep02.mkv"].ui_status == "new"
 
 
+def test_upsert_inventory_checking_from_qb_progress_with_complete_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Старый complete на диске + progress<1 на master → is_checking, sticky ok не трогаем."""
+    from app.services.file_tracker import FileTrackerService
+
+    media = tmp_path / "Show"
+    media.mkdir()
+    complete = media / "ep05.mkv"
+    complete.write_bytes(b"old-version")
+
+    class FakeScalars:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return list(self._rows)
+
+    existing_ok = SimpleNamespace(
+        relative_path="Show/ep05.mkv",
+        torrent_id=5,
+        release_id=10,
+        size=1,
+        file_index=0,
+        selected=True,
+        full_path=str(complete),
+        ui_status="ok",
+        is_checking=False,
+        updated_at=None,
+    )
+    db = MagicMock()
+    db.scalars.return_value = FakeScalars([existing_ok])
+
+    monkeypatch.setattr(
+        FileTrackerService,
+        "prior_version_composition",
+        lambda self, *, torrent_id, info_hash, **_k: (True, {"Show/ep05.mkv"}),
+    )
+
+    inventory = InventoryResult(
+        valid_hashes={"a" * 40},
+        files=[
+            InventoryFile(
+                info_hash="a" * 40,
+                torrent_id=5,
+                release_id=10,
+                relative_path="Show/ep05.mkv",
+                size=1,
+                file_index=0,
+                selected=True,
+                full_path=str(complete),
+                folder_key=str(media),
+                progress=0.35,
+            ),
+        ],
+    )
+    upsert_torrent_files_inventory(db, inventory)
+    assert existing_ok.ui_status == "ok"
+    assert existing_ok.is_checking is True
+
+
 def test_upsert_inventory_heals_false_new_when_prior_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1039,6 +1100,20 @@ def test_orphan_known_includes_deduped_paths(monkeypatch, tmp_path: Path) -> Non
     assert orphan.resolve() in orphans
     assert files[0].resolve() not in orphans
     assert files[1].resolve() not in orphans
+
+
+def test_extract_qb_file_progress_object_and_dict() -> None:
+    from app.services.torrent_files_meta import extract_qb_file_progress
+
+    files = [
+        SimpleNamespace(index=0, progress=1.0),
+        {"index": 1, "progress": 0.25},
+        SimpleNamespace(index=2, progress="nope"),
+        SimpleNamespace(name="no-index", progress=0.5),
+    ]
+    assert extract_qb_file_progress(files) == {0: 1.0, 1: 0.25}
+    assert extract_qb_file_progress(None) == {}
+    assert extract_qb_file_progress([]) == {}
 
 
 def test_clamp_hash_workers() -> None:

@@ -617,6 +617,56 @@ def test_probe_torrent_media_files_checking_and_downloadable(
     assert probe.checking_ids == [1]
 
 
+def test_probe_checking_from_master_progress(tmp_path: Path, monkeypatch) -> None:
+    """progress<1 на master → checking_ids, даже если complete на диске и is_checking был false."""
+    from app.services.releases_view import probe_torrent_media_files
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.releases_view._info_hashes_with_active_hash_job",
+        lambda _db, _hashes: set(),
+    )
+    monkeypatch.setattr(
+        "app.services.qb_inventory.fetch_master_file_progress",
+        lambda _db, _h: {0: 0.4, 1: 1.0},
+    )
+    show = tmp_path / "Show"
+    show.mkdir()
+    ep05 = show / "ep05.mkv"
+    ep05.write_bytes(b"old")
+    ep04 = show / "ep04.mkv"
+    ep04.write_bytes(b"ok")
+    info_hash = "ab" * 20
+
+    db = MagicMock()
+    db.scalar.return_value = SimpleNamespace(
+        info_hash=info_hash, superseded=False, api_present=True
+    )
+    db.scalars.return_value.all.return_value = [
+        SimpleNamespace(
+            id=1,
+            ui_status="ok",
+            full_path=str(ep05),
+            relative_path="ep05.mkv",
+            is_checking=False,
+            file_index=0,
+            selected=True,
+        ),
+        SimpleNamespace(
+            id=2,
+            ui_status="ok",
+            full_path=str(ep04),
+            relative_path="ep04.mkv",
+            is_checking=False,
+            file_index=1,
+            selected=True,
+        ),
+    ]
+    probe = probe_torrent_media_files(db, info_hash)
+    assert probe.checking_ids == [1]
+    assert 2 not in probe.checking_ids
+
+
 def test_probe_checking_from_db_not_disk_partial(tmp_path: Path, monkeypatch) -> None:
     """.!qB на диске без is_checking не даёт checking_ids; флаг в БД — даёт."""
     from app.services.releases_view import probe_torrent_media_files
