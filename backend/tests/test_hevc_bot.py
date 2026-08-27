@@ -935,7 +935,7 @@ def test_type_mismatch_has_dedicated_error_list_format() -> None:
     )
     text = format_release_list_item(row, kind="error")
     assert "расхождение типов AVC/HEVC" in text
-    assert "https://anilibria.top/anime/releases/release/show" in text
+    assert "https://anilibria.top/anime/releases/release/show/torrents" in text
     assert "неизвестно" in text
     assert "За HEVC отвечает:" not in text
     assert "Исполнители:" not in text

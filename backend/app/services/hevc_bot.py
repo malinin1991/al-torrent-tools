@@ -603,7 +603,7 @@ def _html_or_dash(value: str | None) -> str:
 def _release_link(row: HevcReleaseStatus) -> str:
     title = html.escape((row.title or "").strip() or row.alias)
     alias = html.escape(row.alias, quote=True)
-    return f'<a href="{ANILIBRIA_RELEASE_URL}/{alias}">{title}</a>'
+    return f'<a href="{ANILIBRIA_RELEASE_URL}/{alias}/torrents">{title}</a>'
 
 
 def format_release_list_item(row: HevcReleaseStatus, *, kind: ListKind) -> str:
