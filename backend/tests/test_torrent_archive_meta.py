@@ -265,6 +265,56 @@ def test_save_torrent_persists_api_created_at_on_update(tmp_path) -> None:
     assert db.add.call_count == 0
 
 
+def test_save_torrent_same_hash_does_not_move_sla_clock(tmp_path) -> None:
+    """Update той же версии: более поздний updated_at не двигает api_created_at."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    kept = datetime(2026, 7, 10, 16, 52, 16)
+    db = MagicMock()
+    existing = SimpleNamespace(
+        id=1,
+        info_hash="d" * 40,
+        torrent_id=9,
+        release_id=1,
+        release_alias="x",
+        api_present=True,
+        superseded=False,
+        anime_name=None,
+        category=None,
+        description=None,
+        torrent_description="1-9",
+        torrent_type=None,
+        quality_json={},
+        file_path="",
+        file_size=None,
+        api_created_at=kept,
+        ignore_hevc=False,
+    )
+    db.scalar.return_value = existing
+    svc = TorrentArchiveService(db)
+    svc._storage_root = tmp_path
+    svc.save_torrent(
+        torrent_bytes=b"d4:infod4:name4:teste",
+        info_hash="d" * 40,
+        release_id=1,
+        release_alias="x",
+        torrent_payload={
+            "id": 9,
+            "description": "1-10",
+            "type": {"value": "WEBRip"},
+            "quality": {"value": "1080p"},
+            "codec": {"label": "AVC"},
+            "size": {"value": 10},
+            "created_at": "2026-07-10T16:52:16Z",
+            "updated_at": "2026-08-31T08:00:00Z",
+        },
+        release_payload={"name": {"main": "Show"}, "year": 2024},
+    )
+    assert existing.api_created_at == kept
+    assert existing.torrent_description == "1-10"
+
+
 def test_save_torrent_preserves_api_created_at_when_payload_omits(tmp_path) -> None:
     """Update без created_at в payload не затирает уже сохранённый api_created_at."""
     from types import SimpleNamespace
@@ -376,38 +426,105 @@ def test_fill_missing_api_created_at_only_null_rows() -> None:
     db.commit.assert_called_once()
 
 
-def test_fill_missing_api_created_at_refreshes_stale_created_only() -> None:
-    """Старый api_created_at (только created) обновляется более поздним updated_at."""
+def test_fill_missing_api_created_at_same_hash_does_not_move_clock() -> None:
+    """Same hash + уже есть clock → не двигать; null → заполнить; superseded не трогать."""
     from types import SimpleNamespace
     from unittest.mock import MagicMock
 
-    stale = SimpleNamespace(
-        torrent_id=10, api_created_at=datetime(2026, 7, 10, 16, 52, 16)
+    same_hash = "a" * 40
+    kept = datetime(2026, 7, 10, 16, 52, 16)
+    hist_clock = datetime(2026, 6, 1, 12, 0, 0)
+    filled_at = datetime(2026, 7, 20, 0, 0, 0)
+    active = SimpleNamespace(
+        torrent_id=10,
+        info_hash=same_hash,
+        api_created_at=kept,
+        superseded=False,
+        api_present=True,
     )
-    fresh_enough = SimpleNamespace(
-        torrent_id=11, api_created_at=datetime(2026, 7, 26, 12, 0, 0)
+    null_row = SimpleNamespace(
+        torrent_id=11,
+        info_hash="b" * 40,
+        api_created_at=None,
+        superseded=False,
+        api_present=True,
+    )
+    superseded = SimpleNamespace(
+        torrent_id=10,
+        info_hash="c" * 40,
+        api_created_at=hist_clock,
+        superseded=True,
+        api_present=False,
     )
     db = MagicMock()
-    db.scalars.return_value.all.return_value = [stale, fresh_enough]
+    db.scalars.return_value.all.return_value = [active, null_row, superseded]
     svc = TorrentArchiveService(db)
     n = svc.fill_missing_api_created_at(
         1,
         [
             {
                 "id": 10,
+                "info_hash": same_hash,
                 "created_at": "2026-07-10T16:52:16Z",
                 "updated_at": "2026-07-24T16:07:58Z",
             },
             {
                 "id": 11,
+                "info_hash": "b" * 40,
                 "created_at": "2026-07-20T00:00:00Z",
-                "updated_at": "2026-07-25T00:00:00Z",
             },
         ],
     )
     assert n == 1
-    assert stale.api_created_at == datetime(2026, 7, 24, 16, 7, 58)
-    assert fresh_enough.api_created_at == datetime(2026, 7, 26, 12, 0, 0)
+    assert active.api_created_at == kept
+    assert null_row.api_created_at == filled_at
+    assert superseded.api_created_at == hist_clock
+    db.commit.assert_called_once()
+
+
+def test_fill_missing_api_created_at_hash_mismatch_skips_old_row() -> None:
+    """Другой hash в payload — старую активную строку не трогаем (ждём supersede)."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    kept = datetime(2026, 7, 10, 16, 52, 16)
+    old_row = SimpleNamespace(
+        torrent_id=10,
+        info_hash="a" * 40,
+        api_created_at=kept,
+        superseded=False,
+        api_present=True,
+    )
+    null_old = SimpleNamespace(
+        torrent_id=11,
+        info_hash="c" * 40,
+        api_created_at=None,
+        superseded=False,
+        api_present=True,
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [old_row, null_old]
+    svc = TorrentArchiveService(db)
+    n = svc.fill_missing_api_created_at(
+        1,
+        [
+            {
+                "id": 10,
+                "info_hash": "b" * 40,
+                "created_at": "2026-07-10T16:52:16Z",
+                "updated_at": "2026-07-24T16:07:58Z",
+            },
+            {
+                "id": 11,
+                "info_hash": "d" * 40,
+                "created_at": "2026-07-20T00:00:00Z",
+            },
+        ],
+    )
+    assert n == 0
+    assert old_row.api_created_at == kept
+    assert null_old.api_created_at is None
+    db.commit.assert_not_called()
 
 
 def test_fill_missing_api_created_at_skips_superseded_same_torrent_id() -> None:
@@ -453,6 +570,51 @@ def test_fill_missing_api_created_at_skips_superseded_same_torrent_id() -> None:
     assert superseded.api_created_at == hist_clock
     assert archived.api_created_at == hist_clock
     assert active.api_created_at == fresh_clock
+
+
+def test_update_archive_meta_same_hash_keeps_sla_clock() -> None:
+    """In-place смена description: мета обновляется, api_created_at той же версии нет."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    same_hash = "a" * 40
+    kept = datetime(2026, 7, 10, 16, 52, 16)
+    db = MagicMock()
+    archive = SimpleNamespace(
+        torrent_id=7,
+        release_id=1,
+        info_hash=same_hash,
+        torrent_description="1-9",
+        torrent_type="WEBRip 1080p AVC",
+        anime_name="Show",
+        category="AniLibria/2026",
+        description=None,
+        release_alias="show",
+        quality_json={"type": {"value": "WEBRip"}},
+        api_created_at=kept,
+        api_present=True,
+    )
+    db.scalar.return_value = archive
+    svc = TorrentArchiveService(db)
+
+    status = svc.update_archive_meta_from_api_payload(
+        release_id=1,
+        torrent_payload={
+            "id": 7,
+            "info_hash": same_hash,
+            "description": "1-10",
+            "type": {"value": "WEBRip"},
+            "quality": {"value": "1080p"},
+            "codec": {"label": "AVC"},
+            "created_at": "2026-07-10T16:52:16Z",
+            "updated_at": "2026-08-31T08:00:00Z",
+        },
+    )
+
+    assert status == "updated"
+    assert archive.torrent_description == "1-10"
+    assert archive.api_created_at == kept
+    db.commit.assert_called_once()
 
 
 def test_processor_torrents_include_has_created_at() -> None:

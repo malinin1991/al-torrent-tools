@@ -1506,6 +1506,92 @@ def test_overdue_sla_falls_back_to_system_created_at() -> None:
     assert unpaired[0].age_from_api is False
 
 
+def test_inplace_label_1_10_with_hevc_1_9_overdue_from_old_clock() -> None:
+    """In-place ярлык 1-10: HEVC только 1-9, clock старый (>SLA) → сразу overdue."""
+    now = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+    old_clock = now - timedelta(hours=HEVC_SLA_HOURS + 6)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=100,
+            episodes="1-10",
+            codec="AVC",
+            created_at=old_clock,
+            api_created_at=old_clock,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=90,
+            episodes="1-9",
+            codec="HEVC",
+            created_at=old_clock - timedelta(hours=1),
+            api_created_at=old_clock - timedelta(hours=1),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].overdue is True
+    assert unpaired[0].missing is False
+    assert unpaired[0].age_from_api is True
+    assert unpaired[0].created_at == old_clock
+    assert unpaired[0].age_hours == pytest.approx(HEVC_SLA_HOURS + 6)
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == {1}
+
+
+def test_inplace_label_1_10_with_hevc_1_10_not_unpaired() -> None:
+    """In-place ярлык 1-10: exact HEVC 1-10 уже есть → пара OK, не overdue."""
+    now = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+    old_clock = now - timedelta(hours=HEVC_SLA_HOURS + 6)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=100,
+            episodes="1-10",
+            codec="AVC",
+            created_at=old_clock,
+            api_created_at=old_clock,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=110,
+            episodes="1-10",
+            codec="HEVC",
+            created_at=old_clock - timedelta(hours=2),
+            api_created_at=old_clock - timedelta(hours=2),
+        ),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+
+
+def test_fresh_avc_1_10_with_hevc_1_9_not_immediately_overdue() -> None:
+    """Свежая заливка AVC 1-10 (минуты) + HEVC 1-9 — catch-up, но не overdue сразу."""
+    now = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+    fresh = now - timedelta(minutes=20)
+    rows = [
+        _row(
+            archive_id=1,
+            torrent_id=100,
+            episodes="1-10",
+            codec="AVC",
+            created_at=fresh,
+            api_created_at=fresh,
+        ),
+        _row(
+            archive_id=2,
+            torrent_id=90,
+            episodes="1-9",
+            codec="HEVC",
+            created_at=now - timedelta(hours=HEVC_SLA_HOURS + 10),
+            api_created_at=now - timedelta(hours=HEVC_SLA_HOURS + 10),
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert all(not u.overdue for u in unpaired)
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+
+
 def test_fresh_api_created_at_not_overdue_despite_old_system_created() -> None:
     """api_created_at свежий (<SLA) — не overdue, даже если system created_at старый."""
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)

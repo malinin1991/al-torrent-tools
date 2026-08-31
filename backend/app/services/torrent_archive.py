@@ -174,6 +174,27 @@ class TorrentArchiveService:
         return max(present)
 
     @staticmethod
+    def _extract_api_info_hash(torrent_payload: dict[str, Any]) -> str | None:
+        """info_hash из list/get payload; битый/пустой → None."""
+        raw_hash = torrent_payload.get("info_hash") or torrent_payload.get("hash")
+        if raw_hash is None or not str(raw_hash).strip():
+            return None
+        try:
+            return sanitize_info_hash(str(raw_hash).strip())
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _normalize_row_info_hash(row: Any) -> str | None:
+        raw = getattr(row, "info_hash", None)
+        if raw is None or not str(raw).strip():
+            return None
+        try:
+            return sanitize_info_hash(str(raw).strip())
+        except ValueError:
+            return None
+
+    @staticmethod
     def _extract_torrent_type(torrent_payload: dict[str, Any]) -> str | None:
         return TorrentArchiveService.extract_torrent_type(torrent_payload)
 
@@ -341,8 +362,11 @@ class TorrentArchiveService:
             archive.quality_json = quality_json
             archive.file_path = str(relative_path)
             archive.file_size = self._to_file_size(torrent_payload)
-            # Не затираем уже сохранённый api_created_at, если payload без/с битым created_at.
-            if api_created_at is not None:
+            # Тот же info_hash = тот же SLA clock. Не двигаем уже заполненный
+            # api_created_at (правка description на AL бампает updated_at).
+            # Пустой clock заполняем; новый max(created, updated) — только CREATE
+            # новой версии (другой hash, строка выше).
+            if archive.api_created_at is None and api_created_at is not None:
                 archive.api_created_at = api_created_at
             archive.api_present = True
             archive.superseded = False
@@ -419,13 +443,7 @@ class TorrentArchiveService:
         if torrent_id is None:
             return "missing"
 
-        raw_hash = torrent_payload.get("info_hash") or torrent_payload.get("hash")
-        api_hash: str | None = None
-        if raw_hash is not None and str(raw_hash).strip():
-            try:
-                api_hash = sanitize_info_hash(str(raw_hash).strip())
-            except ValueError:
-                api_hash = None
+        api_hash = self._extract_api_info_hash(torrent_payload)
 
         archive = self._find_active_archive(torrent_id=torrent_id, info_hash=api_hash)
         if archive is None:
@@ -482,12 +500,12 @@ class TorrentArchiveService:
             archive.release_id = release_id
             changed = True
 
+        # Та же версия (hash_mismatch уже вышли): не увеличиваем SLA clock.
+        # updated_at после правки description на AL не даёт новые 24 часа.
         api_created_at = self._extract_api_created_at(torrent_payload)
-        if api_created_at is not None:
-            current = archive.api_created_at
-            if current is None or current < api_created_at:
-                archive.api_created_at = api_created_at
-                changed = True
+        if api_created_at is not None and archive.api_created_at is None:
+            archive.api_created_at = api_created_at
+            changed = True
 
         if archive.quality_json != quality:
             archive.quality_json = quality
@@ -507,15 +525,17 @@ class TorrentArchiveService:
         release_id: int,
         torrents: list[dict[str, Any]],
     ) -> int:
-        """Синхронизировать api_created_at из list payload (full_sync/ongoing).
+        """Заполнить пустой api_created_at из list payload (full_sync/ongoing).
 
-        Ставит значение, если пусто, или обновляет, если в payload более поздний
-        upload clock (max created_at/updated_at). Игнорирует битый/пустой payload.
-        Не трогает superseded / api_present=False: AniLibria переиспользует
-        torrent_id при 1-8→1-9, и новый updated_at относится только к активной
-        версии.
+        Тот же info_hash = тот же SLA clock: уже заполненный clock не двигаем
+        (правка description на AL бампает updated_at, это не новая версия).
+        Если hash в payload другой — строку не трогаем (скоро supersede;
+        новый clock только у новой строки в save_torrent).
+        Игнорирует битый/пустой payload. Не трогает superseded / api_present=False:
+        AniLibria переиспользует torrent_id при 1-8→1-9, и новый updated_at
+        относится только к активной версии.
         """
-        by_tid: dict[int, datetime] = {}
+        by_tid: dict[int, tuple[datetime, str | None]] = {}
         for torrent in torrents:
             if not isinstance(torrent, dict):
                 continue
@@ -528,7 +548,7 @@ class TorrentArchiveService:
                 continue
             parsed = self._extract_api_created_at(torrent)
             if parsed is not None:
-                by_tid[tid] = parsed
+                by_tid[tid] = (parsed, self._extract_api_info_hash(torrent))
         if not by_tid:
             return 0
         rows = list(
@@ -547,11 +567,15 @@ class TorrentArchiveService:
                 getattr(row, "api_present", True)
             ):
                 continue
-            value = by_tid.get(int(row.torrent_id))
-            if value is None:
+            packed = by_tid.get(int(row.torrent_id))
+            if packed is None:
                 continue
-            current = row.api_created_at
-            if current is not None and current >= value:
+            value, payload_hash = packed
+            row_hash = self._normalize_row_info_hash(row)
+            if payload_hash and row_hash and payload_hash != row_hash:
+                # Новая версия: clock этой строки не наш, её supersede'нут.
+                continue
+            if row.api_created_at is not None:
                 continue
             row.api_created_at = value
             updated += 1
