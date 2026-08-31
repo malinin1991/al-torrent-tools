@@ -16,6 +16,15 @@ overdue         — на слоте уже есть HEVC (тот же batch_star
                   age от earliest upload среди нуждающихся в catch-up.
                   Якорь наследует superseded/исторические AVC того же слота:
                   смена AVC 1-3→1-4 не сбрасывает отсчёт, пока HEVC не догнал.
+                  Исторический AVC, диапазон которого HEVC уже покрывает
+                  (exact 1-8 при HEVC 1-8), не якорит слот — даже если
+                  torrent_id AVC > HEVC (AL переиспользует id при расширении
+                  батча). Иначе свежий 1-9 сразу «просрочка» от закрытой пары.
+                  Исключение: правка ярлыка 1-8→1-9 при тех же видеофайлах
+                  (множества basename равны; под 1-8 уже был 1-9) — якорь
+                  от исторического upload, не новый SLA. Подмножество
+                  (неполный состав, нет ещё 09.mkv) и новый basename —
+                  не rename, свежий SLA.
                   HEVC с более широким диапазоном (1-17) закрывает catch-up у
                   более коротких исторических AVC (1-16) — не только exact.
                   Среди кандидатов якоря предпочитаем api_created_at; local-only
@@ -88,6 +97,8 @@ _REGULAR_RE = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?$")
 BatchStartKey = tuple[Any, ...]
 # (quality, source_class, batch_start) — presence для missing.
 PresenceKey = tuple[str, str, BatchStartKey]
+# Видео для SLA «новый эпизод vs правка ярлыка» — не nfo/картинки.
+_VIDEO_SUFFIXES = frozenset({".mkv", ".mp4", ".m2ts", ".ts", ".avi", ".mov", ".webm"})
 
 
 def _field_text(value: Any) -> str | None:
@@ -156,6 +167,76 @@ def episode_span(
         return (("regular", start), lo, hi)
 
     return None
+
+
+def content_file_keys(relative_paths: Sequence[str] | None) -> frozenset[str]:
+    """Ключи состава для SLA: basename видео, не полный relative_path.
+
+    Папка торрента часто меняется при правке ярлыка 1-8→1-9; смотрим имя
+    файла, чтобы отличить новый эпизод от переименования раздачи.
+    """
+    if not relative_paths:
+        return frozenset()
+    keys: set[str] = set()
+    for raw in relative_paths:
+        text = (raw or "").strip().replace("\\", "/")
+        if not text:
+            continue
+        name = text.rsplit("/", 1)[-1]
+        if not name or name.startswith("._"):
+            continue
+        suffix = ""
+        if "." in name:
+            suffix = "." + name.rsplit(".", 1)[-1].casefold()
+        if suffix not in _VIDEO_SUFFIXES:
+            continue
+        keys.add(name.casefold())
+    return frozenset(keys)
+
+
+def file_keys_by_archive_id(
+    archives: Sequence[Any],
+    files: Sequence[Any],
+) -> dict[int, frozenset[str]]:
+    """archive.id → basenames видео из torrent_files того же info_hash."""
+    paths_by_hash: dict[str, list[str]] = {}
+    for item in files:
+        raw_hash = _archive_attr(item, "info_hash")
+        info_hash = raw_hash.strip().lower() if isinstance(raw_hash, str) else ""
+        rel = _archive_attr(item, "relative_path")
+        if info_hash and isinstance(rel, str) and rel.strip():
+            paths_by_hash.setdefault(info_hash, []).append(rel)
+    result: dict[int, frozenset[str]] = {}
+    for row in archives:
+        raw_hash = _archive_attr(row, "info_hash")
+        info_hash = raw_hash.strip().lower() if isinstance(raw_hash, str) else ""
+        archive_id = int(_archive_attr(row, "id") or 0)
+        if not archive_id or not info_hash:
+            continue
+        keys = content_file_keys(paths_by_hash.get(info_hash))
+        if keys:
+            result[archive_id] = keys
+    return result
+
+
+def load_file_keys_by_archive_id(db: Session, archives: Sequence[Any]) -> dict[int, frozenset[str]]:
+    """Загрузить ключи состава из torrent_files для переданных архивов."""
+    from app.db.models import TorrentFile
+
+    hashes: list[str] = []
+    for row in archives:
+        raw_hash = _archive_attr(row, "info_hash")
+        info_hash = raw_hash.strip().lower() if isinstance(raw_hash, str) else ""
+        if info_hash:
+            hashes.append(info_hash)
+    if not hashes:
+        return {}
+    files = db.execute(
+        select(TorrentFile.info_hash, TorrentFile.relative_path).where(
+            TorrentFile.info_hash.in_(hashes)
+        )
+    ).all()
+    return file_keys_by_archive_id(archives, files)
 
 
 def hevc_covers_avc_episodes(
@@ -652,14 +733,61 @@ def _build_avc_draft(
     )
 
 
+def _is_range_uncovered(draft: _AvcDraft) -> bool:
+    """True если HEVC не покрывает диапазон (не remux exact)."""
+    return bool(draft.needs_exact_catchup and not draft.avc_newer_exact)
+
+
+def _draft_archive_id(draft: _AvcDraft) -> int:
+    return int(_archive_attr(draft.row, "id") or 0)
+
+
+def _covered_hist_is_label_only_rename(
+    hist: _AvcDraft,
+    *,
+    active_drafts: Sequence[_AvcDraft],
+    file_keys_by_id: dict[int, frozenset[str]],
+) -> bool:
+    """Правка ярлыка 1-8→1-9: множества видео-basename равны (оба непустые).
+
+    Неполный состав преемника (подмножество, нет ещё 09.mkv) — не rename:
+    якорь покрытого hist 1-8 не наследуем.
+    """
+    hist_keys = file_keys_by_id.get(_draft_archive_id(hist))
+    if not hist_keys:
+        return False
+    for active in active_drafts:
+        if active.presence != hist.presence or not _is_range_uncovered(active):
+            continue
+        active_keys = file_keys_by_id.get(_draft_archive_id(active))
+        if not active_keys:
+            return False
+        if active_keys != hist_keys:
+            return False
+        return True
+    return False
+
+
 def _contribute_overdue_anchor(
     anchor_candidates: dict[PresenceKey, list[tuple[datetime, bool]]],
     draft: _AvcDraft,
+    *,
+    allow_covered_rename: bool = False,
 ) -> None:
-    """Кандидат якоря слота: AVC с pending exact catch-up (active или история)."""
+    """Кандидат якоря слота: AVC, чей диапазон HEVC ещё не покрывает.
+
+    Exact remux (``avc_newer_exact`` при уже покрытом диапазоне) не якорит
+    слот. Иначе republish 1-8→1-9 сразу наследует «просрочку» от закрытой
+    пары 1-8: AniLibria часто оставляет тот же AVC ``torrent_id``, больший
+    чем у HEVC, и ``_avc_is_newer_than_hevc`` помечает историю как catch-up.
+
+    ``allow_covered_rename`` — исторический 1-8 покрыт HEVC, но состав
+    преемника тот же (ярлык спрятал 1-9): якорь от старого upload.
+    """
+    range_uncovered = _is_range_uncovered(draft)
     if (
         draft.is_missing
-        or not draft.needs_exact_catchup
+        or not (range_uncovered or allow_covered_rename)
         or draft.presence is None
         or draft.sla_created is None
     ):
@@ -693,6 +821,7 @@ def find_unpaired_avc(
     sla_hours: float = HEVC_SLA_HOURS,
     require_active: bool = True,
     include_ignored: bool = False,
+    file_keys_by_archive_id: dict[int, frozenset[str]] | None = None,
 ) -> list[UnpairedAvc]:
     """AVC с проблемой HEVC: missing / overdue / type_mismatch.
 
@@ -703,6 +832,10 @@ def find_unpaired_avc(
     При require_active=True inactive/superseded строки не дают бейджей, но их
     AVC всё равно участвуют в якоре overdue (непрерывность 1-3→1-4), даже
     если на истории стоит ignore_hevc=True.
+
+    file_keys_by_archive_id — basename видео (см. content_file_keys). Если
+    у покрытого исторического AVC те же файлы, что у преемника 1-9, якорь
+    не сбрасывается (правка ярлыка, не новый эпизод).
     """
     current = now or utcnow()
     by_release: dict[int, list[Any]] = {}
@@ -793,10 +926,13 @@ def find_unpaired_avc(
                 )
             )
 
-        # Presence-слот: якорь = earliest upload среди AVC, которым нужен exact catch-up.
+        # Presence-слот: якорь = earliest upload среди AVC с непокрытым диапазоном.
         # 1-2 exact OK + 1-3/1-4 catch-up → часы от 1-3, не от более нового 1-4.
-        # Superseded 1-3 тоже якорит активный 1-4, пока HEVC не догнал.
+        # Superseded 1-3 якорит активный 1-4, пока HEVC не догнал диапазон.
+        # Покрытый исторический 1-8 (есть HEVC 1-8) не якорит свежий 1-9,
+        # кроме правки ярлыка при тех же видеофайлах.
         # Кандидаты с api_created_at предпочтительнее local-only (см. _pick_overdue_anchor).
+        file_keys = file_keys_by_archive_id or {}
         anchor_candidates: dict[PresenceKey, list[tuple[datetime, bool]]] = {}
         for draft in drafts:
             _contribute_overdue_anchor(anchor_candidates, draft)
@@ -809,7 +945,13 @@ def find_unpaired_avc(
                 hevc_exact=hevc_exact,
                 hevc_covers=hevc_covers,
             )
-            _contribute_overdue_anchor(anchor_candidates, hist)
+            _contribute_overdue_anchor(
+                anchor_candidates,
+                hist,
+                allow_covered_rename=_covered_hist_is_label_only_rename(
+                    hist, active_drafts=drafts, file_keys_by_id=file_keys
+                ),
+            )
         anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]] = {}
         for presence, candidates in anchor_candidates.items():
             picked = _pick_overdue_anchor(candidates)
@@ -881,11 +1023,16 @@ def unpaired_by_archive_id(
     now: datetime | None = None,
     sla_hours: float = HEVC_SLA_HOURS,
     include_ignored: bool = False,
+    file_keys_by_archive_id: dict[int, frozenset[str]] | None = None,
 ) -> dict[int, UnpairedAvc]:
     return {
         item.archive_id: item
         for item in find_unpaired_avc(
-            archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
+            archives,
+            now=now,
+            sla_hours=sla_hours,
+            include_ignored=include_ignored,
+            file_keys_by_archive_id=file_keys_by_archive_id,
         )
     }
 
@@ -897,12 +1044,17 @@ def release_ids_matching_hevc_filter(
     now: datetime | None = None,
     sla_hours: float = HEVC_SLA_HOURS,
     include_ignored: bool = False,
+    file_keys_by_archive_id: dict[int, frozenset[str]] | None = None,
 ) -> set[int]:
     """release_id с ≥1 AVC под фильтр; overdue и type_mismatch — разные бакеты."""
     if hevc_filter not in ("missing", "overdue", "type_mismatch"):
         return set()
     unmatched = find_unpaired_avc(
-        archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
+        archives,
+        now=now,
+        sla_hours=sla_hours,
+        include_ignored=include_ignored,
+        file_keys_by_archive_id=file_keys_by_archive_id,
     )
     if hevc_filter == "overdue":
         # status==overdue: type_mismatch не попадает в «Просрочка».
@@ -918,10 +1070,15 @@ def max_overdue_hours_by_release_id(
     now: datetime | None = None,
     sla_hours: float = HEVC_SLA_HOURS,
     include_ignored: bool = False,
+    file_keys_by_archive_id: dict[int, frozenset[str]] | None = None,
 ) -> dict[int, float]:
     """release_id → max часов сверх SLA среди overdue AVC релиза (без type_mismatch)."""
     unmatched = find_unpaired_avc(
-        archives, now=now, sla_hours=sla_hours, include_ignored=include_ignored
+        archives,
+        now=now,
+        sla_hours=sla_hours,
+        include_ignored=include_ignored,
+        file_keys_by_archive_id=file_keys_by_archive_id,
     )
     result: dict[int, float] = {}
     for item in unmatched:
@@ -983,7 +1140,13 @@ def sync_hevc_pair_events_for_release(
     if not archives:
         return 0
 
-    unpaired = unpaired_by_archive_id(archives, now=now, sla_hours=sla_hours)
+    file_keys = load_file_keys_by_archive_id(db, archives)
+    unpaired = unpaired_by_archive_id(
+        archives,
+        now=now,
+        sla_hours=sla_hours,
+        file_keys_by_archive_id=file_keys,
+    )
     avc_archives: list[Any] = []
     for row in archives:
         if not _archive_is_active(row):

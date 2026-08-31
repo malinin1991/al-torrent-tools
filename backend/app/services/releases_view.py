@@ -34,6 +34,8 @@ from app.services.file_tracker import (
 from app.services.hevc_pairing import (
     HevcFilter,
     classify_archive_codec,
+    file_keys_by_archive_id,
+    load_file_keys_by_archive_id,
     max_overdue_hours_by_release_id,
     overdue_hours_past_sla,
     unpaired_by_archive_id,
@@ -506,17 +508,21 @@ def list_release_groups(
     overdue_hours_map: dict[int, float] = {}
     if hevc:
         hevc_archives = _active_archives_for_hevc_pairing(db)
+        hevc_file_keys = load_file_keys_by_archive_id(db, hevc_archives)
         hevc_release_ids = release_ids_matching_hevc_filter(
             hevc_archives,
             hevc_filter=hevc,
             include_ignored=include_ignored,
+            file_keys_by_archive_id=hevc_file_keys,
         )
         if not hevc_release_ids:
             return empty
         stats_query = stats_query.where(TorrentArchive.release_id.in_(hevc_release_ids))
         if hevc == "overdue":
             overdue_hours_map = max_overdue_hours_by_release_id(
-                hevc_archives, include_ignored=include_ignored
+                hevc_archives,
+                include_ignored=include_ignored,
+                file_keys_by_archive_id=hevc_file_keys,
             )
 
     if hevc == "overdue":
@@ -601,6 +607,10 @@ def list_release_groups(
         else set()
     )
     paths_by_release = _active_file_paths_by_release(archives, files_by_hash)
+    page_file_keys = file_keys_by_archive_id(
+        archives,
+        [row for files in files_by_hash.values() for row in files],
+    )
     site_url = resolve_anilibria_site_url()
     admin_url_template = get_setting_value(
         db,
@@ -646,7 +656,9 @@ def list_release_groups(
                     if meta is None or meta.is_blocked_by_copyrights is None:
                         blocked_copy = blocked_copy or copy
         # Бейджи HEVC в UI: ignore_hevc по-прежнему скрывает (без include_ignored).
-        hevc_unpaired = unpaired_by_archive_id(items)
+        hevc_unpaired = unpaired_by_archive_id(
+            items, file_keys_by_archive_id=page_file_keys
+        )
         release_paths = paths_by_release.get(release_id, {})
         active: list[ReleaseTorrentRow] = []
         archived: list[ReleaseTorrentRow] = []

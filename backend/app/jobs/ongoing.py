@@ -160,6 +160,7 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
             release_alias=ref.alias,
             list_updated_at=ref.updated_at,
             list_fresh_at=ref.fresh_at,
+            refresh_qb_meta=True,
         )
         TorrentProcessor.merge_release_stats(batch_stats, part)
         TorrentProcessor.merge_release_stats(total_stats, part)

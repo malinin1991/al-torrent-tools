@@ -157,7 +157,7 @@ def test_full_sync_refresh_applies_tags_for_seen(monkeypatch) -> None:
     assert refresh_tags.call_args.kwargs["genre_tags"] == ["Драма"]
 
 
-def test_ongoing_job_calls_process_without_refresh(monkeypatch) -> None:
+def test_ongoing_job_calls_process_with_refresh(monkeypatch) -> None:
     called: dict = {}
 
     class FakeProcessor:
@@ -192,7 +192,7 @@ def test_ongoing_job_calls_process_without_refresh(monkeypatch) -> None:
 
     asyncio.run(ongoing_mod.run_ongoing(db, job_id=1, params={}))
 
-    assert called["kwargs"].get("refresh_qb_meta") in (None, False)
+    assert called["kwargs"].get("refresh_qb_meta") is True
     assert called["kwargs"]["release_id"] == 1
 
 

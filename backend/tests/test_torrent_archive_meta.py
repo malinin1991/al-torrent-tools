@@ -410,6 +410,51 @@ def test_fill_missing_api_created_at_refreshes_stale_created_only() -> None:
     assert fresh_enough.api_created_at == datetime(2026, 7, 26, 12, 0, 0)
 
 
+def test_fill_missing_api_created_at_skips_superseded_same_torrent_id() -> None:
+    """Reused torrent_id: hist 1-8 не получает clock активного 1-9 из list."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    hist_clock = datetime(2026, 8, 23, 12, 0, 0)
+    fresh_clock = datetime(2026, 8, 30, 20, 23, 41)
+    superseded = SimpleNamespace(
+        torrent_id=39768,
+        api_created_at=hist_clock,
+        superseded=True,
+        api_present=False,
+    )
+    archived = SimpleNamespace(
+        torrent_id=39768,
+        api_created_at=hist_clock,
+        superseded=False,
+        api_present=False,
+    )
+    active = SimpleNamespace(
+        torrent_id=39768,
+        api_created_at=None,
+        superseded=False,
+        api_present=True,
+    )
+    db = MagicMock()
+    # Цикл сам отсекает inactive, даже если query вернул все строки.
+    db.scalars.return_value.all.return_value = [superseded, archived, active]
+    svc = TorrentArchiveService(db)
+    n = svc.fill_missing_api_created_at(
+        10273,
+        [
+            {
+                "id": 39768,
+                "created_at": "2026-07-04T17:34:04Z",
+                "updated_at": "2026-08-30T20:23:41Z",
+            }
+        ],
+    )
+    assert n == 1
+    assert superseded.api_created_at == hist_clock
+    assert archived.api_created_at == hist_clock
+    assert active.api_created_at == fresh_clock
+
+
 def test_processor_torrents_include_has_created_at() -> None:
     from app.services.torrent_processor import TorrentProcessor
 

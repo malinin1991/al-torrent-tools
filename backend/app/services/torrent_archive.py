@@ -511,6 +511,9 @@ class TorrentArchiveService:
 
         Ставит значение, если пусто, или обновляет, если в payload более поздний
         upload clock (max created_at/updated_at). Игнорирует битый/пустой payload.
+        Не трогает superseded / api_present=False: AniLibria переиспользует
+        torrent_id при 1-8→1-9, и новый updated_at относится только к активной
+        версии.
         """
         by_tid: dict[int, datetime] = {}
         for torrent in torrents:
@@ -533,11 +536,17 @@ class TorrentArchiveService:
                 select(TorrentArchive).where(
                     TorrentArchive.release_id == release_id,
                     TorrentArchive.torrent_id.in_(list(by_tid.keys())),
+                    TorrentArchive.superseded.is_(False),
+                    TorrentArchive.api_present.is_(True),
                 )
             ).all()
         )
         updated = 0
         for row in rows:
+            if bool(getattr(row, "superseded", False)) or not bool(
+                getattr(row, "api_present", True)
+            ):
+                continue
             value = by_tid.get(int(row.torrent_id))
             if value is None:
                 continue

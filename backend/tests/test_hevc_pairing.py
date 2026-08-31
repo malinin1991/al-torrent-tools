@@ -11,9 +11,12 @@ from app.services.hevc_pairing import (
     age_hours,
     batch_start_key,
     classify_archive_codec,
+    content_file_keys,
     episode_span,
+    file_keys_by_archive_id,
     find_unpaired_avc,
     hevc_covers_avc_episodes,
+    load_file_keys_by_archive_id,
     normalize_rip_type,
     overdue_hours_past_sla,
     quality_key,
@@ -1968,6 +1971,393 @@ def test_iruma_avc_reupload_after_hevc_not_inherit_old_anchor() -> None:
     assert u.age_from_api is True
     assert u.age_hours == pytest.approx(float(HEVC_SLA_HOURS + 4))
     assert int(overdue_hours_past_sla(u.age_hours) or 0) == 4
+
+
+def test_dara_san_range_expand_after_covered_pair_not_immediately_overdue() -> None:
+    """Release 10273-like: HEVC 1-8 закрыл AVC 1-8; свежий AVC 1-9 не overdue.
+
+    AniLibria оставляет тот же AVC torrent_id (39768 > HEVC 39663) при
+    расширении 1-8→1-9. Исторический 1-8 не должен якорить слот через
+    avc_newer_exact — SLA от updated_at нового 1-9.
+    """
+    now = datetime(2026, 8, 30, 20, 25, 45)
+    avc_first = datetime(2026, 7, 4, 17, 34, 4)
+    hevc_first = datetime(2026, 7, 4, 17, 48, 41)
+    hevc_updated = datetime(2026, 8, 24, 11, 28, 12)
+    avc_18_updated = datetime(2026, 8, 23, 12, 0, 0)
+    avc_19_updated = datetime(2026, 8, 30, 20, 23, 41)
+    rows = [
+        _row(
+            archive_id=3843,
+            release_id=10273,
+            torrent_id=39768,
+            episodes="1-8",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=avc_first,
+            api_created_at=avc_18_updated,
+            api_present=False,
+            superseded=True,
+            info_hash="f6750557d0b6abde29ac82b97ed38910f4d8c9fe",
+        ),
+        _row(
+            archive_id=3900,
+            release_id=10273,
+            torrent_id=39663,
+            episodes="1-8",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=hevc_first,
+            api_created_at=hevc_updated,
+            info_hash="db56e0421893caf91b88c4408c114c707bd971dc",
+        ),
+        _row(
+            archive_id=3935,
+            release_id=10273,
+            torrent_id=39768,
+            episodes="1-9",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now,
+            api_created_at=avc_19_updated,
+            info_hash="d99138d51c82fa416d0315288f201ee9e1f93ef3",
+        ),
+    ]
+    assert find_unpaired_avc(rows, now=now) == []
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+
+    later = avc_19_updated + timedelta(hours=HEVC_SLA_HOURS + 1)
+    unpaired_later = find_unpaired_avc(rows, now=later)
+    assert len(unpaired_later) == 1
+    u = unpaired_later[0]
+    assert u.archive_id == 3935
+    assert u.episodes == "1-9"
+    assert u.overdue is True
+    assert u.hevc_outdated is False
+    assert u.age_from_api is True
+    assert u.age_hours == pytest.approx(float(HEVC_SLA_HOURS + 1))
+    assert int(overdue_hours_past_sla(u.age_hours) or 0) == 1
+
+
+def test_dara_san_new_episode_file_does_not_inherit_covered_anchor() -> None:
+    """Новый basename [09].mkv при HEVC 1-8 — свежий SLA, не якорь 1-8."""
+    now = datetime(2026, 8, 30, 20, 25, 45)
+    hist_api = datetime(2026, 8, 23, 12, 0, 0)
+    fresh_api = datetime(2026, 8, 30, 20, 23, 41)
+    rows = [
+        _row(
+            archive_id=10,
+            torrent_id=39768,
+            episodes="1-8",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=hist_api,
+            api_created_at=hist_api,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=20,
+            torrent_id=39663,
+            episodes="1-8",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=hist_api,
+            api_created_at=hist_api,
+        ),
+        _row(
+            archive_id=30,
+            torrent_id=39768,
+            episodes="1-9",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now,
+            api_created_at=fresh_api,
+        ),
+    ]
+    file_keys = {
+        10: content_file_keys([f"old/ep_{i:02d}.mkv" for i in range(1, 9)]),
+        30: content_file_keys([f"new/ep_{i:02d}.mkv" for i in range(1, 10)]),
+    }
+    assert find_unpaired_avc(rows, now=now, file_keys_by_archive_id=file_keys) == []
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="overdue", now=now, file_keys_by_archive_id=file_keys
+    ) == set()
+
+    later = fresh_api + timedelta(hours=HEVC_SLA_HOURS + 1)
+    unpaired_later = find_unpaired_avc(
+        rows, now=later, file_keys_by_archive_id=file_keys
+    )
+    assert len(unpaired_later) == 1
+    u = unpaired_later[0]
+    assert u.archive_id == 30
+    assert u.overdue is True
+    assert u.age_from_api is True
+    assert u.created_at == fresh_api
+    assert u.age_hours == pytest.approx(float(HEVC_SLA_HOURS + 1))
+    assert int(overdue_hours_past_sla(u.age_hours) or 0) == 1
+
+
+def test_label_only_rename_1_8_to_1_9_keeps_historical_anchor() -> None:
+    """Под ярлыком 1-8 уже лежал 1-9 — правка имени не сбрасывает SLA.
+
+    Те же basename (даже если папка торрента переименована) → якорь от 1-8.
+    """
+    now = datetime(2026, 8, 30, 20, 25, 45)
+    hist_api = now - timedelta(hours=50)
+    fresh_api = now - timedelta(minutes=2)
+    rows = [
+        _row(
+            archive_id=10,
+            torrent_id=39768,
+            episodes="1-8",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=hist_api,
+            api_created_at=hist_api,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=20,
+            torrent_id=39663,
+            episodes="1-8",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=hist_api - timedelta(hours=1),
+            api_created_at=hist_api - timedelta(hours=1),
+        ),
+        _row(
+            archive_id=30,
+            torrent_id=39768,
+            episodes="1-9",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now,
+            api_created_at=fresh_api,
+        ),
+    ]
+    same_nine = [f"ep_{i:02d}.mkv" for i in range(1, 10)]
+    file_keys = {
+        10: content_file_keys([f"batch-1-8/{name}" for name in same_nine]),
+        30: content_file_keys([f"batch-1-9/{name}" for name in same_nine]),
+    }
+    unpaired = find_unpaired_avc(rows, now=now, file_keys_by_archive_id=file_keys)
+    assert len(unpaired) == 1
+    u = unpaired[0]
+    assert u.archive_id == 30
+    assert u.overdue is True
+    assert u.age_hours == pytest.approx(50.0)
+    assert u.created_at == hist_api
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="overdue", now=now, file_keys_by_archive_id=file_keys
+    ) == {1}
+
+
+def test_content_file_keys_uses_video_basename() -> None:
+    assert content_file_keys(
+        [
+            "Show [1-8]/Show_[01].mkv",
+            "Show [1-8]/readme.txt",
+            "Show [1-8]/.DS_Store",
+        ]
+    ) == frozenset({"show_[01].mkv"})
+    assert content_file_keys(["a/ep.mkv"]) == content_file_keys(["b/ep.mkv"])
+
+
+def test_incomplete_active_fileset_is_not_label_only_rename() -> None:
+    """Hist 9 файлов, active только 8 (подмножество) — не rename, свежий SLA."""
+    now = datetime(2026, 8, 30, 20, 25, 45)
+    hist_api = now - timedelta(hours=50)
+    fresh_api = now - timedelta(minutes=2)
+    rows = [
+        _row(
+            archive_id=10,
+            torrent_id=39768,
+            episodes="1-8",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=hist_api,
+            api_created_at=hist_api,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=20,
+            torrent_id=39663,
+            episodes="1-8",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=hist_api - timedelta(hours=1),
+            api_created_at=hist_api - timedelta(hours=1),
+        ),
+        _row(
+            archive_id=30,
+            torrent_id=39768,
+            episodes="1-9",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now,
+            api_created_at=fresh_api,
+        ),
+    ]
+    nine = [f"ep_{i:02d}.mkv" for i in range(1, 10)]
+    file_keys = {
+        10: content_file_keys([f"batch-1-8/{name}" for name in nine]),
+        30: content_file_keys([f"batch-1-9/{name}" for name in nine[:8]]),
+    }
+    assert find_unpaired_avc(rows, now=now, file_keys_by_archive_id=file_keys) == []
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="overdue", now=now, file_keys_by_archive_id=file_keys
+    ) == set()
+
+    later = fresh_api + timedelta(hours=HEVC_SLA_HOURS + 1)
+    unpaired_later = find_unpaired_avc(
+        rows, now=later, file_keys_by_archive_id=file_keys
+    )
+    assert len(unpaired_later) == 1
+    u = unpaired_later[0]
+    assert u.archive_id == 30
+    assert u.overdue is True
+    assert u.created_at == fresh_api
+    assert u.age_hours == pytest.approx(float(HEVC_SLA_HOURS + 1))
+
+
+def test_file_keys_by_archive_id_joins_info_hash_ignores_sidecars() -> None:
+    """Join torrent_files по info_hash; nfo/.DS_Store не входят в ключи."""
+    hist_hash = "aa" * 20
+    active_hash = "bb" * 20
+    archives = [
+        _row(
+            archive_id=10,
+            torrent_id=1,
+            episodes="1-8",
+            codec="AVC",
+            info_hash=hist_hash,
+        ),
+        _row(
+            archive_id=30,
+            torrent_id=1,
+            episodes="1-9",
+            codec="AVC",
+            info_hash=active_hash,
+        ),
+    ]
+    files = [
+        SimpleNamespace(info_hash=hist_hash, relative_path="old/ep_01.mkv"),
+        SimpleNamespace(info_hash=hist_hash, relative_path="old/readme.nfo"),
+        SimpleNamespace(info_hash=hist_hash, relative_path="old/.DS_Store"),
+        SimpleNamespace(info_hash=active_hash, relative_path="new/ep_01.mkv"),
+        SimpleNamespace(info_hash=active_hash, relative_path="new/folder.nfo"),
+        SimpleNamespace(info_hash="cc" * 20, relative_path="orphan/ep_99.mkv"),
+    ]
+    keys = file_keys_by_archive_id(archives, files)
+    assert keys[10] == frozenset({"ep_01.mkv"})
+    assert keys[30] == frozenset({"ep_01.mkv"})
+    assert set(keys) == {10, 30}
+
+
+def test_load_file_keys_by_archive_id_reads_mocked_torrent_files() -> None:
+    """load_file_keys читает torrent_files по hash без живого Postgres."""
+    info_hash = "ab" * 20
+    db = MagicMock()
+    db.execute.return_value.all.return_value = [
+        SimpleNamespace(info_hash=info_hash, relative_path="Show/ep_01.mkv"),
+        SimpleNamespace(info_hash=info_hash, relative_path="Show/.DS_Store"),
+        SimpleNamespace(info_hash=info_hash, relative_path="Show/release.nfo"),
+    ]
+    archives = [
+        _row(
+            archive_id=7,
+            torrent_id=1,
+            episodes="1",
+            codec="AVC",
+            info_hash=info_hash,
+        )
+    ]
+    keys = load_file_keys_by_archive_id(db, archives)
+    assert keys == {7: frozenset({"ep_01.mkv"})}
+    db.execute.assert_called_once()
+
+
+def test_fill_missing_keeps_superseded_clock_label_only_still_overdue() -> None:
+    """После backfill reused torrent_id hist хранит старый clock; label-only жив."""
+    from app.services.torrent_archive import TorrentArchiveService
+
+    hist_api = datetime(2026, 8, 23, 12, 0, 0)
+    fresh_api = datetime(2026, 8, 30, 20, 23, 41)
+    now = datetime(2026, 8, 30, 20, 25, 45)
+    hist_row = SimpleNamespace(
+        torrent_id=39768,
+        api_created_at=hist_api,
+        superseded=True,
+        api_present=False,
+    )
+    active_row = SimpleNamespace(
+        torrent_id=39768,
+        api_created_at=None,
+        superseded=False,
+        api_present=True,
+    )
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [hist_row, active_row]
+    filled = TorrentArchiveService(db).fill_missing_api_created_at(
+        10273,
+        [
+            {
+                "id": 39768,
+                "created_at": "2026-07-04T17:34:04Z",
+                "updated_at": "2026-08-30T20:23:41Z",
+            }
+        ],
+    )
+    assert filled == 1
+    assert hist_row.api_created_at == hist_api
+    assert active_row.api_created_at == fresh_api
+
+    rows = [
+        _row(
+            archive_id=10,
+            torrent_id=39768,
+            episodes="1-8",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=hist_api,
+            api_created_at=hist_row.api_created_at,
+            api_present=False,
+            superseded=True,
+        ),
+        _row(
+            archive_id=20,
+            torrent_id=39663,
+            episodes="1-8",
+            codec="HEVC",
+            rip_type="WEBRip",
+            created_at=hist_api - timedelta(hours=1),
+            api_created_at=hist_api - timedelta(hours=1),
+        ),
+        _row(
+            archive_id=30,
+            torrent_id=39768,
+            episodes="1-9",
+            codec="AVC",
+            rip_type="WEBRip",
+            created_at=now,
+            api_created_at=active_row.api_created_at,
+        ),
+    ]
+    same_nine = [f"ep_{i:02d}.mkv" for i in range(1, 10)]
+    file_keys = {
+        10: content_file_keys([f"batch-1-8/{name}" for name in same_nine]),
+        30: content_file_keys([f"batch-1-9/{name}" for name in same_nine]),
+    }
+    unpaired = find_unpaired_avc(rows, now=now, file_keys_by_archive_id=file_keys)
+    assert len(unpaired) == 1
+    u = unpaired[0]
+    assert u.archive_id == 30
+    assert u.overdue is True
+    assert u.created_at == hist_api
+    assert u.age_hours == pytest.approx((now - hist_api).total_seconds() / 3600)
 
 
 def test_hevc_wider_range_clears_shorter_historical_catchup() -> None:

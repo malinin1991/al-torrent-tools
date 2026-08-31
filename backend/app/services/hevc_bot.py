@@ -21,6 +21,7 @@ from app.services.hevc_pairing import (
     batch_start_key,
     classify_archive_codec,
     find_unpaired_avc,
+    load_file_keys_by_archive_id,
     overdue_hours_past_sla,
     rip_family_key,
 )
@@ -459,9 +460,14 @@ def query_hevc_statuses(
     """Состояния поверх pairing: overdue, ожидание либо расхождение типов."""
     current = now or utcnow()
     archives, releases = _load_release_rows(db)
-    actual = find_unpaired_avc(archives, now=current)
+    file_keys = load_file_keys_by_archive_id(db, archives)
+    actual = find_unpaired_avc(
+        archives, now=current, file_keys_by_archive_id=file_keys
+    )
     # Отрицательный SLA раскрывает catch-up, который ещё не просрочен.
-    all_pending = find_unpaired_avc(archives, now=current, sla_hours=-1)
+    all_pending = find_unpaired_avc(
+        archives, now=current, sla_hours=-1, file_keys_by_archive_id=file_keys
+    )
     actual_by_archive = {item.archive_id: item for item in actual}
 
     selected: list[UnpairedAvc] = []
@@ -563,8 +569,13 @@ def query_release_detail(
     ]
     if not release_archives:
         return None
-    actual = find_unpaired_avc(archives, now=current)
-    all_pending = find_unpaired_avc(archives, now=current, sla_hours=-1)
+    file_keys = load_file_keys_by_archive_id(db, archives)
+    actual = find_unpaired_avc(
+        archives, now=current, file_keys_by_archive_id=file_keys
+    )
+    all_pending = find_unpaired_avc(
+        archives, now=current, sla_hours=-1, file_keys_by_archive_id=file_keys
+    )
     actual_by_id = {item.archive_id: item for item in actual}
     items = [
         actual_by_id.get(item.archive_id) or replace(item, overdue=False)

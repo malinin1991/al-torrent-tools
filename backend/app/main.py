@@ -50,6 +50,7 @@ from app.services.hevc_pairing import (
     age_hours,
     classify_archive_codec,
     find_unpaired_avc,
+    load_file_keys_by_archive_id,
     overdue_hours_past_sla,
     sla_age_source,
     sync_hevc_pair_events_for_release,
@@ -1240,7 +1241,12 @@ def toggle_ignore_hevc(
         ).all()
     )
     unpaired = {
-        item.archive_id: item for item in find_unpaired_avc(siblings, now=utcnow())
+        item.archive_id: item
+        for item in find_unpaired_avc(
+            siblings,
+            now=utcnow(),
+            file_keys_by_archive_id=load_file_keys_by_archive_id(db, siblings),
+        )
     }.get(int(archive.id))
     if unpaired is not None:
         age_past = overdue_hours_past_sla(unpaired.age_hours)
