@@ -62,7 +62,9 @@
           <span class="job-meta-icon" title="Следующий запуск" aria-label="Следующий запуск">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l-1.4 1.4L16.2 11H4v2h12.2l-5.6 5.6L12 20l8-8z"/></svg>
           </span>
-          —
+          {% if entry.next_run_at %}
+          <time class="local-time" datetime="{{ entry.next_run_at|as_utc_iso }}">{{ entry.next_run_at }}</time>
+          {% else %}—{% endif %}
         </div>
         {% endif %}
       </div>

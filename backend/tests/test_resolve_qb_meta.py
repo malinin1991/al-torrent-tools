@@ -25,7 +25,7 @@ def test_resolve_qb_meta_fallback_sibling_and_extra() -> None:
 
     assert category == "winter.2024"
     assert rename is not None and "Title" in rename
-    assert comment == "https://www.anilibria.top/anime/releases/release/sibling-alias/torrents"
+    assert comment == "https://aniliberty.top/anime/releases/release/sibling-alias/torrents"
     assert tags == []
 
 
@@ -42,7 +42,7 @@ def test_resolve_qb_meta_without_archive_uses_extra_url() -> None:
     assert rename is None
     assert category is None
     assert tags == []
-    assert comment == "https://www.anilibria.top/anime/releases/release/from-extra/torrents"
+    assert comment == "https://aniliberty.top/anime/releases/release/from-extra/torrents"
 
 
 def test_resolve_qb_meta_reads_genres_from_archive() -> None:

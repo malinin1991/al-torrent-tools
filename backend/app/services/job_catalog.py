@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.models import Job, Setting
 from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING, STATUS_STOPPING
+
+FULL_SYNC_DAILY_HOUR = 8
+FULL_SYNC_DAILY_MINUTE = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +37,7 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
     JobTypeDef(
         type="ongoing",
         title="Ongoing sync",
-        description="Периодическая проверка обновлений релизов AniLibria и постановка новых торрентов в pipeline.",
+        description="Периодическая проверка обновлений релизов AniLiberty и постановка новых торрентов в pipeline.",
         interval_setting_key="ongoing_interval_sec",
         interval_default_sec=settings.ongoing_interval_sec,
     ),
@@ -43,6 +46,7 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
         title="Full sync",
         description=(
             "Полный проход по каталогу/расписанию: сверка торрентов с API, api_present, архив. "
+            "Ежедневно в 08:00 по серверному времени (без force_qb_load). "
             "Опция force_qb_load — повторно загрузить .torrent на master и slave."
         ),
     ),
@@ -163,6 +167,29 @@ def compute_next_run_at(
     return None
 
 
+def _local_naive_to_utc_naive(local_dt: datetime) -> datetime:
+    local_tz = datetime.now().astimezone().tzinfo
+    local_aware = local_dt.replace(tzinfo=local_tz)
+    return local_aware.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def compute_next_daily_run_at(
+    *,
+    hour: int,
+    minute: int = 0,
+    now: datetime | None = None,
+) -> datetime:
+    """Следующий запуск в заданное локальное время (не interval-based).
+
+    Возвращает naive UTC (контракт БД/UI).
+    """
+    current = now or datetime.now()
+    candidate = datetime.combine(current.date(), time(hour=hour, minute=minute))
+    if candidate <= current:
+        candidate += timedelta(days=1)
+    return _local_naive_to_utc_naive(candidate)
+
+
 def load_job_catalog(db: Session) -> list[dict[str, Any]]:
     """Последний запуск по каждому типу из каталога."""
     entries: list[dict[str, Any]] = []
@@ -176,7 +203,13 @@ def load_job_catalog(db: Session) -> list[dict[str, Any]]:
         )
         can_stop = bool(last_job is not None and last_job.status == STATUS_RUNNING)
         interval_sec = _interval_sec(db, definition)
-        next_run_at = compute_next_run_at(last_job, interval_sec=interval_sec)
+        if definition.type == "full_sync":
+            next_run_at = compute_next_daily_run_at(
+                hour=FULL_SYNC_DAILY_HOUR,
+                minute=FULL_SYNC_DAILY_MINUTE,
+            )
+        else:
+            next_run_at = compute_next_run_at(last_job, interval_sec=interval_sec)
         entries.append(
             {
                 "def": definition,

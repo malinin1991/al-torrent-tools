@@ -1081,8 +1081,8 @@ def test_releases_html_includes_hevc_filter_and_badges() -> None:
     assert "badge-muted" in html and "расхождение типов" in html
     assert "hevc_filter=missing" in html or 'value="missing"' in html
     # Колонка AniLibria + узкая иконка скачивания (без широкой кнопки «Скачать»).
-    assert 'title="Дата/время добавления по AniLibria"' in html
-    assert ">AniLibria<" in html
+    assert 'title="Дата/время добавления по AniLiberty"' in html
+    assert ">AniLiberty<" in html
     assert 'aria-label="Скачать"' in html
     assert 'class="btn btn-icon"' in html
     assert "/api/archive/1/download" in html

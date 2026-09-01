@@ -4,6 +4,7 @@ import signal
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.exc import ProgrammingError
 
@@ -12,6 +13,7 @@ from app.core.config import settings
 from app.db.models import Setting
 from app.db.session import SessionLocal
 from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback
+from app.services.job_catalog import FULL_SYNC_DAILY_HOUR, FULL_SYNC_DAILY_MINUTE
 from app.services.job_runner import (
     JobAlreadyRunningError,
     reclaim_orphan_jobs,
@@ -276,6 +278,14 @@ async def main() -> None:
         "interval",
         minutes=5,
         id="waiting_slave_retry",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _run_by_type,
+        CronTrigger(hour=FULL_SYNC_DAILY_HOUR, minute=FULL_SYNC_DAILY_MINUTE),
+        args=["full_sync"],
+        id="full_sync_daily",
         max_instances=1,
         coalesce=True,
     )

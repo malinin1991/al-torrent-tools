@@ -95,7 +95,7 @@ async def add_alias(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 title = existing.title or existing.release_alias
                 await update.message.reply_text(
                     f"⚠️ [{escape_markdown_v2(title)}]"
-                    f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(existing.release_alias)}) "
+                    f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(existing.release_alias)}) "
                     "уже отслеживается\\!",
                     parse_mode="MarkdownV2",
                     disable_web_page_preview=True,
@@ -105,7 +105,7 @@ async def add_alias(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             client = build_anilibria_client(db)
             data = await client.get_release(alias, include=["id", "alias", "name"])
             if not isinstance(data, dict) or not isinstance(data.get("id"), int):
-                await update.message.reply_text("❌ Релиз не найден в AniLibria API")
+                await update.message.reply_text("❌ Релиз не найден в AniLiberty API")
                 return
 
             release_id = int(data["id"])
@@ -162,7 +162,7 @@ async def list_aliases(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 return
             lines = [
                 f"▫️ [{escape_markdown_v2(a.title or a.release_alias)}]"
-                f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(a.release_alias)})"
+                f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(a.release_alias)})"
                 for a in rows
             ]
             await update.message.reply_text(

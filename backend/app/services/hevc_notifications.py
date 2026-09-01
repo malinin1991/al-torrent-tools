@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import PipelineEvent, TelegramOutbox
 from app.services.hevc_bot import (
     TELEGRAM_TEXT_LIMIT,
@@ -13,8 +14,10 @@ from app.services.hevc_bot import (
     query_release_detail,
     telegram_text_length,
 )
+from app.services.runtime_settings import get_setting_value
 from app.services.telegram_access import HEVC_BOT_KEY, list_approved_group_ids
 from app.services.telegram_notify import OUTBOX_PENDING
+from app.services.torrent_qb_meta import build_release_admin_url
 from app.utils.datetime_fmt import utcnow
 
 
@@ -30,6 +33,20 @@ def overdue_transition_dedupe_key(
         f"hevc_overdue:{int(release_id)}:{info_hash.strip().lower()}"
         f":after:{int(prev_event_id)}:chat:{int(chat_id)}"
     )
+
+
+def _overdue_reply_markup(db: Session, release_id: int) -> dict:
+    row = [{"text": "Детали", "callback_data": f"status:{release_id}"}]
+    admin_template = get_setting_value(
+        db,
+        "anilibria_admin_url_template",
+        settings.anilibria_admin_url_template,
+        allow_empty=True,
+    )
+    admin_url = build_release_admin_url(release_id, admin_template)
+    if admin_url:
+        row.append({"text": "Админка", "url": admin_url})
+    return {"inline_keyboard": [row]}
 
 
 def enqueue_overdue_event_notifications(
@@ -95,16 +112,7 @@ def enqueue_overdue_event_notifications(
                             "release_id": release_id,
                             "event_id": event.id,
                             "info_hash": info_hash.strip().lower(),
-                            "reply_markup": {
-                                "inline_keyboard": [
-                                    [
-                                        {
-                                            "text": "Детали",
-                                            "callback_data": f"status:{release_id}",
-                                        }
-                                    ]
-                                ]
-                            },
+                            "reply_markup": _overdue_reply_markup(db, release_id),
                         },
                         status=OUTBOX_PENDING,
                         attempts=0,

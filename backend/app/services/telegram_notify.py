@@ -236,7 +236,7 @@ def build_torrent_notification_text(
     """MarkdownV2-шаблон обновления торрентов (жирный — одиночные *, не **)."""
     message = (
         f"🔔 *Обновление для [{escape_markdown_v2(title)}]"
-        f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(alias)})*\n\n"
+        f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(alias)})*\n\n"
     )
     if not torrents:
         message += "ℹ️ Торренты AVC/HEVC/AV1 не найдены\\."
@@ -280,7 +280,7 @@ def build_file_changes_notification_text(
     """
     release_link = (
         f"[{escape_markdown_v2(title)}]"
-        f"(https://anilibria\\.top/anime/releases/release/{escape_markdown_v2(alias)})"
+        f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(alias)})"
     )
     if baseline:
         message = f"📦 *Файлы торрента добавлены в базу для {release_link}*\n\n"

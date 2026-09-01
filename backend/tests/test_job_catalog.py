@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from app.services.job_catalog import JOB_TYPE_DEFS, compute_next_run_at, load_job_catalog
+from app.services import job_catalog
+from app.services.job_catalog import (
+    FULL_SYNC_DAILY_HOUR,
+    FULL_SYNC_DAILY_MINUTE,
+    JOB_TYPE_DEFS,
+    _local_naive_to_utc_naive,
+    compute_next_daily_run_at,
+    compute_next_run_at,
+    load_job_catalog,
+)
 from app.services.job_runner import STATUS_RUNNING, STATUS_SUCCESS
 
 
@@ -40,6 +49,68 @@ def test_compute_next_run_at_running_uses_started() -> None:
     started = datetime(2026, 7, 22, 12, 0, 0)
     job = SimpleNamespace(status=STATUS_RUNNING, started_at=started, finished_at=None)
     assert compute_next_run_at(job, interval_sec=120) == started + timedelta(seconds=120)
+
+
+def test_compute_next_daily_run_at_same_day(monkeypatch) -> None:
+    monkeypatch.setattr(job_catalog, "_local_naive_to_utc_naive", lambda dt: dt)
+    now = datetime(2026, 7, 22, 7, 30, 0)
+    assert compute_next_daily_run_at(hour=8, minute=0, now=now) == datetime(2026, 7, 22, 8, 0, 0)
+
+
+def test_compute_next_daily_run_at_next_day(monkeypatch) -> None:
+    monkeypatch.setattr(job_catalog, "_local_naive_to_utc_naive", lambda dt: dt)
+    now = datetime(2026, 7, 22, 8, 1, 0)
+    assert compute_next_daily_run_at(hour=8, minute=0, now=now) == datetime(2026, 7, 23, 8, 0, 0)
+
+
+def test_local_naive_to_utc_naive_fixed_offset(monkeypatch) -> None:
+    fixed_tz = timezone(timedelta(hours=7))
+    now_mock = MagicMock()
+    now_mock.astimezone.return_value.tzinfo = fixed_tz
+
+    class PatchedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now_mock
+
+    monkeypatch.setattr(job_catalog, "datetime", PatchedDatetime)
+    local_dt = datetime(2026, 7, 22, 8, 0, 0)
+    assert _local_naive_to_utc_naive(local_dt) == datetime(2026, 7, 22, 1, 0, 0)
+
+
+def test_compute_next_daily_run_at_converts_to_utc(monkeypatch) -> None:
+    fixed_tz = timezone(timedelta(hours=7))
+    now_mock = MagicMock()
+    now_mock.astimezone.return_value.tzinfo = fixed_tz
+
+    class PatchedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now_mock
+
+    monkeypatch.setattr(job_catalog, "datetime", PatchedDatetime)
+    now = datetime(2026, 7, 22, 7, 30, 0)
+    assert compute_next_daily_run_at(hour=8, minute=0, now=now) == datetime(2026, 7, 22, 1, 0, 0)
+
+
+def test_full_sync_description_mentions_daily_schedule() -> None:
+    full_sync = next(item for item in JOB_TYPE_DEFS if item.type == "full_sync")
+    assert "08:00" in full_sync.description
+    assert "force_qb_load" in full_sync.description
+
+
+def test_load_job_catalog_full_sync_next_run_at(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.job_catalog.compute_next_daily_run_at",
+        lambda **kwargs: datetime(2026, 7, 23, FULL_SYNC_DAILY_HOUR, FULL_SYNC_DAILY_MINUTE),
+    )
+    db = MagicMock()
+    db.scalar.return_value = None
+    entries = load_job_catalog(db)
+    full_sync_entry = next(item for item in entries if item["def"].type == "full_sync")
+    assert full_sync_entry["next_run_at"] == datetime(
+        2026, 7, 23, FULL_SYNC_DAILY_HOUR, FULL_SYNC_DAILY_MINUTE
+    )
 
 
 def test_load_job_catalog_attaches_last_job() -> None:

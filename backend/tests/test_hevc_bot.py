@@ -816,7 +816,7 @@ def test_detail_shows_only_new_and_changed_file_changes() -> None:
     )
     text = format_release_detail(row)
     assert "Show &lt;test&gt;" in text
-    assert "Название: Show &lt;test&gt;" in text
+    assert "Название:" not in text
     assert "Оригинальное название: Original &amp; title" in text
     assert "Show &lt;test&gt; / Original" not in text
     assert "Оригинал:" not in text
@@ -935,7 +935,7 @@ def test_type_mismatch_has_dedicated_error_list_format() -> None:
     )
     text = format_release_list_item(row, kind="error")
     assert "расхождение типов AVC/HEVC" in text
-    assert "https://anilibria.top/anime/releases/release/show/torrents" in text
+    assert "https://aniliberty.top/anime/releases/release/show/torrents" in text
     assert "неизвестно" in text
     assert "За HEVC отвечает:" not in text
     assert "Исполнители:" not in text
@@ -951,14 +951,15 @@ def test_detail_header_splits_titles_and_hevc_owner() -> None:
         executors=["Coder"],
     )
     header = format_release_detail(both).split("\n\n", 1)[0]
-    assert "Название: Русское" in header
+    assert "Русское" in header
+    assert "Название:" not in header
     assert "Оригинальное название: Mebius Dust" in header
     assert "За HEVC отвечает: Coder" in header
     assert "Русское / Mebius Dust" not in header
     assert "Оригинал:" not in header
     assert "Исполнители:" not in header
     lines = header.splitlines()
-    assert "Название: Русское" in lines
+    assert "Название:" not in lines
     assert "Оригинальное название: Mebius Dust" in lines
     assert "За HEVC отвечает: Coder" in lines
 
@@ -970,7 +971,7 @@ def test_detail_header_splits_titles_and_hevc_owner() -> None:
         executors=[],
     )
     empty_text = format_release_detail(empty)
-    assert "Название: —" in empty_text
+    assert "Название:" not in empty_text
     assert "Оригинальное название: —" in empty_text
     assert "За HEVC отвечает: —" in empty_text
 
@@ -1170,7 +1171,7 @@ def test_release_detail_uses_release_titles_not_concatenated_anime_name(
     assert row is not None
     assert row.title == ""
     text = format_release_detail(row)
-    assert "Название: —" in text
+    assert "Название:" not in text
     assert "Оригинальное название: Mebius Dust" in text
     assert "Русское / Mebius Dust" not in text
 
@@ -1335,6 +1336,99 @@ def test_overdue_notification_routes_to_hevc_groups_with_transition_dedupe(
     ]
     assert all(row.payload_json["reply_markup"] for row in outboxes)
     db.commit.assert_called_once()
+
+
+def test_overdue_notification_includes_admin_button_when_template_set(monkeypatch) -> None:
+    detail = HevcReleaseStatus(
+        release_id=9,
+        alias="show",
+        title="Show",
+        original_title=None,
+        executors=["Coder"],
+        items=[],
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.list_approved_group_ids",
+        lambda db, bot_key: [-1001],
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.query_release_detail",
+        lambda db, release_id: detail,
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.get_setting_value",
+        lambda db, key, default="", **kwargs: (
+            "https://adminka.example/release/{release_id}"
+            if key == "anilibria_admin_url_template"
+            else default
+        ),
+    )
+    db = MagicMock()
+    db.scalar.return_value = None
+    event = SimpleNamespace(
+        id=55,
+        pipeline_id=3,
+        event_type="hevc_status",
+        from_status="missing",
+        to_status="overdue",
+        details_json={
+            "release_id": 9,
+            "info_hash": "AA" * 20,
+            "prev_hevc_status_event_id": 10,
+        },
+    )
+
+    assert enqueue_overdue_event_notifications(db, event) == 1
+    outbox = db.add.call_args.args[0]
+    keyboard = outbox.payload_json["reply_markup"]["inline_keyboard"][0]
+    assert len(keyboard) == 2
+    assert keyboard[0] == {"text": "Детали", "callback_data": "status:9"}
+    assert keyboard[1] == {
+        "text": "Админка",
+        "url": "https://adminka.example/release/9",
+    }
+
+
+def test_overdue_notification_skips_admin_button_without_template(monkeypatch) -> None:
+    detail = HevcReleaseStatus(
+        release_id=9,
+        alias="show",
+        title="Show",
+        original_title=None,
+        executors=[],
+        items=[],
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.list_approved_group_ids",
+        lambda db, bot_key: [-1001],
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.query_release_detail",
+        lambda db, release_id: detail,
+    )
+    monkeypatch.setattr(
+        "app.services.hevc_notifications.get_setting_value",
+        lambda db, key, default="", **kwargs: "",
+    )
+    db = MagicMock()
+    db.scalar.return_value = None
+    event = SimpleNamespace(
+        id=55,
+        pipeline_id=3,
+        event_type="hevc_status",
+        from_status="missing",
+        to_status="overdue",
+        details_json={
+            "release_id": 9,
+            "info_hash": "AA" * 20,
+            "prev_hevc_status_event_id": 10,
+        },
+    )
+
+    assert enqueue_overdue_event_notifications(db, event) == 1
+    outbox = db.add.call_args.args[0]
+    keyboard = outbox.payload_json["reply_markup"]["inline_keyboard"][0]
+    assert keyboard == [{"text": "Детали", "callback_data": "status:9"}]
 
 
 def test_overdue_notification_ignores_non_overdue_event() -> None:

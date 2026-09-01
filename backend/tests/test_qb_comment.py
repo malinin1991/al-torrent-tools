@@ -22,7 +22,7 @@ def test_ensure_comment_retries_404_then_overwrites(monkeypatch: pytest.MonkeyPa
         HTTP404Error("not ready"),
         None,
     ]
-    desired = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    desired = "https://aniliberty.top/anime/releases/release/x/torrents"
     props_old = MagicMock()
     props_old.comment = "old-from-torrent"
     props_new = MagicMock()
@@ -40,7 +40,7 @@ def test_ensure_comment_retries_404_then_overwrites(monkeypatch: pytest.MonkeyPa
 def test_ensure_comment_overwrites_existing_nonempty(monkeypatch: pytest.MonkeyPatch) -> None:
     """Уже заполненный comment из .torrent должен быть перезаписан URL релиза."""
     client = MagicMock()
-    desired = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    desired = "https://aniliberty.top/anime/releases/release/x/torrents"
     props_old = MagicMock()
     props_old.comment = "comment from .torrent file"
     props_new = MagicMock()
@@ -60,7 +60,7 @@ def test_ensure_comment_overwrites_existing_nonempty(monkeypatch: pytest.MonkeyP
 def test_ensure_comment_noop_when_already_desired(monkeypatch: pytest.MonkeyPatch) -> None:
     """Уже верный URL — без setComment, False как у rename no-op."""
     client = MagicMock()
-    desired = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    desired = "https://aniliberty.top/anime/releases/release/x/torrents"
     props = MagicMock()
     props.comment = desired
     client.torrents_properties.return_value = props
@@ -170,7 +170,7 @@ def test_qb_add_torrent_sets_comment_even_when_already_present(monkeypatch: pyte
         client,
         _sample_torrent_bytes(),
         rename="Name",
-        comment="https://www.anilibria.top/anime/releases/release/x/torrents",
+        comment="https://aniliberty.top/anime/releases/release/x/torrents",
         category="winter.2024",
     )
 
@@ -178,7 +178,7 @@ def test_qb_add_torrent_sets_comment_even_when_already_present(monkeypatch: pyte
     assert comment_ok is True
     assert tags_ok is True
     set_comment.assert_called_once()
-    assert set_comment.call_args.args[2].startswith("https://www.anilibria.top/")
+    assert set_comment.call_args.args[2].startswith("https://aniliberty.top/")
 
 
 def test_ensure_torrent_tags_adds_and_verifies(monkeypatch: pytest.MonkeyPatch) -> None:

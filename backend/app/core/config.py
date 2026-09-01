@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     anilibria_base_url: str = "https://anilibria.top/api/v1"
     anilibria_fallback_base_url: str = "https://anilibria.top/api/v1"
-    anilibria_site_url: str = "https://www.anilibria.top"
+    anilibria_site_url: str = "https://aniliberty.top"
     # Шаблон ссылки на релиз в админке; {release_id} → ID. Пусто = не показывать ссылку.
     anilibria_admin_url_template: str = ""
     anilibria_bearer_token: str = ""

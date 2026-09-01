@@ -8,21 +8,21 @@ from app.services.torrent_archive import TorrentArchiveService
 
 
 def resolve_anilibria_site_url(api_base_url: str | None = None) -> str:
-    """Сайт релизов: www.anilibria.top (не API host)."""
+    """Сайт релизов: aniliberty.top (не API host)."""
     configured = (getattr(settings, "anilibria_site_url", None) or "").strip()
     if configured:
         return configured.rstrip("/")
     base = (api_base_url or settings.anilibria_base_url or "").strip()
     if not base:
-        return "https://www.anilibria.top"
+        return "https://aniliberty.top"
     parsed = urlparse(base)
     host = (parsed.hostname or "").lower()
     if host in {"anilibria.top", "www.anilibria.top"}:
-        return "https://www.anilibria.top"
+        return "https://aniliberty.top"
     if host:
         scheme = parsed.scheme or "https"
         return f"{scheme}://{host}"
-    return "https://www.anilibria.top"
+    return "https://aniliberty.top"
 
 
 def build_release_torrents_url(release_alias: str | None, *, site_url: str | None = None) -> str | None:

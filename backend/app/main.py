@@ -556,7 +556,7 @@ async def anilibria_login_settings(
         await login_and_store_token(db, anilibria_login, password)
         message = "Вход выполнен: bearer token и passkey сохранены"
     except Exception as exc:
-        message = f"Ошибка входа в AniLibria API: {exc}"
+        message = f"Ошибка входа в AniLiberty API: {exc}"
     return templates.TemplateResponse(request, "partials/settings_result.html", {"message": message})
 
 

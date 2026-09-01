@@ -126,11 +126,11 @@ def test_process_completion_happy_path_adds_to_slave(monkeypatch: pytest.MonkeyP
     )
     service._get_qb_client = MagicMock(return_value=slave)  # type: ignore[method-assign]
     service._resolve_qb_meta = MagicMock(  # type: ignore[method-assign]
-        return_value=("Name / Orig (1-2) [HEVC]", "https://www.anilibria.top/anime/releases/release/x/torrents", "winter.2024", ["Комедия"])
+        return_value=("Name / Orig (1-2) [HEVC]", "https://aniliberty.top/anime/releases/release/x/torrents", "winter.2024", ["Комедия"])
     )
 
     qb = MagicMock()
-    comment_url = "https://www.anilibria.top/anime/releases/release/x/torrents"
+    comment_url = "https://aniliberty.top/anime/releases/release/x/torrents"
     from app.services.qbittorrent import torrent_info_hash
 
     info_hash = torrent_info_hash(_sample_torrent_bytes())

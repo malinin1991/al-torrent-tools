@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import DiskFileHash, Job, Release, ReleaseMember, TorrentArchive, TorrentFile
 from app.services.file_tracker import UI_STATUS_CHECKING, file_status_for_ui
+from app.services.torrent_qb_meta import resolve_anilibria_site_url
 from app.services.hevc_pairing import (
     HEVC_SLA_HOURS,
     UnpairedAvc,
@@ -30,7 +31,12 @@ from app.utils.datetime_fmt import utcnow
 
 TELEGRAM_TEXT_LIMIT = 4096
 HEVC_ROLE_LABEL = "Кодирование HEVC"
-ANILIBRIA_RELEASE_URL = "https://anilibria.top/anime/releases/release"
+
+
+def _release_torrents_base_url() -> str:
+    return f"{resolve_anilibria_site_url().rstrip('/')}/anime/releases/release"
+
+
 HEVC_MISSING_STATUS_LIST_MAX_AGE_HOURS = 30 * 24
 
 ListKind = Literal["overdue", "waiting", "error"]
@@ -614,7 +620,7 @@ def _html_or_dash(value: str | None) -> str:
 def _release_link(row: HevcReleaseStatus) -> str:
     title = html.escape((row.title or "").strip() or row.alias)
     alias = html.escape(row.alias, quote=True)
-    return f'<a href="{ANILIBRIA_RELEASE_URL}/{alias}/torrents">{title}</a>'
+    return f'<a href="{_release_torrents_base_url()}/{alias}/torrents">{title}</a>'
 
 
 def format_release_list_item(row: HevcReleaseStatus, *, kind: ListKind) -> str:
@@ -678,7 +684,6 @@ def format_release_detail(
 ) -> str:
     lines = [
         f"🎬 <b>{_release_link(row)}</b>",
-        f"Название: {_html_or_dash(row.title)}",
         f"Оригинальное название: {_html_or_dash(row.original_title)}",
         f"За HEVC отвечает: {html.escape(', '.join(row.executors) or '—')}",
     ]

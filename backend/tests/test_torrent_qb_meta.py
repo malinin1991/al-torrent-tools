@@ -33,8 +33,8 @@ def test_build_qb_torrent_name_from_payloads() -> None:
 
 
 def test_build_release_torrents_url() -> None:
-    url = build_release_torrents_url("lets-go-kaiki-gumi", site_url="https://www.anilibria.top")
-    assert url == "https://www.anilibria.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
+    url = build_release_torrents_url("lets-go-kaiki-gumi", site_url="https://aniliberty.top")
+    assert url == "https://aniliberty.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
 
 
 def test_build_release_admin_url() -> None:
@@ -57,9 +57,22 @@ def test_first_release_torrents_url_skips_empty() -> None:
         "",
         "  ",
         "lets-go-kaiki-gumi",
-        site_url="https://www.anilibria.top",
+        site_url="https://aniliberty.top",
     )
-    assert url == "https://www.anilibria.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
+    assert url == "https://aniliberty.top/anime/releases/release/lets-go-kaiki-gumi/torrents"
+
+
+def test_resolve_anilibria_site_url_fallback_and_host_map(monkeypatch) -> None:
+    from app.services import torrent_qb_meta as tqm
+
+    monkeypatch.setattr(tqm.settings, "anilibria_site_url", "")
+    assert tqm.resolve_anilibria_site_url() == "https://aniliberty.top"
+    assert tqm.resolve_anilibria_site_url("https://anilibria.top/api/v1") == "https://aniliberty.top"
+    assert (
+        tqm.resolve_anilibria_site_url("https://www.anilibria.top/api/v1")
+        == "https://aniliberty.top"
+    )
+    assert tqm.resolve_anilibria_site_url("https://custom.example/api/v1") == "https://custom.example"
 
 
 def test_extract_release_genres() -> None:

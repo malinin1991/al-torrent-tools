@@ -27,7 +27,7 @@
       <td>{{ row.torrent_description or "-" }}</td>
       <td>
         {% if row.superseded %}<span class="badge badge-muted" title="Заменён новой версией того же torrent_id">история</span>
-        {% elif row.api_present %}<span class="badge badge-ok" title="Есть в API AniLibria">актуален</span>
+        {% elif row.api_present %}<span class="badge badge-ok" title="Есть в API AniLiberty">актуален</span>
         {% else %}<span class="badge badge-warn" title="Снят с API">архив</span>{% endif %}
       </td>
       <td><code>{{ row.info_hash[:12] }}…</code></td>
