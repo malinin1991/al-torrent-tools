@@ -75,13 +75,19 @@
         Принудительно загрузить на master и slave
       </label>
       {% endif %}
+      {% if d.type == "mediainfo_sync" and d.manual_run %}
+      <label class="row job-card-option" style="align-items:center;gap:8px;margin:0 0 4px;font-size:0.85rem;">
+        <input type="checkbox" name="full_scan" value="true" form="job-run-mediainfo_sync" {% if entry.is_active %}disabled{% endif %} />
+        Полное обновление (пересканировать все файлы)
+      </label>
+      {% endif %}
 
       <div class="row job-card-actions" style="margin-top:12px;flex-wrap:wrap;">
         {% if d.manual_run %}
           {% if "default" in d.run_modes %}
-            {% if d.type == "full_sync" %}
+            {% if d.type in ("full_sync", "mediainfo_sync") %}
             <form
-              id="job-run-full_sync"
+              id="job-run-{{ d.type }}"
               hx-post="/actions/run/{{ d.type }}"
               hx-target="#jobs-action-result"
               hx-swap="innerHTML"

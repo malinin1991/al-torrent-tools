@@ -95,6 +95,17 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
         description="Инвентаризация файлов из master qB, BLAKE3+gate, upsert torrent_files и prune БД.",
     ),
     JobTypeDef(
+        type="mediainfo_sync",
+        title="MediaInfo sync",
+        description=(
+            "Сбор метаданных MediaInfo для файлов библиотеки под media_root. "
+            "По умолчанию обновляет новые и изменившиеся файлы. "
+            "Опция «Полное обновление» — принудительно пересканировать все файлы."
+        ),
+        manual_run=True,
+        run_modes=("default",),
+    ),
+    JobTypeDef(
         type="pipeline_reconcile",
         title="Pipeline reconcile",
         description="Сверка pipeline с master: добить зависшие waiting/master_added без webhook.",

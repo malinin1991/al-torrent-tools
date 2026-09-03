@@ -12,3 +12,4 @@ pydantic-settings
 pytest
 python-telegram-bot>=21.0
 blake3
+pymediainfo>=6.1.0

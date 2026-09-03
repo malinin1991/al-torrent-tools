@@ -460,10 +460,12 @@
     }
     .file-list .file-download:hover,
     .file-list .file-copy-path:hover,
-    .file-list .file-send-encoder:hover { color: #c5e4ff; }
+    .file-list .file-send-encoder:hover,
+    .file-list .file-mediainfo:hover { color: #c5e4ff; }
     .file-list .file-download svg,
     .file-list .file-copy-path svg,
-    .file-list .file-send-encoder svg { width: 14px; height: 14px; fill: currentColor; }
+    .file-list .file-send-encoder svg,
+    .file-list .file-mediainfo svg { width: 14px; height: 14px; fill: currentColor; }
     #encoder-preset-dialog {
       border: 1px solid #444;
       border-radius: 8px;
@@ -475,6 +477,32 @@
     #encoder-preset-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
     #encoder-preset-dialog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     #encoder-preset-dialog select.input { min-width: 220px; }
+
+    #mediainfo-dialog {
+      border: 1px solid #444;
+      border-radius: 8px;
+      background: #1e1e1e;
+      color: #eee;
+      padding: 18px 20px;
+      width: min(780px, 95vw);
+      max-height: 88vh;
+      overflow-y: auto;
+      box-sizing: border-box;
+    }
+    #mediainfo-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+    #mediainfo-dialog .mi-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+    #mediainfo-dialog .mi-title { font-size: 1.05rem; font-weight: 600; word-break: break-all; margin: 0; color: #fff; }
+    #mediainfo-dialog .mi-section { margin-bottom: 14px; background: #262626; border-radius: 6px; padding: 12px; border: 1px solid #363636; }
+    #mediainfo-dialog .mi-section-title { font-size: 0.82rem; font-weight: 600; color: #7cb8ff; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    #mediainfo-dialog .mi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 14px; font-size: 0.88rem; }
+    #mediainfo-dialog .mi-grid-item { display: flex; flex-direction: column; }
+    #mediainfo-dialog .mi-label { font-size: 0.75rem; color: #888; text-transform: uppercase; }
+    #mediainfo-dialog .mi-value { color: #ddd; word-break: break-word; font-weight: 500; }
+    #mediainfo-dialog .mi-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; margin-top: 6px; }
+    #mediainfo-dialog .mi-table th { text-align: left; color: #888; font-weight: 500; padding: 4px 6px; border-bottom: 1px solid #3a3a3a; font-size: 0.78rem; text-transform: uppercase; }
+    #mediainfo-dialog .mi-table td { padding: 5px 6px; border-bottom: 1px solid #2d2d2d; }
+    #mediainfo-dialog pre.mi-raw { background: #141414; border: 1px solid #333; border-radius: 4px; padding: 10px; font-size: 0.8rem; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    #mediainfo-dialog .mi-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 10px; border-top: 1px solid #333; flex-wrap: wrap; gap: 8px; }
   </style>
 </head>
 <body>
@@ -699,8 +727,238 @@
     slot.appendChild(btn);
   }
 
+  const _MEDIAINFO_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>';
+
+  function ensureMediaInfoDialog() {
+    let dialog = document.getElementById("mediainfo-dialog");
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.id = "mediainfo-dialog";
+    dialog.innerHTML =
+      '<div class="mi-header">' +
+        '<div>' +
+          '<h3 class="mi-title" id="mi-modal-title">MediaInfo</h3>' +
+          '<div id="mi-modal-subtitle" style="font-size:0.8rem;color:#888;margin-top:2px;"></div>' +
+        '</div>' +
+        '<button class="btn btn-secondary btn-icon" id="mi-modal-close" title="Закрыть" aria-label="Закрыть" style="margin-top:-4px;line-height:1;font-size:1.1rem;padding:2px 8px;">✕</button>' +
+      '</div>' +
+      '<div id="mi-modal-body"></div>';
+    document.body.appendChild(dialog);
+    dialog.querySelector("#mi-modal-close").addEventListener("click", () => dialog.close());
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) dialog.close();
+    });
+    return dialog;
+  }
+
+  function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  async function showMediaInfoModal(fileId, relativePath, initialFullPath) {
+    const dialog = ensureMediaInfoDialog();
+    const titleEl = dialog.querySelector("#mi-modal-title");
+    const subTitleEl = dialog.querySelector("#mi-modal-subtitle");
+    const bodyEl = dialog.querySelector("#mi-modal-body");
+
+    titleEl.textContent = relativePath ? relativePath.split("/").pop() : `Файл #${fileId}`;
+    subTitleEl.textContent = relativePath || (initialFullPath ? initialFullPath : "");
+    bodyEl.innerHTML = '<div style="padding:24px 0;text-align:center;color:#888;">Загрузка MediaInfo…</div>';
+
+    dialog.showModal();
+
+    await loadMediaInfoData(fileId, bodyEl, false);
+  }
+
+  async function loadMediaInfoData(fileId, container, force) {
+    try {
+      const url = force
+        ? `/api/torrent-files/${encodeURIComponent(fileId)}/mediainfo/refresh`
+        : `/api/torrent-files/${encodeURIComponent(fileId)}/mediainfo`;
+      const method = force ? "POST" : "GET";
+      const resp = await fetch(url, { method });
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        container.innerHTML = `<div class="badge badge-danger" style="padding:10px;display:block;margin:10px 0;">Ошибка: ${escapeHtml(data.detail || `HTTP ${resp.status}`)}</div>`;
+        return;
+      }
+
+      if (data.status !== "ready") {
+        let warnText = data.error || "Информация о файле пока недоступна.";
+        if (data.status === "in_progress") {
+          warnText = "Файл проверяется или ещё загружается на master.";
+        } else if (data.status === "file_missing") {
+          warnText = "Файл ещё не скачан или отсутствует на диске.";
+        }
+        container.innerHTML = `
+          <div style="padding:18px;text-align:center;">
+            <p class="muted" style="margin-bottom:12px;">${escapeHtml(warnText)}</p>
+            <button class="btn btn-secondary" id="mi-retry-btn" type="button">Попробовать снова</button>
+          </div>
+        `;
+        container.querySelector("#mi-retry-btn")?.addEventListener("click", () => {
+          container.innerHTML = '<div style="padding:24px 0;text-align:center;color:#888;">Повторная попытка…</div>';
+          loadMediaInfoData(fileId, container, true);
+        });
+        return;
+      }
+
+      renderMediaInfoContent(container, data, fileId);
+    } catch (err) {
+      container.innerHTML = `<div class="badge badge-danger" style="padding:10px;display:block;margin:10px 0;">Ошибка сети: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderMediaInfoContent(container, data, fileId) {
+    const summary = data.summary || {};
+    const videos = summary.videos || [];
+    const audios = summary.audios || [];
+    const subs = summary.subtitles || [];
+    const rawText = data.raw_text || "";
+
+    let html = "";
+
+    if (data.cached_only) {
+      html += '<div class="badge badge-warn" style="display:block;margin-bottom:12px;padding:8px 12px;font-size:0.85rem;">Файл отсутствует на диске — показаны сохранённые метаданные из базы данных</div>';
+    }
+
+    // Блок General
+    html += '<div class="mi-section">';
+    html += '<div class="mi-section-title">Контейнер</div>';
+    html += '<div class="mi-grid">';
+    if (summary.format) html += `<div class="mi-grid-item"><span class="mi-label">Формат</span><span class="mi-value">${escapeHtml(summary.format)} ${escapeHtml(summary.format_profile || "")}</span></div>`;
+    if (summary.duration_human) html += `<div class="mi-grid-item"><span class="mi-label">Продолжительность</span><span class="mi-value">${escapeHtml(summary.duration_human)}</span></div>`;
+    if (summary.overall_bit_rate) html += `<div class="mi-grid-item"><span class="mi-label">Общий битрейт</span><span class="mi-value">${escapeHtml(summary.overall_bit_rate)}</span></div>`;
+    html += '</div></div>';
+
+    // Блок Video
+    if (videos.length) {
+      html += '<div class="mi-section">';
+      html += `<div class="mi-section-title">Видео (${videos.length})</div>`;
+      videos.forEach((v, idx) => {
+        if (idx > 0) html += '<hr style="border:0;border-top:1px solid #363636;margin:10px 0;">';
+        html += '<div class="mi-grid">';
+        if (v.format) html += `<div class="mi-grid-item"><span class="mi-label">Кодек</span><span class="mi-value">${escapeHtml(v.format)} ${escapeHtml(v.format_profile || "")}</span></div>`;
+        if (v.resolution) html += `<div class="mi-grid-item"><span class="mi-label">Разрешение</span><span class="mi-value">${escapeHtml(v.resolution)} ${escapeHtml(v.aspect_ratio ? `(${v.aspect_ratio})` : "")}</span></div>`;
+        if (v.frame_rate) html += `<div class="mi-grid-item"><span class="mi-label">Частота кадров</span><span class="mi-value">${escapeHtml(v.frame_rate)} fps</span></div>`;
+        if (v.bit_rate) html += `<div class="mi-grid-item"><span class="mi-label">Битрейт</span><span class="mi-value">${escapeHtml(v.bit_rate)}</span></div>`;
+        if (v.bit_depth) html += `<div class="mi-grid-item"><span class="mi-label">Глубина цвета</span><span class="mi-value">${escapeHtml(v.bit_depth)} бит</span></div>`;
+        if (v.hdr_format) html += `<div class="mi-grid-item"><span class="mi-label">HDR</span><span class="mi-value badge badge-ok" style="display:inline-block;width:fit-content;">${escapeHtml(v.hdr_format)}</span></div>`;
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Блок Audio
+    if (audios.length) {
+      html += '<div class="mi-section">';
+      html += `<div class="mi-section-title">Аудиодорожки (${audios.length})</div>`;
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Кодек</th><th>Каналы</th><th>Битрейт</th><th>Название</th></tr></thead><tbody>';
+      audios.forEach((a, i) => {
+        html += `<tr>
+          <td style="color:#888;">${i + 1}</td>
+          <td><strong>${escapeHtml(a.language.toUpperCase())}</strong></td>
+          <td>${escapeHtml(a.format)} ${escapeHtml(a.format_profile || "")}</td>
+          <td>${escapeHtml(a.channels || "—")}</td>
+          <td>${escapeHtml(a.bit_rate || "—")}</td>
+          <td class="muted">${escapeHtml(a.title || "—")}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // Блок Subtitles
+    if (subs.length) {
+      html += '<div class="mi-section">';
+      html += `<div class="mi-section-title">Субтитры (${subs.length})</div>`;
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Формат</th><th>Название</th></tr></thead><tbody>';
+      subs.forEach((s, i) => {
+        html += `<tr>
+          <td style="color:#888;">${i + 1}</td>
+          <td><strong>${escapeHtml(s.language.toUpperCase())}</strong></td>
+          <td>${escapeHtml(s.format || "—")}</td>
+          <td class="muted">${escapeHtml(s.title || "—")}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // Блок Raw Text Report
+    if (rawText) {
+      html += '<details style="margin-top:14px;background:#242424;border-radius:6px;padding:8px 12px;border:1px solid #333;">';
+      html += '<summary style="cursor:pointer;font-weight:600;font-size:0.85rem;color:#bbb;">Полный отчёт MediaInfo</summary>';
+      html += '<div style="margin-top:8px;">';
+      html += '<button class="btn btn-secondary btn-sm" id="mi-copy-report-btn" type="button" style="margin-bottom:6px;">Скопировать отчёт</button>';
+      html += `<pre class="mi-raw" id="mi-raw-text-block">${escapeHtml(rawText)}</pre>`;
+      html += '</div></details>';
+    }
+
+    // Подвал с кнопкой перепарсинга
+    html += '<div class="mi-footer">';
+    html += `<span class="muted" style="font-size:0.78rem;">${escapeHtml(data.full_path || "")}</span>`;
+    html += '<button class="btn btn-secondary btn-sm" id="mi-refresh-disk-btn" type="button" title="Принудительно перечитать с диска">Обновить с диска</button>';
+    html += '</div>';
+
+    container.innerHTML = html;
+
+    container.querySelector("#mi-copy-report-btn")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      try {
+        await copyTextToClipboard(rawText);
+        btn.textContent = "Скопировано!";
+        setTimeout(() => { btn.textContent = "Скопировать отчёт"; }, 1500);
+      } catch (_) {
+        btn.textContent = "Ошибка копирования";
+      }
+    });
+
+    container.querySelector("#mi-refresh-disk-btn")?.addEventListener("click", () => {
+      container.innerHTML = '<div style="padding:24px 0;text-align:center;color:#888;">Обновление данных с диска…</div>';
+      loadMediaInfoData(fileId, container, true);
+    });
+  }
+
+  function ensureMediaInfoButton(slot) {
+    const id = slot.getAttribute("data-file-id");
+    if (!id || slot.querySelector(".file-mediainfo")) return;
+    const fullPath = slot.getAttribute("data-full-path") || "";
+    const li = slot.closest("li");
+    const codeEl = li ? li.querySelector("code") : null;
+    const relPath = codeEl ? codeEl.textContent.trim() : "";
+
+    const name = relPath || fullPath || "";
+    const extMatch = name.match(/\.([a-z0-9]+)$/i);
+    const ext = extMatch ? extMatch[1].toLowerCase() : "";
+    const mediaExts = new Set(["mkv", "mp4", "avi", "m4v", "mov", "flv", "wmv", "webm", "ts", "m2ts", "flac", "mp3", "aac", "ac3", "mka"]);
+    if (ext && !mediaExts.has(ext)) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-icon file-mediainfo";
+    btn.title = "MediaInfo";
+    btn.setAttribute("aria-label", "MediaInfo");
+    btn.innerHTML = _MEDIAINFO_ICON;
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showMediaInfoModal(id, relPath, fullPath);
+    });
+    slot.appendChild(btn);
+  }
+
   function enqueueDownloadableChecks(root) {
     const scope = root || document;
+    scope.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
+      ensureMediaInfoButton(slot);
+    });
     // Copy/encoder — только вместе с download, после /downloadable-files.
     scope.querySelectorAll(".torrent-files[data-download-check]:not([data-download-queued])").forEach((el) => {
       el.setAttribute("data-download-queued", "1");
@@ -745,6 +1003,7 @@
           }
           ensureCopyPathButton(slot);
           ensureEncoderButton(slot);
+          ensureMediaInfoButton(slot);
         });
       } catch (_) {
         /* сеть/сервер — слот остаётся пустым */

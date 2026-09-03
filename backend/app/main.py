@@ -1328,6 +1328,7 @@ async def run_job_action(
     dry_run: bool = Form(default=True),
     apply: bool = Form(default=False),
     force_qb_load: bool = Form(default=False),
+    full_scan: bool = Form(default=False),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     if job_type == "orphan_cleanup":
@@ -1341,6 +1342,9 @@ async def run_job_action(
         job_type = "cleanup_master"
     elif job_type == "full_sync":
         params = {"force_qb_load": force_qb_load}
+    elif job_type == "mediainfo_sync":
+        mode = "full" if full_scan else "incremental"
+        params = {"mode": mode, "force": full_scan}
     else:
         params = {}
     try:

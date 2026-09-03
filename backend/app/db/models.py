@@ -363,3 +363,19 @@ class QbClient(Base):
     # Пока plaintext (имя историческое); шифрование не реализовано. Не логировать.
     password_encrypted: Mapped[str] = mapped_column(Text, nullable=False, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class FileMediaInfo(Base):
+    """Метаданные MediaInfo для медиафайлов под ANILIBRIA_MEDIA_ROOT (gate по size+mtime)."""
+
+    __tablename__ = "file_mediainfo"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    full_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
+    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    mtime: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    summary_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    raw_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+

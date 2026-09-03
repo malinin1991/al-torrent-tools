@@ -9,7 +9,7 @@
       {% elif f.status == 'removed' %}<span class="badge badge-danger file-ui-badge" title="Убран из состава этого торрента">удалён</span>
       {% else %}<span class="badge badge-muted file-ui-badge" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
       <code>{{ f.relative_path }}</code>
-      {% if allow_file_downloads and f.file_id %}
+      {% if f.file_id %}
       <span
         class="file-download-slot"
         data-file-id="{{ f.file_id }}"

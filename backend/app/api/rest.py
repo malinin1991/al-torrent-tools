@@ -11,6 +11,7 @@ from app.jobs.cleanup_logs import run_cleanup_logs
 from app.jobs.full_sync import run_full_sync
 from app.jobs.hash_backfill import run_hash_backfill
 from app.jobs.hash_torrent import run_hash_torrent
+from app.jobs.mediainfo_sync import run_mediainfo_sync
 from app.jobs.meta_sync import run_full_meta_sync, run_meta_sync
 from app.jobs.ongoing import run_ongoing
 from app.jobs.orphan_cleanup import run_orphan_cleanup
@@ -55,6 +56,7 @@ job_runner.register("waiting_master_retry", run_waiting_master_retry)
 job_runner.register("waiting_slave_retry", run_waiting_slave_retry)
 job_runner.register("hash_torrent", run_hash_torrent)
 job_runner.register("hash_backfill", run_hash_backfill)
+job_runner.register("mediainfo_sync", run_mediainfo_sync)
 job_runner.register("orphan_cleanup", run_orphan_cleanup)
 
 
@@ -573,6 +575,34 @@ async def send_torrent_file_to_encoder(
         "preset_id": preset_id,
         "result": result,
     }
+
+
+@router.get("/torrent-files/{file_id}/mediainfo")
+def get_torrent_file_mediainfo(
+    file_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Получить MediaInfo для файла торрента (с on-demand парсингом, если в БД пусто)."""
+    from app.services.mediainfo import get_or_extract_mediainfo
+
+    result = get_or_extract_mediainfo(db, file_id, force=False)
+    if not result.get("ok") and result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=result.get("error", "Файл не найден"))
+    return result
+
+
+@router.post("/torrent-files/{file_id}/mediainfo/refresh")
+def refresh_torrent_file_mediainfo(
+    file_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Принудительно перечитать MediaInfo для файла торрента с диска."""
+    from app.services.mediainfo import get_or_extract_mediainfo
+
+    result = get_or_extract_mediainfo(db, file_id, force=True)
+    if not result.get("ok") and result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=result.get("error", "Файл не найден"))
+    return result
 
 
 @router.get("/torrents/{info_hash}/downloadable-files")

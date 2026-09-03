@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+import logging
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -12,6 +14,8 @@ from app.db.models import JobLog, TorrentFile
 from app.services.file_tracker import FileTrackerService
 from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.pipeline import TorrentPipelineService, record_pipeline_event
+
+logger = logging.getLogger(__name__)
 
 # Мягкий пропуск: джоб success (нечего делать, retry не нужен).
 _SOFT_SKIP_REASONS = frozenset(
@@ -114,6 +118,30 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
         kinds[change.kind] = kinds.get(change.kind, 0) + 1
     kinds_text = ", ".join(f"{k}={v}" for k, v in sorted(kinds.items())) or "нет"
     ui_counts = _ui_status_counts(db, info_hash)
+    media_paths: set[str] = set()
+    for change in getattr(result, "changes", []) or []:
+        fp = getattr(change, "full_path", None)
+        if getattr(change, "kind", None) in ("added", "modified") and fp:
+            media_paths.add(str(fp))
+
+    mediainfo_updated = 0
+    from app.services.mediainfo import is_media_filename, upsert_file_mediainfo
+
+    for mp in media_paths:
+        if is_stop_requested(db, job_id):
+            _add_log(db, job_id, "hash_torrent: остановка по запросу", "warning")
+            raise JobStopRequested()
+        p = Path(mp)
+        if p.is_file() and is_media_filename(p):
+            try:
+                if upsert_file_mediainfo(db, mp, force=False) is not None:
+                    mediainfo_updated += 1
+            except Exception as mi_exc:
+                logger.warning("hash_torrent: сбой mediainfo для %s: %s", mp, mi_exc)
+
+    if mediainfo_updated > 0:
+        _add_log(db, job_id, f"hash_torrent: заполнено MediaInfo для {mediainfo_updated} файлов")
+
     done_msg = (
         f"hash_torrent: готово files={result.files_upserted}, "
         f"hashed={result.hashed}, gated={result.gated}, errors={result.errors}, "

@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
-from app.db.models import TelegramBotAccess, TelegramOutbox
+from app.db.models import Setting, TelegramBotAccess, TelegramOutbox
 from app.services.telegram_access import (
     HEVC_BOT_KEY,
     STATUS_APPROVED,
@@ -33,6 +33,7 @@ def _compile_jsonb_for_sqlite(_type: JSONB, _compiler: object, **_kwargs: object
 
 def _session() -> Session:
     engine = create_engine("sqlite+pysqlite:///:memory:")
+    Setting.__table__.create(engine)
     TelegramBotAccess.__table__.create(engine)
     TelegramOutbox.__table__.create(engine)
     return Session(engine)
