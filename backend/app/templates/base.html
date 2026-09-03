@@ -447,10 +447,11 @@
     .file-list li { margin: 2px 0; }
     .file-list .file-download,
     .file-list .file-copy-path,
-    .file-list .file-send-encoder {
+    .file-list .file-send-encoder,
+    .file-list .file-mediainfo {
       display: inline-flex;
       vertical-align: middle;
-      margin-left: 4px;
+      margin-left: 2px;
       color: #9ad1ff;
       text-decoration: none;
       background: transparent;
@@ -465,7 +466,7 @@
     .file-list .file-download svg,
     .file-list .file-copy-path svg,
     .file-list .file-send-encoder svg,
-    .file-list .file-mediainfo svg { width: 14px; height: 14px; fill: currentColor; }
+    .file-list .file-mediainfo svg { width: 12px; height: 12px; fill: currentColor; }
     #encoder-preset-dialog {
       border: 1px solid #444;
       border-radius: 8px;
@@ -728,7 +729,7 @@
   }
 
   const _MEDIAINFO_ICON =
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>';
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>';
 
   function ensureMediaInfoDialog() {
     let dialog = document.getElementById("mediainfo-dialog");
@@ -746,8 +747,13 @@
       '<div id="mi-modal-body"></div>';
     document.body.appendChild(dialog);
     dialog.querySelector("#mi-modal-close").addEventListener("click", () => dialog.close());
-    dialog.addEventListener("click", (e) => {
-      if (e.target === dialog) dialog.close();
+    let backdropMouseDown = false;
+    dialog.addEventListener("mousedown", (e) => {
+      backdropMouseDown = e.target === dialog;
+    });
+    dialog.addEventListener("mouseup", (e) => {
+      if (backdropMouseDown && e.target === dialog) dialog.close();
+      backdropMouseDown = false;
     });
     return dialog;
   }
@@ -760,6 +766,17 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  function formatMediaInfoFileSize(val) {
+    if (val == null || val === "") return "";
+    if (typeof val === "string" && !/^\d+(\.\d+)?$/.test(val.trim())) return val;
+    const num = Number(val);
+    if (!Number.isFinite(num) || num <= 0) return "";
+    if (num >= 1073741824) return `${(num / 1073741824).toFixed(2)} ГиБ`;
+    if (num >= 1048576) return `${(num / 1048576).toFixed(1)} МиБ`;
+    if (num >= 1024) return `${Math.round(num / 1024)} КиБ`;
+    return `${Math.round(num)} Б`;
   }
 
   async function showMediaInfoModal(fileId, relativePath, initialFullPath) {
@@ -836,6 +853,8 @@
     html += '<div class="mi-grid">';
     if (summary.format) html += `<div class="mi-grid-item"><span class="mi-label">Формат</span><span class="mi-value">${escapeHtml(summary.format)} ${escapeHtml(summary.format_profile || "")}</span></div>`;
     if (summary.duration_human) html += `<div class="mi-grid-item"><span class="mi-label">Продолжительность</span><span class="mi-value">${escapeHtml(summary.duration_human)}</span></div>`;
+    const containerSize = formatMediaInfoFileSize(summary.file_size);
+    if (containerSize) html += `<div class="mi-grid-item"><span class="mi-label">Размер</span><span class="mi-value">${escapeHtml(containerSize)}</span></div>`;
     if (summary.overall_bit_rate) html += `<div class="mi-grid-item"><span class="mi-label">Общий битрейт</span><span class="mi-value">${escapeHtml(summary.overall_bit_rate)}</span></div>`;
     html += '</div></div>';
 
@@ -846,10 +865,13 @@
       videos.forEach((v, idx) => {
         if (idx > 0) html += '<hr style="border:0;border-top:1px solid #363636;margin:10px 0;">';
         html += '<div class="mi-grid">';
+        if (v.title) html += `<div class="mi-grid-item"><span class="mi-label">Название</span><span class="mi-value">${escapeHtml(v.title)}</span></div>`;
+        if (v.language) html += `<div class="mi-grid-item"><span class="mi-label">Язык</span><span class="mi-value">${escapeHtml(v.language.toUpperCase())}</span></div>`;
         if (v.format) html += `<div class="mi-grid-item"><span class="mi-label">Кодек</span><span class="mi-value">${escapeHtml(v.format)} ${escapeHtml(v.format_profile || "")}</span></div>`;
         if (v.resolution) html += `<div class="mi-grid-item"><span class="mi-label">Разрешение</span><span class="mi-value">${escapeHtml(v.resolution)} ${escapeHtml(v.aspect_ratio ? `(${v.aspect_ratio})` : "")}</span></div>`;
         if (v.frame_rate) html += `<div class="mi-grid-item"><span class="mi-label">Частота кадров</span><span class="mi-value">${escapeHtml(v.frame_rate)} fps</span></div>`;
         if (v.bit_rate) html += `<div class="mi-grid-item"><span class="mi-label">Битрейт</span><span class="mi-value">${escapeHtml(v.bit_rate)}</span></div>`;
+        if (v.stream_size) html += `<div class="mi-grid-item"><span class="mi-label">Размер</span><span class="mi-value">${escapeHtml(v.stream_size)}</span></div>`;
         if (v.bit_depth) html += `<div class="mi-grid-item"><span class="mi-label">Глубина цвета</span><span class="mi-value">${escapeHtml(v.bit_depth)} бит</span></div>`;
         if (v.hdr_format) html += `<div class="mi-grid-item"><span class="mi-label">HDR</span><span class="mi-value badge badge-ok" style="display:inline-block;width:fit-content;">${escapeHtml(v.hdr_format)}</span></div>`;
         html += '</div>';
@@ -861,7 +883,7 @@
     if (audios.length) {
       html += '<div class="mi-section">';
       html += `<div class="mi-section-title">Аудиодорожки (${audios.length})</div>`;
-      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Кодек</th><th>Каналы</th><th>Битрейт</th><th>Название</th></tr></thead><tbody>';
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Кодек</th><th>Каналы</th><th>Битрейт</th><th>Размер</th><th>Название</th></tr></thead><tbody>';
       audios.forEach((a, i) => {
         html += `<tr>
           <td style="color:#888;">${i + 1}</td>
@@ -869,6 +891,7 @@
           <td>${escapeHtml(a.format)} ${escapeHtml(a.format_profile || "")}</td>
           <td>${escapeHtml(a.channels || "—")}</td>
           <td>${escapeHtml(a.bit_rate || "—")}</td>
+          <td>${escapeHtml(a.stream_size || "—")}</td>
           <td class="muted">${escapeHtml(a.title || "—")}</td>
         </tr>`;
       });

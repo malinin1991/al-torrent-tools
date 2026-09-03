@@ -46,6 +46,7 @@ def test_build_summary_from_data() -> None:
                 "format": "Matroska",
                 "duration": 1440000,
                 "overall_bit_rate": 2500000,
+                "file_size": 450000000,
             },
             {
                 "track_type": "Video",
@@ -80,6 +81,7 @@ def test_build_summary_from_data() -> None:
     assert summary["duration_sec"] == 1440.0
     assert "24 мин" in summary["duration_human"]
     assert "2.5 Мбит/с" in summary["overall_bit_rate"]
+    assert "МиБ" in summary["file_size"]
 
     assert len(summary["videos"]) == 1
     v = summary["videos"][0]
@@ -228,6 +230,8 @@ def test_mediainfo_job_action_run() -> None:
                 db=db,
             )
         )
-        mock_create.assert_called_once_with(db, "mediainfo_sync", {"mode": "full", "force": True})
+        mock_create.assert_called_once_with(
+            db, "mediainfo_sync", {"mode": "full", "force": True, "workers": 4}
+        )
         mock_sched.assert_called_once_with(55)
 

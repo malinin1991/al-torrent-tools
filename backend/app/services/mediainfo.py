@@ -75,6 +75,24 @@ def format_bitrate_human(bps: int | float | None) -> str:
     return f"{num:.0f} бит/с"
 
 
+def format_file_size_human(size_bytes: int | float | str | None) -> str:
+    if size_bytes is None:
+        return ""
+    try:
+        num = float(size_bytes)
+    except (ValueError, TypeError):
+        return ""
+    if num <= 0:
+        return ""
+    if num >= 1_073_741_824:
+        return f"{num / 1_073_741_824:.2f} ГиБ"
+    if num >= 1_048_576:
+        return f"{num / 1_048_576:.1f} МиБ"
+    if num >= 1_024:
+        return f"{num / 1_024:.0f} КиБ"
+    return f"{num:.0f} Б"
+
+
 def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
     tracks = data.get("tracks") or []
     general: dict[str, Any] = {}
@@ -112,7 +130,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
         fps_val = v.get("frame_rate")
         w_val = v.get("width")
         h_val = v.get("height")
-        br_val = v.get("bit_rate")
+        br_val = v.get("bit_rate") or v.get("nominal_bit_rate")
         fps_str = ""
         if fps_val is not None and str(fps_val).strip():
             try:
@@ -122,6 +140,8 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
         videos.append(
             {
                 "stream_id": v.get("stream_identifier") or v.get("id"),
+                "title": v.get("title") or "",
+                "language": (v.get("language") or "").lower(),
                 "format": v.get("format") or "",
                 "format_profile": v.get("format_profile") or "",
                 "codec_id": v.get("codec_id") or "",
@@ -131,6 +151,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                 "aspect_ratio": v.get("display_aspect_ratio") or "",
                 "frame_rate": fps_str,
                 "bit_rate": format_bitrate_human(br_val),
+                "stream_size": format_file_size_human(v.get("stream_size")),
                 "bit_depth": v.get("bit_depth"),
                 "color_space": v.get("color_space") or "",
                 "hdr_format": v.get("hdr_format") or v.get("hdr_format_commercial") or "",
@@ -142,7 +163,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
     for a in audio_list:
         ch_val = a.get("channel_s") or a.get("channels")
         ch_layout = a.get("channel_layout") or ""
-        br_val = a.get("bit_rate")
+        br_val = a.get("bit_rate") or a.get("nominal_bit_rate")
         sr_val = a.get("sampling_rate")
         audios.append(
             {
@@ -153,6 +174,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                 "format_profile": a.get("format_profile") or "",
                 "channels": f"{ch_val} каналов" if ch_val else (ch_layout or ""),
                 "bit_rate": format_bitrate_human(br_val),
+                "stream_size": format_file_size_human(a.get("stream_size")),
                 "sampling_rate": f"{int(sr_val) // 1000} кГц" if sr_val and str(sr_val).isdigit() else "",
             }
         )
@@ -175,7 +197,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
         "duration_sec": duration_sec,
         "duration_human": format_duration_human(duration_sec),
         "overall_bit_rate": format_bitrate_human(overall_br),
-        "file_size": file_size_raw,
+        "file_size": format_file_size_human(file_size_raw),
         "videos": videos,
         "audios": audios,
         "subtitles": subs,

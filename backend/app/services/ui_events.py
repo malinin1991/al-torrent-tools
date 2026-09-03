@@ -175,9 +175,8 @@ def _releases_token(db: Session) -> str:
     max_arch = _max_id(db, TorrentArchive.id)
     max_file_ev = _max_id(db, FileChangeEvent.id)
     max_pipe_ev = _max_id(db, PipelineEvent.id)
-    max_tf = db.scalar(
-        select(func.coalesce(func.max(TorrentFile.updated_at), func.max(TorrentFile.id)))
-    )
+    max_tf_upd = db.scalar(select(func.max(TorrentFile.updated_at)))
+    max_tf_id = _max_id(db, TorrentFile.id)
     tracked = db.scalar(
         select(func.count()).select_from(TrackedRelease).where(TrackedRelease.enabled.is_(True))
     ) or 0
@@ -199,7 +198,7 @@ def _releases_token(db: Session) -> str:
         )
     ).one()
     return (
-        f"r:{max_arch}|fe:{max_file_ev}|pe:{max_pipe_ev}|tf:{max_tf}|"
+        f"r:{max_arch}|fe:{max_file_ev}|pe:{max_pipe_ev}|tf:{max_tf_upd}:{max_tf_id}|"
         f"tr:{tracked}|rel:{max_rel_upd}|rm:{max_member}|"
         f"geo:{release_flags[0]}|cr:{release_flags[1]}|"
         f"ig:{flag_counts[0]}|ap:{flag_counts[1]}|su:{flag_counts[2]}"
@@ -209,16 +208,15 @@ def _releases_token(db: Session) -> str:
 def _archive_token(db: Session) -> str:
     max_arch = _max_id(db, TorrentArchive.id)
     max_file_ev = _max_id(db, FileChangeEvent.id)
-    max_tf = db.scalar(
-        select(func.coalesce(func.max(TorrentFile.updated_at), func.max(TorrentFile.id)))
-    )
+    max_tf_upd = db.scalar(select(func.max(TorrentFile.updated_at)))
+    max_tf_id = _max_id(db, TorrentFile.id)
     flag_counts = db.execute(
         select(
             func.count().filter(TorrentArchive.api_present.is_(True)),
             func.count().filter(TorrentArchive.superseded.is_(True)),
         )
     ).one()
-    return f"a:{max_arch}|fe:{max_file_ev}|tf:{max_tf}|ap:{flag_counts[0]}|su:{flag_counts[1]}"
+    return f"a:{max_arch}|fe:{max_file_ev}|tf:{max_tf_upd}:{max_tf_id}|ap:{flag_counts[0]}|su:{flag_counts[1]}"
 
 
 def _info_token(db: Session) -> str:

@@ -80,6 +80,21 @@
         <input type="checkbox" name="full_scan" value="true" form="job-run-mediainfo_sync" {% if entry.is_active %}disabled{% endif %} />
         Полное обновление (пересканировать все файлы)
       </label>
+      <label class="row job-card-option" style="align-items:center;gap:8px;margin:0 0 4px;font-size:0.85rem;">
+        Потоки
+        <input
+          class="input"
+          type="number"
+          name="workers"
+          value="4"
+          min="1"
+          max="8"
+          step="1"
+          form="job-run-mediainfo_sync"
+          style="width:4.5rem;"
+          {% if entry.is_active %}disabled{% endif %}
+        />
+      </label>
       {% endif %}
 
       <div class="row job-card-actions" style="margin-top:12px;flex-wrap:wrap;">

@@ -831,7 +831,6 @@ def _jobs_page_context(
     selected_job = db.get(Job, job_id) if job_id else (jobs[0] if jobs else None)
     logs: list = []
     if selected_job is not None:
-        # В UI по умолчанию без debug — иначе шум от «уже обработан, пропуск».
         logs = list(
             db.scalars(
                 select(JobLog)
@@ -1329,6 +1328,7 @@ async def run_job_action(
     apply: bool = Form(default=False),
     force_qb_load: bool = Form(default=False),
     full_scan: bool = Form(default=False),
+    workers: int | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     if job_type == "orphan_cleanup":
@@ -1345,6 +1345,11 @@ async def run_job_action(
     elif job_type == "mediainfo_sync":
         mode = "full" if full_scan else "incremental"
         params = {"mode": mode, "force": full_scan}
+        workers_count = workers if isinstance(workers, int) else None
+        if workers_count is not None:
+            params["workers"] = workers_count
+        elif full_scan:
+            params["workers"] = 4
     else:
         params = {}
     try:
