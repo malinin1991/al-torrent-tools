@@ -660,6 +660,7 @@ def test_pipeline_detail_html_renders_timeline() -> None:
             "slave_state": {},
             "files_status": "success",
             "tracked": False,
+            "can_resume_cancelled": False,
             "life_path_text": "path text",
             "timeline": [
                 {

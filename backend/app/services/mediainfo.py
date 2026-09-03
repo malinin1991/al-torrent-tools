@@ -165,6 +165,16 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
         ch_layout = a.get("channel_layout") or ""
         br_val = a.get("bit_rate") or a.get("nominal_bit_rate")
         sr_val = a.get("sampling_rate")
+        sampling_rate = ""
+        if sr_val is not None and str(sr_val).strip():
+            try:
+                hz = float(sr_val)
+                if hz >= 1000:
+                    sampling_rate = f"{hz / 1000:.1f}".rstrip("0").rstrip(".") + " кГц"
+                elif hz > 0:
+                    sampling_rate = f"{int(hz)} Гц"
+            except (ValueError, TypeError):
+                sampling_rate = str(sr_val)
         audios.append(
             {
                 "stream_id": a.get("stream_identifier") or a.get("id"),
@@ -175,7 +185,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                 "channels": f"{ch_val} каналов" if ch_val else (ch_layout or ""),
                 "bit_rate": format_bitrate_human(br_val),
                 "stream_size": format_file_size_human(a.get("stream_size")),
-                "sampling_rate": f"{int(sr_val) // 1000} кГц" if sr_val and str(sr_val).isdigit() else "",
+                "sampling_rate": sampling_rate,
             }
         )
 

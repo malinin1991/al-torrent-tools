@@ -39,6 +39,7 @@ from app.services.anilibria_auth import login_and_store_token, resolve_anilibria
 from app.services.db_maintenance import reset_full, reset_operational_state
 from app.services.pipeline import (
     TorrentPipelineService,
+    is_qb_missing_cancel_reason,
     pipeline_ci_stages,
     resolve_files_stage_statuses,
     resolve_tracked_release_ids,
@@ -885,6 +886,44 @@ async def pipeline_reconcile_action(
     return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
 
 
+@app.post("/pipeline/resume-cancelled", response_class=HTMLResponse)
+async def pipeline_resume_cancelled_action(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Массово вернуть cancelled (нет в qB) в работу, если торрент снова в клиентах."""
+    try:
+        job = job_runner.create_job(db, "pipeline_resume_cancelled", {})
+    except JobAlreadyRunningError as exc:
+        message = f"Возобновление уже выполняется (job_id={exc.running_job_id})"
+        return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
+    job_runner.schedule_job(job.id)
+    message = (
+        f"Возобновление cancelled запущено в фоне (job_id={job.id}) — смотри статус в списке джобов"
+    )
+    return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
+
+
+@app.post("/pipeline/{pipeline_id}/resume", response_class=HTMLResponse)
+async def pipeline_resume_one_action(
+    request: Request,
+    pipeline_id: int,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Точечно вернуть cancelled pipeline в работу, если торрент снова в qB."""
+    try:
+        job = job_runner.create_job(db, "pipeline_resume_cancelled", {"pipeline_id": pipeline_id})
+    except JobAlreadyRunningError as exc:
+        message = f"Возобновление уже выполняется (job_id={exc.running_job_id})"
+        return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
+    job_runner.schedule_job(job.id)
+    message = (
+        f"Возобновление pipeline #{pipeline_id} запущено в фоне (job_id={job.id}) "
+        "— смотри статус в списке джобов"
+    )
+    return templates.TemplateResponse(request, "partials/action_result.html", {"message": message})
+
+
 @app.get("/pipeline/{pipeline_id}", response_class=HTMLResponse)
 async def pipeline_detail_page(
     request: Request,
@@ -1003,6 +1042,10 @@ async def _pipeline_detail_context_async(db: Session, pipeline_id: int) -> dict:
         "slave_state": slave_states.get((pipeline.info_hash or "").lower(), {}),
         "files_status": resolve_files_stage_statuses(db, [pipeline]).get(pipeline.id, "pending"),
         "tracked": pipeline.release_id in resolve_tracked_release_ids(db, [pipeline.release_id]),
+        "can_resume_cancelled": (
+            pipeline.status == TorrentPipelineService.STATUS_CANCELLED
+            and is_qb_missing_cancel_reason(pipeline.error)
+        ),
     }
 
 

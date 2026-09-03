@@ -14,6 +14,14 @@
       hx-swap="innerHTML"
       hx-confirm="Опросить master по всем pipeline без slave? Завершённые уйдут на slave, отсутствующие — cancelled."
     >Сверить с master</button>
+    <button
+      class="btn"
+      type="button"
+      hx-post="/pipeline/resume-cancelled"
+      hx-target="#pipeline-reconcile-result"
+      hx-swap="innerHTML"
+      hx-confirm="Вернуть cancelled pipeline в работу, если торрент снова есть в qB? Только отмены «нет на master/slave», не «нет в API»."
+    >Возобновить cancelled</button>
     <span class="muted">live · SSE · авто-сверка раз в сутки</span>
   </form>
   <div id="pipeline-reconcile-result" style="margin-top:8px;"></div>

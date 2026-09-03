@@ -28,6 +28,7 @@ def test_job_catalog_covers_known_manual_types() -> None:
     assert "cleanup_logs" in types
     assert "cleanup" not in types
     assert "hash_torrent" in types
+    assert "pipeline_resume_cancelled" in types
     assert "meta_sync" in types
     assert "full_meta_sync" in types
     hash_def = next(item for item in JOB_TYPE_DEFS if item.type == "hash_torrent")

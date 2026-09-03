@@ -16,6 +16,7 @@ from app.jobs.meta_sync import run_full_meta_sync, run_meta_sync
 from app.jobs.ongoing import run_ongoing
 from app.jobs.orphan_cleanup import run_orphan_cleanup
 from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback, run_pipeline_reconcile
+from app.jobs.pipeline_resume_cancelled import run_pipeline_resume_cancelled
 from app.jobs.waiting_master_retry import run_waiting_master_retry
 from app.jobs.waiting_slave_retry import run_waiting_slave_retry
 from app.services.anilibria_auth import login_and_store_token
@@ -52,6 +53,7 @@ job_runner.register("cleanup_master", run_cleanup)
 job_runner.register("cleanup_slave", run_cleanup)
 job_runner.register("cleanup_logs", run_cleanup_logs)
 job_runner.register("pipeline_reconcile", run_pipeline_reconcile)
+job_runner.register("pipeline_resume_cancelled", run_pipeline_resume_cancelled)
 job_runner.register("waiting_master_retry", run_waiting_master_retry)
 job_runner.register("waiting_slave_retry", run_waiting_slave_retry)
 job_runner.register("hash_torrent", run_hash_torrent)

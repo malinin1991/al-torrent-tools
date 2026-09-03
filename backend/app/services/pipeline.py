@@ -3,7 +3,7 @@ from app.utils.datetime_fmt import utcnow
 from typing import Any, Literal
 
 import qbittorrentapi
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import ExtraUrl, JobLog, PipelineEvent, QbClient, TorrentArchive, TorrentPipeline
@@ -336,6 +336,18 @@ def record_pipeline_event(
     else:
         db.flush()
     return event
+
+
+def is_qb_missing_cancel_reason(error: str | None) -> bool:
+    """Отмена из‑за отсутствия торрента в qB (не «нет в AniLibria API»)."""
+    text = (error or "").casefold()
+    if not text or "anilibria api" in text:
+        return False
+    return "отсутствует на master" in text or "отсутствует на slave" in text
+
+
+# После resume не cancel'ить по missing, пока qB может ещё «не видеть» торрент.
+RESUME_CANCEL_GRACE_MIN = 15
 
 
 class TorrentPipelineService:
@@ -874,6 +886,20 @@ class TorrentPipelineService:
         if state == "in_progress":
             return pipeline
         if state == "missing":
+            if self.recently_resumed_from_cancelled(pipeline):
+                self._record_event(
+                    pipeline,
+                    event_type="status_change",
+                    message=(
+                        f"Pipeline {pipeline.id}: slave missing после resume — "
+                        f"grace {RESUME_CANCEL_GRACE_MIN} мин, не cancelled"
+                    ),
+                    from_status=pipeline.status,
+                    to_status=pipeline.status,
+                    details={"resume_grace": True, "qb_role": "slave"},
+                    log_level="warning",
+                )
+                return pipeline
             return self.mark_cancelled(
                 pipeline,
                 "Торрент отсутствует на slave (удалён) — pipeline cancelled",
@@ -1373,6 +1399,16 @@ class TorrentPipelineService:
                     )
                     continue
                 if state == "missing":
+                    if self.recently_resumed_from_cancelled(pipeline):
+                        stats["waiting"] += 1
+                        stats["details"].append(
+                            {
+                                "id": pipeline.id,
+                                "hash": pipeline.info_hash,
+                                "action": "resume_grace",
+                            }
+                        )
+                        continue
                     reason = "Торрент отсутствует на master (удалён) — pipeline cancelled"
                     self.mark_cancelled(pipeline, reason)
                     stats["cancelled"] += 1
@@ -1421,6 +1457,269 @@ class TorrentPipelineService:
                 except Exception:
                     self._db.rollback()
         return stats
+
+    def get_cancelled_resume_candidates(
+        self, pipeline_id: int | None = None
+    ) -> list[TorrentPipeline]:
+        """cancelled из‑за missing в qB; один кандидат на info_hash (последний id)."""
+        if pipeline_id is not None:
+            row = self._db.get(TorrentPipeline, pipeline_id)
+            if (
+                row is not None
+                and row.status == self.STATUS_CANCELLED
+                and is_qb_missing_cancel_reason(row.error)
+            ):
+                return [row]
+            return []
+
+        rows = list(
+            self._db.scalars(
+                select(TorrentPipeline)
+                .where(
+                    and_(
+                        TorrentPipeline.status == self.STATUS_CANCELLED,
+                        TorrentPipeline.error.is_not(None),
+                        or_(
+                            TorrentPipeline.error.ilike("%отсутствует на master%"),
+                            TorrentPipeline.error.ilike("%отсутствует на slave%"),
+                        ),
+                        ~TorrentPipeline.error.ilike("%anilibria api%"),
+                    )
+                )
+                .order_by(TorrentPipeline.id.asc())
+            ).all()
+        )
+        by_hash: dict[str, TorrentPipeline] = {}
+        for row in rows:
+            if not is_qb_missing_cancel_reason(row.error):
+                continue
+            key = (row.info_hash or "").strip().lower() or f"id:{row.id}"
+            by_hash[key] = row
+        return sorted(by_hash.values(), key=lambda r: r.id)
+
+    def recently_resumed_from_cancelled(
+        self,
+        pipeline: TorrentPipeline,
+        *,
+        within_minutes: int | None = None,
+    ) -> bool:
+        """True если недавний mark_* с details.resume_cancelled (grace против ложного cancel)."""
+        minutes = RESUME_CANCEL_GRACE_MIN if within_minutes is None else within_minutes
+        if minutes <= 0:
+            return False
+        threshold = utcnow() - timedelta(minutes=minutes)
+        rows = self._db.scalars(
+            select(PipelineEvent)
+            .where(
+                PipelineEvent.pipeline_id == pipeline.id,
+                PipelineEvent.event_type.in_(("master_add", "slave_add", "status_change")),
+                PipelineEvent.created_at >= threshold,
+            )
+            .order_by(PipelineEvent.id.desc())
+            .limit(30)
+        ).all()
+        for event in rows:
+            details = event.details_json if isinstance(event.details_json, dict) else {}
+            if details.get("resume_cancelled"):
+                return True
+        return False
+
+    def resume_cancelled_from_qb(
+        self,
+        *,
+        load_torrent_bytes,
+        pipeline_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Вернуть cancelled (нет в qB) в работу, если торрент снова есть на master/slave."""
+        stats: dict[str, Any] = {
+            "checked": 0,
+            "resumed": 0,
+            "sent_to_slave": 0,
+            "done": 0,
+            "waiting": 0,
+            "skipped": 0,
+            "errors": 0,
+            "details": [],
+        }
+        if pipeline_id is not None:
+            pipeline = self._db.get(TorrentPipeline, pipeline_id)
+            if pipeline is None:
+                stats["errors"] += 1
+                stats["details"].append(
+                    {"id": pipeline_id, "action": "error", "error": "pipeline не найден"}
+                )
+                return stats
+            if pipeline.status != self.STATUS_CANCELLED:
+                stats["skipped"] += 1
+                stats["details"].append(
+                    {
+                        "id": pipeline.id,
+                        "hash": pipeline.info_hash,
+                        "action": "skipped_not_cancelled",
+                        "status": pipeline.status,
+                    }
+                )
+                return stats
+            if not is_qb_missing_cancel_reason(pipeline.error):
+                stats["skipped"] += 1
+                stats["details"].append(
+                    {
+                        "id": pipeline.id,
+                        "hash": pipeline.info_hash,
+                        "action": "skipped_not_qb_missing",
+                    }
+                )
+                return stats
+            candidates = [pipeline]
+        else:
+            candidates = self.get_cancelled_resume_candidates()
+
+        claimed_hashes: set[str] = set()
+        for pipeline in candidates:
+            stats["checked"] += 1
+            hash_key = (pipeline.info_hash or "").strip().lower()
+            if hash_key and hash_key in claimed_hashes:
+                stats["skipped"] += 1
+                stats["details"].append(
+                    {
+                        "id": pipeline.id,
+                        "hash": pipeline.info_hash,
+                        "action": "skipped_duplicate_hash",
+                    }
+                )
+                continue
+            try:
+                action = self._resume_one_cancelled(pipeline, load_torrent_bytes)
+                stats["details"].append(
+                    {"id": pipeline.id, "hash": pipeline.info_hash, "action": action}
+                )
+                if action in {
+                    "recovered_master_added",
+                    "sent_to_slave",
+                    "waiting_slave",
+                    "resumed_slave",
+                    "done",
+                }:
+                    stats["resumed"] += 1
+                    if hash_key:
+                        claimed_hashes.add(hash_key)
+                if action == "sent_to_slave":
+                    stats["sent_to_slave"] += 1
+                elif action == "done":
+                    stats["done"] += 1
+                if action in {
+                    "waiting_slave",
+                    "recovered_master_added",
+                    "resumed_slave",
+                    "waiting_qb",
+                }:
+                    stats["waiting"] += 1
+                elif action.startswith("skipped_") or action == "still_missing":
+                    stats["skipped"] += 1
+            except Exception as exc:
+                if should_wait_for_qb(exc):
+                    stats["waiting"] += 1
+                    stats["details"].append(
+                        {
+                            "id": pipeline.id,
+                            "hash": pipeline.info_hash,
+                            "action": "waiting_qb",
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+                stats["errors"] += 1
+                stats["details"].append(
+                    {
+                        "id": pipeline.id,
+                        "hash": pipeline.info_hash,
+                        "action": "error",
+                        "error": str(exc),
+                    }
+                )
+                try:
+                    self._db.refresh(pipeline)
+                    self._record_event(
+                        pipeline,
+                        event_type="status_change",
+                        message=f"Pipeline {pipeline.id}: resume cancelled не удался: {exc}",
+                        from_status=pipeline.status,
+                        to_status=pipeline.status,
+                        details={"resume_cancelled": True, "error": str(exc)},
+                        log_level="error",
+                    )
+                except Exception:
+                    self._db.rollback()
+        return stats
+
+    def _other_active_pipeline(self, pipeline: TorrentPipeline) -> TorrentPipeline | None:
+        normalized = (pipeline.info_hash or "").strip().lower()
+        if not normalized:
+            return None
+        return self._db.scalar(
+            select(TorrentPipeline)
+            .where(
+                TorrentPipeline.info_hash == normalized,
+                TorrentPipeline.id != pipeline.id,
+                TorrentPipeline.status.not_in(self._EXCLUDED_FROM_LATEST),
+            )
+            .order_by(TorrentPipeline.id.desc())
+            .limit(1)
+        )
+
+    def _resume_one_cancelled(self, pipeline: TorrentPipeline, load_torrent_bytes) -> str:
+        other = self._other_active_pipeline(pipeline)
+        if other is not None:
+            return "skipped_active_exists"
+
+        slave_state: SlaveTorrentState = "missing"
+        try:
+            slave_state = self.classify_slave_torrent(pipeline)
+        except Exception:
+            slave_state = "missing"
+
+        if slave_state in {"complete", "in_progress"}:
+            self.mark_slave_added(
+                pipeline,
+                details={
+                    "resume_cancelled": True,
+                    "qb_role": "slave",
+                    "slave_state": slave_state,
+                },
+            )
+            self._enqueue_hash_torrent(pipeline)
+            if slave_state == "complete":
+                self.mark_done(
+                    pipeline,
+                    details={
+                        "resume_cancelled": True,
+                        "qb_role": "slave",
+                        "slave_state": slave_state,
+                    },
+                )
+                return "done"
+            return "resumed_slave"
+
+        master_state = self.classify_master_torrent(pipeline)
+        if master_state == "missing":
+            return "still_missing"
+
+        self.mark_master_added(
+            pipeline,
+            details={"resume_cancelled": True, "qb_role": "master", "master_state": master_state},
+        )
+        if master_state == "in_progress":
+            return "recovered_master_added"
+
+        torrent_bytes = load_torrent_bytes(pipeline)
+        if torrent_bytes is None:
+            raise RuntimeError("Нет .torrent в архиве и не удалось загрузить файл")
+        updated = self.process_completion(pipeline, torrent_bytes)
+        if updated.status == self.STATUS_WAITING_SLAVE:
+            return "waiting_slave"
+        if updated.status == self.STATUS_DONE:
+            return "done"
+        return "sent_to_slave"
 
     def _get_qb_client(self, role: str) -> QbClient | None:
         return self._db.scalar(select(QbClient).where(QbClient.role == role, QbClient.enabled.is_(True)).limit(1))

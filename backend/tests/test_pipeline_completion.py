@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.services.pipeline import TorrentPipelineService
+from app.services.pipeline import TorrentPipelineService, is_qb_missing_cancel_reason
 
 
 def _pipeline(*, status: str, pipeline_id: int = 1) -> SimpleNamespace:
@@ -248,6 +248,7 @@ def test_reconcile_with_master_actions() -> None:
         return {1: "in_progress", 2: "missing", 3: "complete"}[p.id]
 
     service.classify_master_torrent = MagicMock(side_effect=classify)  # type: ignore[method-assign]
+    service.recently_resumed_from_cancelled = MagicMock(return_value=False)  # type: ignore[method-assign]
     service.mark_cancelled = MagicMock(  # type: ignore[method-assign]
         side_effect=lambda p, reason: setattr(p, "status", TorrentPipelineService.STATUS_CANCELLED) or p
     )
@@ -316,6 +317,258 @@ def test_reconcile_recovers_failed_when_seeding_on_master() -> None:
     service.mark_master_added.assert_called_once()
     service.process_completion.assert_called_once()
     service.mark_failed.assert_not_called()
+
+
+def test_is_qb_missing_cancel_reason() -> None:
+    assert is_qb_missing_cancel_reason(
+        "Торрент отсутствует на master (удалён) — pipeline cancelled"
+    )
+    assert is_qb_missing_cancel_reason("Webhook: торрент отсутствует на master — pipeline cancelled")
+    assert is_qb_missing_cancel_reason("Торрент отсутствует на slave (удалён) — pipeline cancelled")
+    assert not is_qb_missing_cancel_reason(
+        "Торрент отсутствует в AniLibria API (по hash) — pipeline cancelled"
+    )
+    assert not is_qb_missing_cancel_reason(None)
+
+
+def _cancelled_qb_missing(*, pipeline_id: int = 3780) -> SimpleNamespace:
+    row = _pipeline(status=TorrentPipelineService.STATUS_CANCELLED, pipeline_id=pipeline_id)
+    row.error = "Торрент отсутствует на master (удалён) — pipeline cancelled"
+    return row
+
+
+def test_resume_cancelled_master_complete_sends_slave() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _cancelled_qb_missing()
+    db.get.return_value = pipeline
+    service._other_active_pipeline = MagicMock(return_value=None)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="complete")  # type: ignore[method-assign]
+
+    def mark_added(p: SimpleNamespace, **_kwargs) -> SimpleNamespace:
+        p.status = TorrentPipelineService.STATUS_MASTER_ADDED
+        p.error = None
+        return p
+
+    service.mark_master_added = MagicMock(side_effect=mark_added)  # type: ignore[method-assign]
+    service.process_completion = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, data: setattr(p, "status", TorrentPipelineService.STATUS_SLAVE_ADDED) or p
+    )
+    service.mark_failed = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=3780)
+
+    assert stats["checked"] == 1
+    assert stats["resumed"] == 1
+    assert stats["sent_to_slave"] == 1
+    service.mark_master_added.assert_called_once()
+    service.process_completion.assert_called_once()
+    service.mark_failed.assert_not_called()
+
+
+def test_resume_cancelled_master_in_progress_waits() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _cancelled_qb_missing()
+    db.get.return_value = pipeline
+    service._other_active_pipeline = MagicMock(return_value=None)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
+    service.mark_master_added = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, **k: setattr(p, "status", TorrentPipelineService.STATUS_MASTER_ADDED) or p
+    )
+    service.process_completion = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=3780)
+
+    assert stats["resumed"] == 1
+    assert stats["waiting"] == 1
+    service.process_completion.assert_not_called()
+
+
+def test_resume_cancelled_still_missing_skips() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _cancelled_qb_missing()
+    db.get.return_value = pipeline
+    service._other_active_pipeline = MagicMock(return_value=None)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.mark_master_added = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=3780)
+
+    assert stats["skipped"] == 1
+    assert stats["resumed"] == 0
+    service.mark_master_added.assert_not_called()
+
+
+def test_resume_cancelled_slave_complete_marks_done() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _cancelled_qb_missing()
+    db.get.return_value = pipeline
+    service._other_active_pipeline = MagicMock(return_value=None)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="complete")  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock()  # type: ignore[method-assign]
+    service.mark_slave_added = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, **k: setattr(p, "status", TorrentPipelineService.STATUS_SLAVE_ADDED) or p
+    )
+    service._enqueue_hash_torrent = MagicMock()  # type: ignore[method-assign]
+    service.mark_done = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, **k: setattr(p, "status", TorrentPipelineService.STATUS_DONE) or p
+    )
+    service.process_slave_completion = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=3780)
+
+    assert stats["resumed"] == 1
+    assert stats["done"] == 1
+    service.classify_master_torrent.assert_not_called()
+    service.mark_done.assert_called_once()
+    service.process_slave_completion.assert_not_called()
+
+
+def test_resume_cancelled_skips_api_missing_reason() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_CANCELLED, pipeline_id=7)
+    pipeline.error = "Торрент отсутствует в AniLibria API (по hash) — pipeline cancelled"
+    db.get.return_value = pipeline
+    service._resume_one_cancelled = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=7)
+
+    assert stats["skipped"] == 1
+    assert stats["details"][0]["action"] == "skipped_not_qb_missing"
+    service._resume_one_cancelled.assert_not_called()
+
+
+def test_resume_cancelled_error_keeps_status_not_failed() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _cancelled_qb_missing()
+    db.get.return_value = pipeline
+    service._other_active_pipeline = MagicMock(return_value=None)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="complete")  # type: ignore[method-assign]
+    service.mark_master_added = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, **k: setattr(p, "status", TorrentPipelineService.STATUS_MASTER_ADDED) or p
+    )
+    service.process_completion = MagicMock(side_effect=RuntimeError("нет файла"))  # type: ignore[method-assign]
+    service.mark_failed = MagicMock()  # type: ignore[method-assign]
+    service._record_event = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=3780)
+
+    assert stats["errors"] == 1
+    assert pipeline.status == TorrentPipelineService.STATUS_MASTER_ADDED
+    service.mark_failed.assert_not_called()
+    service._record_event.assert_called()
+
+
+def test_resume_cancelled_dedupes_same_hash_in_bulk() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    first = _cancelled_qb_missing(pipeline_id=1)
+    second = _cancelled_qb_missing(pipeline_id=2)
+    service.get_cancelled_resume_candidates = MagicMock(return_value=[first, second])  # type: ignore[method-assign]
+    service._other_active_pipeline = MagicMock(return_value=None)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
+    service.mark_master_added = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, **k: setattr(p, "status", TorrentPipelineService.STATUS_MASTER_ADDED) or p
+    )
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent")
+
+    assert stats["resumed"] == 1
+    assert stats["skipped"] == 1
+    assert any(d["action"] == "skipped_duplicate_hash" for d in stats["details"])
+    assert service.mark_master_added.call_count == 1
+
+
+def test_reconcile_skips_cancel_during_resume_grace() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    missing = _pipeline(status=TorrentPipelineService.STATUS_MASTER_ADDED, pipeline_id=2)
+    service.get_pipelines_awaiting_slave = MagicMock(return_value=[missing])  # type: ignore[method-assign]
+    service.get_failed_qb_wait_pipelines = MagicMock(return_value=[])  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.recently_resumed_from_cancelled = MagicMock(return_value=True)  # type: ignore[method-assign]
+    service.mark_cancelled = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.reconcile_with_master(load_torrent_bytes=lambda p: b"torrent")
+
+    assert stats["cancelled"] == 0
+    assert stats["waiting"] == 1
+    assert stats["details"][0]["action"] == "resume_grace"
+    service.mark_cancelled.assert_not_called()
+
+
+def test_process_slave_completion_missing_respects_resume_grace() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _pipeline(status=TorrentPipelineService.STATUS_SLAVE_ADDED)
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.recently_resumed_from_cancelled = MagicMock(return_value=True)  # type: ignore[method-assign]
+    service.mark_cancelled = MagicMock()  # type: ignore[method-assign]
+    service._record_event = MagicMock()  # type: ignore[method-assign]
+
+    result = service.process_slave_completion(pipeline)
+
+    assert result.status == TorrentPipelineService.STATUS_SLAVE_ADDED
+    service.mark_cancelled.assert_not_called()
+    service._record_event.assert_called()
+
+
+def test_resume_cancelled_skips_when_active_exists() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    pipeline = _cancelled_qb_missing()
+    db.get.return_value = pipeline
+    service._other_active_pipeline = MagicMock(  # type: ignore[method-assign]
+        return_value=_pipeline(status=TorrentPipelineService.STATUS_MASTER_ADDED, pipeline_id=99)
+    )
+    service.classify_master_torrent = MagicMock()  # type: ignore[method-assign]
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=3780)
+
+    assert stats["skipped"] == 1
+    assert stats["details"][0]["action"] == "skipped_active_exists"
+    service.classify_master_torrent.assert_not_called()
+
+
+def test_resume_cancelled_bulk_only_qb_missing() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    qb_missing = _cancelled_qb_missing(pipeline_id=1)
+    service.get_cancelled_resume_candidates = MagicMock(return_value=[qb_missing])  # type: ignore[method-assign]
+    service._other_active_pipeline = MagicMock(return_value=None)  # type: ignore[method-assign]
+    service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.classify_master_torrent = MagicMock(return_value="in_progress")  # type: ignore[method-assign]
+    service.mark_master_added = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda p, **k: setattr(p, "status", TorrentPipelineService.STATUS_MASTER_ADDED) or p
+    )
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent")
+
+    assert stats["checked"] == 1
+    assert stats["resumed"] == 1
+    service.get_cancelled_resume_candidates.assert_called_once_with()
+
+
+def test_resume_not_cancelled_skips() -> None:
+    db = MagicMock()
+    service = TorrentPipelineService(db)
+    db.get.return_value = _pipeline(status=TorrentPipelineService.STATUS_MASTER_ADDED, pipeline_id=5)
+
+    stats = service.resume_cancelled_from_qb(load_torrent_bytes=lambda p: b"torrent", pipeline_id=5)
+
+    assert stats["skipped"] == 1
+    assert stats["checked"] == 0
+    assert stats["details"][0]["action"] == "skipped_not_cancelled"
 
 
 def test_process_completion_slave_auth_error_goes_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -551,6 +804,7 @@ def test_process_slave_completion_missing_cancels() -> None:
     service = TorrentPipelineService(db)
     pipeline = _pipeline(status=TorrentPipelineService.STATUS_SLAVE_ADDED)
     service.classify_slave_torrent = MagicMock(return_value="missing")  # type: ignore[method-assign]
+    service.recently_resumed_from_cancelled = MagicMock(return_value=False)  # type: ignore[method-assign]
 
     def mark_cancelled(p: SimpleNamespace, reason: str) -> SimpleNamespace:
         p.status = TorrentPipelineService.STATUS_CANCELLED

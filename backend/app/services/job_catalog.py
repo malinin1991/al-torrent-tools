@@ -113,6 +113,16 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
         interval_default_sec=settings.pipeline_reconcile_interval_sec,
     ),
     JobTypeDef(
+        type="pipeline_resume_cancelled",
+        title="Возобновить cancelled",
+        description=(
+            "Служебная: все cancelled из‑за «нет на master/slave», если торрент снова в qB → "
+            "master_added / досылка на slave / done. Не трогает отмены «нет в AniLibria API». "
+            "После resume — grace против повторного ложного cancel. "
+            "Точечно — кнопка «Возобновить» на карточке /pipeline/{id}."
+        ),
+    ),
+    JobTypeDef(
         type="waiting_master_retry",
         title="Waiting master retry",
         description="Повторные попытки для pipeline в waiting_master (qB недоступен / таймаут).",

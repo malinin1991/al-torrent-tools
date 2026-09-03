@@ -258,6 +258,7 @@ AniLibria / ongoing
    - не найден на master → `cancelled`.
 3. **Master недоступен** — pipeline в `waiting_master`; worker каждые 5 мин проверяет master и наличие торрента в AniLibria API по hash.
 4. **Slave недоступен** — pipeline в `waiting_slave`; worker каждые 5 мин: slave ожил → торрент есть в API и на master → досылка на slave; иначе `cancelled`.
+5. **Ложный `cancelled` «нет на master/slave»** (торрент уже вернули в qB) — джоб `pipeline_resume_cancelled` (`/jobs` или «Возобновить cancelled» на `/pipeline`; точечно — кнопка на карточке только для qb-missing cancel). После resume poll/reconcile не cancel'ят по missing ~15 мин (grace). Webhook и force_qb_load сами cancelled не поднимают.
 
 ### Команда для qBittorrent
 

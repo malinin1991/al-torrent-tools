@@ -95,6 +95,7 @@ def test_build_summary_from_data() -> None:
     assert a["language"] == "rus"
     assert a["format"] == "AAC"
     assert a["title"] == "AniLibria"
+    assert a["sampling_rate"] == "48 кГц"
 
     assert len(summary["subtitles"]) == 1
     s = summary["subtitles"][0]

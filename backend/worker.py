@@ -65,6 +65,12 @@ async def _poll_master_pipeline() -> None:
                 if state == "in_progress":
                     continue
                 if state == "missing":
+                    if pipeline_service.recently_resumed_from_cancelled(pipeline):
+                        logger.info(
+                            "Pipeline %s: master missing после resume — grace, не cancelled",
+                            pipeline.id,
+                        )
+                        continue
                     pipeline_service.mark_cancelled(
                         pipeline,
                         "Торрент отсутствует на master (удалён) — pipeline cancelled",

@@ -3,6 +3,20 @@
 <p class="muted" style="margin-bottom:8px;"><a href="/pipeline">← Пайплайн</a></p>
 <h1>Пайплайн #{{ pipeline.id }} <span class="muted" style="font-weight:normal;font-size:0.85rem;">live · SSE</span></h1>
 
+{% if can_resume_cancelled %}
+<div class="card" style="margin-bottom:12px;">
+  <button
+    class="btn"
+    type="button"
+    hx-post="/pipeline/{{ pipeline.id }}/resume"
+    hx-target="#pipeline-resume-result"
+    hx-swap="innerHTML"
+    hx-confirm="Вернуть этот pipeline в работу, если торрент снова есть в qB? Только отмены «нет на master/slave»."
+  >Возобновить</button>
+  <div id="pipeline-resume-result" style="margin-top:8px;"></div>
+</div>
+{% endif %}
+
 <div
   id="pipeline-detail-live"
   data-ui-sse-channel="pipeline_detail:{{ pipeline.id }}"
