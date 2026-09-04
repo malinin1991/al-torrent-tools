@@ -306,6 +306,8 @@ class TorrentFile(Base):
     ui_status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok", index=True)
     # Временный overlay «проверка» (.!qB / progress<1 на master / hash_torrent). Не писать в ui_status.
     is_checking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Complete media на диске (inventory / settle). Не sticky ui_status.
+    media_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

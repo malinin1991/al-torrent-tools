@@ -86,13 +86,17 @@ def fetch_master_file_progress(db: Session, info_hash: str) -> dict[int, float] 
     return extract_qb_file_progress(files)
 
 
-def refresh_checking_flags_from_master(db: Session, info_hash: str) -> bool:
-    """Обновить is_checking по progress qB master. True если что-то изменилось."""
+def refresh_checking_flags_from_master(db: Session, info_hash: str) -> bool | None:
+    """Обновить is_checking по progress qB master.
+
+    None — master недоступен / нет состава (флаги не трогали).
+    True/False — были ли изменения после успешного опроса.
+    """
     from app.services.file_tracker import apply_checking_flag, checking_flag_from_sources
 
     progress_by_index = fetch_master_file_progress(db, info_hash)
     if progress_by_index is None:
-        return False
+        return None
     normalized = (info_hash or "").strip().lower()
     rows = list(db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all())
     dirty = False
@@ -288,9 +292,16 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
         by_hash.setdefault(item.info_hash, []).append(item)
 
     # Ленивый импорт: file_tracker импортирует из этого модуля не нужно, но избегаем циклов.
-    from app.services.file_tracker import FileTrackerService, apply_checking_flag, checking_flag_from_sources
+    from app.services.file_tracker import (
+        FileTrackerService,
+        apply_checking_flag,
+        apply_media_present,
+        checking_flag_from_sources,
+        media_present_from_path,
+    )
 
     tracker = FileTrackerService(db)
+    media_root = resolve_media_root()
 
     upserted = 0
     for info_hash, files in by_hash.items():
@@ -357,6 +368,9 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                             qb_progress=item.progress,
                             selected=item.selected,
                         ),
+                        media_present=media_present_from_path(
+                            item.full_path, media_root=media_root
+                        ),
                         created_at=now,
                         updated_at=now,
                     )
@@ -376,6 +390,10 @@ def upsert_torrent_files_inventory(db: Session, inventory: InventoryResult) -> i
                         qb_progress=item.progress,
                         selected=item.selected,
                     ),
+                )
+                apply_media_present(
+                    row,
+                    media_present_from_path(item.full_path, media_root=media_root),
                 )
                 # Лечим ложный sticky new: inventory мог создать строки до появления prior.
                 # Пустой состав prior — не лечим (first_seen=True).

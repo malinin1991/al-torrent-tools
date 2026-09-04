@@ -526,9 +526,52 @@ def test_build_file_rows_sorted_by_filename_desc(monkeypatch, tmp_path: Path) ->
         "ep2.mkv",
         "ep1.mkv",
     ]
-    # SSR не трогает диск — кнопки подгружает JS.
+    # Без media_present кнопки не рисуем на SSR.
     assert rows[0].downloadable is False
     assert rows[0].file_id == 2
+
+
+def test_build_file_rows_downloadable_from_media_present(tmp_path: Path) -> None:
+    from app.services.releases_view import _build_file_rows
+
+    files = [
+        SimpleNamespace(
+            id=1,
+            relative_path="Show/ep1.mkv",
+            size=1,
+            selected=True,
+            full_path=str(tmp_path / "ep1.mkv"),
+            ui_status="ok",
+            is_checking=False,
+            media_present=True,
+        ),
+        SimpleNamespace(
+            id=2,
+            relative_path="Show/ep2.mkv",
+            size=1,
+            selected=True,
+            full_path=str(tmp_path / "ep2.mkv"),
+            ui_status="ok",
+            is_checking=True,
+            media_present=True,
+        ),
+        SimpleNamespace(
+            id=3,
+            relative_path="Show/ep3.mkv",
+            size=1,
+            selected=True,
+            full_path=str(tmp_path / "ep3.mkv"),
+            ui_status="ok",
+            is_checking=False,
+            media_present=False,
+        ),
+    ]
+    rows = {r.file_id: r for r in _build_file_rows(files, {})}
+    assert rows[1].downloadable is True
+    assert rows[1].status == "ok"
+    assert rows[2].downloadable is False
+    assert rows[2].status == "checking"
+    assert rows[3].downloadable is False
 
 
 def test_list_downloadable_file_ids_only_active(tmp_path: Path, monkeypatch) -> None:
@@ -551,6 +594,7 @@ def test_list_downloadable_file_ids_only_active(tmp_path: Path, monkeypatch) -> 
         full_path=str(media),
         relative_path="ep.mkv",
         is_checking=False,
+        media_present=True,
     )
     db = MagicMock()
     db.scalar.return_value = archive
@@ -570,19 +614,10 @@ def test_probe_torrent_media_files_checking_and_downloadable(
 ) -> None:
     from app.services.releases_view import probe_torrent_media_files
 
-    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
     monkeypatch.setattr(
         "app.services.releases_view._info_hashes_with_active_hash_job",
         lambda _db, _hashes: set(),
     )
-    show = tmp_path / "Show"
-    show.mkdir()
-    ok_file = show / "ep02.mkv"
-    ok_file.write_bytes(b"ok")
-    partial = show / "ep01.mkv"
-    Path(str(partial) + ".!qB").write_bytes(b"part")
-    new_partial = show / "ep03.mkv"
-    Path(str(new_partial) + ".!qB").write_bytes(b"new")
     info_hash = "cd" * 20
 
     db = MagicMock()
@@ -593,23 +628,26 @@ def test_probe_torrent_media_files_checking_and_downloadable(
         SimpleNamespace(
             id=1,
             ui_status="ok",
-            full_path=str(partial),
+            full_path=str(tmp_path / "ep01.mkv"),
             relative_path="ep01.mkv",
             is_checking=True,
+            media_present=False,
         ),
         SimpleNamespace(
             id=2,
             ui_status="ok",
-            full_path=str(ok_file),
+            full_path=str(tmp_path / "ep02.mkv"),
             relative_path="ep02.mkv",
             is_checking=False,
+            media_present=True,
         ),
         SimpleNamespace(
             id=3,
             ui_status="new",
-            full_path=str(new_partial),
+            full_path=str(tmp_path / "ep03.mkv"),
             relative_path="ep03.mkv",
             is_checking=True,
+            media_present=False,
         ),
     ]
     probe = probe_torrent_media_files(db, info_hash)
@@ -618,7 +656,7 @@ def test_probe_torrent_media_files_checking_and_downloadable(
 
 
 def test_probe_checking_from_master_progress(tmp_path: Path, monkeypatch) -> None:
-    """progress<1 на master → checking_ids, даже если complete на диске и is_checking был false."""
+    """refresh=True: progress<1 на master → checking_ids."""
     from app.services.releases_view import probe_torrent_media_files
 
     monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
@@ -638,17 +676,14 @@ def test_probe_checking_from_master_progress(tmp_path: Path, monkeypatch) -> Non
     ep04.write_bytes(b"ok")
     info_hash = "ab" * 20
 
-    db = MagicMock()
-    db.scalar.return_value = SimpleNamespace(
-        info_hash=info_hash, superseded=False, api_present=True
-    )
-    db.scalars.return_value.all.return_value = [
+    rows = [
         SimpleNamespace(
             id=1,
             ui_status="ok",
             full_path=str(ep05),
             relative_path="ep05.mkv",
             is_checking=False,
+            media_present=True,
             file_index=0,
             selected=True,
         ),
@@ -658,20 +693,26 @@ def test_probe_checking_from_master_progress(tmp_path: Path, monkeypatch) -> Non
             full_path=str(ep04),
             relative_path="ep04.mkv",
             is_checking=False,
+            media_present=True,
             file_index=1,
             selected=True,
         ),
     ]
-    probe = probe_torrent_media_files(db, info_hash)
+    db = MagicMock()
+    db.scalar.return_value = SimpleNamespace(
+        info_hash=info_hash, superseded=False, api_present=True
+    )
+    db.scalars.return_value.all.return_value = rows
+    probe = probe_torrent_media_files(db, info_hash, refresh=True)
     assert probe.checking_ids == [1]
     assert 2 not in probe.checking_ids
+    assert probe.downloadable_ids == [2]
 
 
 def test_probe_checking_from_db_not_disk_partial(tmp_path: Path, monkeypatch) -> None:
-    """.!qB на диске без is_checking не даёт checking_ids; флаг в БД — даёт."""
+    """Без refresh .!qB на диске не влияет; флаг is_checking в БД — даёт checking."""
     from app.services.releases_view import probe_torrent_media_files
 
-    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
     monkeypatch.setattr(
         "app.services.releases_view._info_hashes_with_active_hash_job",
         lambda _db, _hashes: set(),
@@ -694,6 +735,7 @@ def test_probe_checking_from_db_not_disk_partial(tmp_path: Path, monkeypatch) ->
             full_path=str(disk_partial),
             relative_path="ep01.mkv",
             is_checking=False,
+            media_present=False,
         ),
         SimpleNamespace(
             id=2,
@@ -701,12 +743,62 @@ def test_probe_checking_from_db_not_disk_partial(tmp_path: Path, monkeypatch) ->
             full_path=str(complete),
             relative_path="ep02.mkv",
             is_checking=True,
+            media_present=True,
         ),
     ]
     probe = probe_torrent_media_files(db, info_hash)
     assert probe.checking_ids == [2]
     assert 1 not in probe.checking_ids
-    assert probe.downloadable_ids == [2]
+    # checking overlay → не downloadable
+    assert probe.downloadable_ids == []
+
+
+def test_probe_torrents_media_files_batch_db_only(monkeypatch) -> None:
+    from app.services.releases_view import probe_torrents_media_files
+
+    monkeypatch.setattr(
+        "app.services.releases_view._info_hashes_with_active_hash_job",
+        lambda _db, _hashes: set(),
+    )
+    h1 = "aa" * 20
+    h2 = "bb" * 20
+    archives = [
+        SimpleNamespace(info_hash=h1, superseded=False, api_present=True),
+        SimpleNamespace(info_hash=h2, superseded=False, api_present=True),
+    ]
+    files = [
+        SimpleNamespace(
+            id=1,
+            info_hash=h1,
+            ui_status="ok",
+            full_path="/m/a.mkv",
+            relative_path="a.mkv",
+            is_checking=False,
+            media_present=True,
+        ),
+        SimpleNamespace(
+            id=2,
+            info_hash=h2,
+            ui_status="ok",
+            full_path="/m/b.mkv",
+            relative_path="b.mkv",
+            is_checking=True,
+            media_present=True,
+        ),
+    ]
+    db = MagicMock()
+    db.scalars.side_effect = [
+        MagicMock(all=MagicMock(return_value=archives)),
+        MagicMock(all=MagicMock(return_value=files)),
+    ]
+    scan = MagicMock()
+    monkeypatch.setattr("app.services.releases_view._scan_media_presence", scan)
+    out = probe_torrents_media_files(db, [h1, h2], refresh=False)
+    scan.assert_not_called()
+    assert out[h1].downloadable_ids == [1]
+    assert out[h1].checking_ids == []
+    assert out[h2].downloadable_ids == []
+    assert out[h2].checking_ids == [2]
 
 
 def test_natural_name_key_orders_unpadded() -> None:
@@ -961,13 +1053,167 @@ def test_list_torrent_downloadable_files_endpoint(tmp_path: Path, monkeypatch) -
 
     monkeypatch.setattr(
         "app.api.rest.probe_torrent_media_files",
-        lambda _db, h: TorrentMediaProbe(downloadable_ids=[2, 5], checking_ids=[1]),
+        lambda _db, h, refresh=False: TorrentMediaProbe(
+            downloadable_ids=[2, 5], checking_ids=[1]
+        ),
     )
     db = MagicMock()
     out = list_torrent_downloadable_files("ab" * 20, db=db)
     assert out["file_ids"] == [2, 5]
     assert out["checking_ids"] == [1]
     assert out["info_hash"] == "ab" * 20
+
+
+def test_list_torrents_downloadable_files_batch_endpoint(monkeypatch) -> None:
+    from app.api.rest import (
+        DownloadableFilesBatchIn,
+        list_torrents_downloadable_files_batch,
+    )
+    from app.services.releases_view import TorrentMediaProbe
+    from fastapi import HTTPException
+
+    h1 = "aa" * 20
+    h2 = "bb" * 20
+
+    def fake_batch(_db, hashes, refresh=False):
+        assert refresh is False
+        return {
+            h1: TorrentMediaProbe(downloadable_ids=[1], checking_ids=[]),
+            h2: TorrentMediaProbe(downloadable_ids=[], checking_ids=[9]),
+        }
+
+    monkeypatch.setattr("app.api.rest.probe_torrents_media_files", fake_batch)
+    out = list_torrents_downloadable_files_batch(
+        DownloadableFilesBatchIn(hashes=[h1, h2]), db=MagicMock()
+    )
+    assert out["items"] == [
+        {"info_hash": h1, "file_ids": [1], "checking_ids": []},
+        {"info_hash": h2, "file_ids": [], "checking_ids": [9]},
+    ]
+
+    try:
+        list_torrents_downloadable_files_batch(
+            DownloadableFilesBatchIn(hashes=[f"{i:040x}" for i in range(101)]),
+            db=MagicMock(),
+        )
+        assert False, "expected 400"
+    except HTTPException as exc:
+        assert exc.status_code == 400
+
+
+def test_list_torrents_downloadable_files_batch_refresh_flag(monkeypatch) -> None:
+    """refresh из тела запроса прокидывается в probe (клиент шлёт отдельно refresh/db-only)."""
+    from app.api.rest import (
+        DownloadableFilesBatchIn,
+        list_torrents_downloadable_files_batch,
+    )
+    from app.services.releases_view import TorrentMediaProbe
+
+    h1 = "aa" * 20
+    seen: list[bool] = []
+
+    def fake_batch(_db, hashes, refresh=False):
+        seen.append(bool(refresh))
+        return {h1: TorrentMediaProbe(downloadable_ids=[1], checking_ids=[])}
+
+    monkeypatch.setattr("app.api.rest.probe_torrents_media_files", fake_batch)
+    list_torrents_downloadable_files_batch(
+        DownloadableFilesBatchIn(hashes=[h1], refresh=True), db=MagicMock()
+    )
+    list_torrents_downloadable_files_batch(
+        DownloadableFilesBatchIn(hashes=[h1], refresh=False), db=MagicMock()
+    )
+    assert seen == [True, False]
+
+
+def test_refresh_media_flags_clears_is_checking_when_master_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Master недоступен: path reconcile снимает stuck is_checking при complete на диске."""
+    from app.services.releases_view import _refresh_media_flags_from_disk
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.qb_inventory.refresh_checking_flags_from_master",
+        lambda _db, _h: None,
+    )
+    show = tmp_path / "Show"
+    show.mkdir()
+    ep = show / "ep01.mkv"
+    ep.write_bytes(b"complete")
+    info_hash = "ff" * 20
+    row = SimpleNamespace(
+        id=1,
+        ui_status="ok",
+        full_path=str(ep),
+        relative_path="ep01.mkv",
+        is_checking=True,
+        media_present=False,
+    )
+    db = MagicMock()
+    _refresh_media_flags_from_disk(db, [row], info_hash=info_hash)
+    assert row.is_checking is False
+    assert row.media_present is True
+    db.commit.assert_called()
+
+
+def test_refresh_media_flags_path_sets_checking_when_master_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Master недоступен: .!qB без complete → is_checking true."""
+    from app.services.releases_view import _refresh_media_flags_from_disk
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.qb_inventory.refresh_checking_flags_from_master",
+        lambda _db, _h: None,
+    )
+    show = tmp_path / "Show"
+    show.mkdir()
+    ep = show / "ep01.mkv"
+    Path(str(ep) + ".!qB").write_bytes(b"part")
+    info_hash = "fe" * 20
+    row = SimpleNamespace(
+        id=1,
+        ui_status="ok",
+        full_path=str(ep),
+        relative_path="ep01.mkv",
+        is_checking=False,
+        media_present=True,
+    )
+    db = MagicMock()
+    _refresh_media_flags_from_disk(db, [row], info_hash=info_hash)
+    assert row.is_checking is True
+    assert row.media_present is False
+
+
+def test_refresh_media_flags_skips_path_when_master_ok(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Master ответил — path-fallback не затирает is_checking от progress."""
+    from app.services.releases_view import _refresh_media_flags_from_disk
+
+    monkeypatch.setattr("app.services.releases_view.resolve_media_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "app.services.qb_inventory.refresh_checking_flags_from_master",
+        lambda _db, _h: False,
+    )
+    show = tmp_path / "Show"
+    show.mkdir()
+    ep = show / "ep01.mkv"
+    ep.write_bytes(b"growing")
+    info_hash = "fd" * 20
+    row = SimpleNamespace(
+        id=1,
+        ui_status="ok",
+        full_path=str(ep),
+        relative_path="ep01.mkv",
+        is_checking=True,
+        media_present=True,
+    )
+    db = MagicMock()
+    _refresh_media_flags_from_disk(db, [row], info_hash=info_hash)
+    assert row.is_checking is True
 
 
 def test_filter_removed_candidates_drops_foreign_titles(tmp_path, monkeypatch) -> None:

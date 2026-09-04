@@ -27,6 +27,7 @@ from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import qb_client_wait_message, sanitize_info_hash, should_wait_for_qb, test_qb_connection
 from app.services.releases_view import (
     probe_torrent_media_files,
+    probe_torrents_media_files,
     resolve_media_file_for_download,
     torrent_allows_media_download,
 )
@@ -608,15 +609,59 @@ def refresh_torrent_file_mediainfo(
 
 
 @router.get("/torrents/{info_hash}/downloadable-files")
-def list_torrent_downloadable_files(info_hash: str, db: Session = Depends(get_db)) -> dict:
-    """Фоновая подгрузка: кнопки скачивания + overlay «проверка» из БД."""
+def list_torrent_downloadable_files(
+    info_hash: str,
+    refresh: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Подгрузка: кнопки скачивания + overlay «проверка» из БД.
+
+    refresh=1 — обновить media_present/is_checking с диска и master.
+    """
     normalized = sanitize_info_hash(info_hash) or (info_hash or "").strip().lower()
-    probe = probe_torrent_media_files(db, normalized)
+    probe = probe_torrent_media_files(db, normalized, refresh=refresh)
     return {
         "info_hash": normalized,
         "file_ids": probe.downloadable_ids,
         "checking_ids": probe.checking_ids,
     }
+
+
+class DownloadableFilesBatchIn(BaseModel):
+    hashes: list[str] = []
+    refresh: bool = False
+
+
+@router.post("/torrents/downloadable-files")
+def list_torrents_downloadable_files_batch(
+    body: DownloadableFilesBatchIn,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Batch: один ответ на список info_hash. По умолчанию только БД."""
+    raw_hashes = body.hashes or []
+    if len(raw_hashes) > 100:
+        raise HTTPException(status_code=400, detail="Слишком много hashes (макс. 100)")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_hashes:
+        key = sanitize_info_hash(item) or (item or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(key)
+    probes = probe_torrents_media_files(db, normalized, refresh=bool(body.refresh))
+    items = []
+    for key in normalized:
+        probe = probes.get(key)
+        items.append(
+            {
+                "info_hash": key,
+                "file_ids": list(probe.downloadable_ids) if probe else [],
+                "checking_ids": list(probe.checking_ids) if probe else [],
+            }
+        )
+    return {"items": items}
+
 
 
 @router.api_route("/webhooks/qb/complete", methods=["GET", "POST"])

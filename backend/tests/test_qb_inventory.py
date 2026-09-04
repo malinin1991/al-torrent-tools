@@ -291,6 +291,12 @@ def test_upsert_inventory_persists_is_checking_from_partial(
     partial = media / "ep02.mkv"
     Path(str(partial) + ".!qB").write_bytes(b"part")
 
+    monkeypatch.setattr(
+        "app.services.qb_inventory.resolve_media_root", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        "app.services.file_tracker.resolve_media_root", lambda: tmp_path
+    )
     class FakeScalars:
         def __init__(self, rows):
             self._rows = rows
@@ -308,6 +314,7 @@ def test_upsert_inventory_persists_is_checking_from_partial(
         full_path=str(complete),
         ui_status="ok",
         is_checking=True,
+        media_present=False,
         updated_at=None,
     )
     db = MagicMock()
@@ -351,9 +358,11 @@ def test_upsert_inventory_persists_is_checking_from_partial(
     upsert_torrent_files_inventory(db, inventory)
     assert existing_ok.is_checking is False
     assert existing_ok.ui_status == "ok"
+    assert existing_ok.media_present is True
     rows = {r.relative_path: r for r in created if isinstance(r, TorrentFile)}
     assert rows["Show/ep02.mkv"].is_checking is True
     assert rows["Show/ep02.mkv"].ui_status == "new"
+    assert rows["Show/ep02.mkv"].media_present is False
 
 
 def test_upsert_inventory_checking_from_qb_progress_with_complete_on_disk(

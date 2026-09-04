@@ -145,12 +145,22 @@ class FileTrackerService:
     def _apply_hash_checking_overlay(self, rows: list[TorrentFile], *, active: bool) -> None:
         """Overlay is_checking: hash_torrent идёт → true; иначе .!qB (progress master — inventory/probe).
 
-        Sticky ui_status не трогаем.
+        Sticky ui_status не трогаем. При снятии overlay обновляем media_present с диска.
         """
         now = utcnow()
+        media_root = resolve_media_root()
         for row in rows:
             wanted = True if active else checking_flag_from_path(getattr(row, "full_path", None))
-            if apply_checking_flag(row, wanted):
+            dirty = apply_checking_flag(row, wanted)
+            if not active:
+                if apply_media_present(
+                    row,
+                    media_present_from_path(
+                        getattr(row, "full_path", None), media_root=media_root
+                    ),
+                ):
+                    dirty = True
+            if dirty:
                 row.updated_at = now
         self._db.commit()
 
@@ -1263,6 +1273,7 @@ class FileTrackerService:
                     selected=selected,
                     full_path=full_path,
                     ui_status=initial_status,
+                    media_present=media_present_from_path(full_path, media_root=media_root),
                     created_at=now,
                     updated_at=now,
                 )
@@ -1369,6 +1380,10 @@ class FileTrackerService:
                     qb_progress=progress_by_index.get(meta.file_index),
                     selected=selected,
                 ),
+            )
+            apply_media_present(
+                row,
+                media_present_from_path(full_path, media_root=media_root),
             )
             result.files_upserted += 1
 
@@ -1837,6 +1852,35 @@ def apply_checking_flag(row: Any, is_checking: bool) -> bool:
         return False
     row.is_checking = wanted
     return True
+
+
+def apply_media_present(row: Any, media_present: bool) -> bool:
+    """Пишет torrent_files.media_present, не трогает sticky ui_status."""
+    wanted = bool(media_present)
+    current_raw = getattr(row, "media_present", None)
+    if current_raw is not None and bool(current_raw) is wanted:
+        return False
+    row.media_present = wanted
+    return True
+
+
+def media_present_from_path(
+    full_path: str | None, *, media_root: Path | None = None
+) -> bool:
+    """Complete-файл под media root есть на диске."""
+    if not full_path:
+        return False
+    root = (media_root or resolve_media_root()).resolve()
+    try:
+        resolved = complete_path_for(full_path).resolve()
+    except OSError:
+        return False
+    if not is_under_media_root(resolved, media_root=root):
+        return False
+    try:
+        return resolved.is_file()
+    except OSError:
+        return False
 
 
 def checking_flag_from_path(full_path: str | None) -> bool:

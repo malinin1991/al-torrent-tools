@@ -553,6 +553,9 @@
   }
   const _downloadCheckQueue = [];
   let _downloadCheckBusy = false;
+  const _downloadProbeCache = new Map(); // hash → {file_ids, checking_ids, ts}
+  const _DOWNLOAD_PROBE_TTL_MS = 60_000;
+  const _DOWNLOAD_PROBE_CHUNK = 100;
   const _DOWNLOAD_ICON =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg>';
   const _COPY_PATH_ICON =
@@ -989,60 +992,178 @@
     slot.appendChild(btn);
   }
 
+  function clearDownloadableSlotButtons(slot) {
+    if (!slot) return;
+    slot.querySelectorAll("a.file-download, .file-copy-path, .file-send-encoder, .file-mediainfo").forEach((el) => el.remove());
+  }
+
+  function applyDownloadableProbe(block, data) {
+    if (!block || !data) return;
+    const ids = new Set((data.file_ids || []).map(String));
+    const checking = new Set((data.checking_ids || []).map(String));
+    block.querySelectorAll("li[data-file-id]").forEach((li) => {
+      const id = li.getAttribute("data-file-id");
+      if (!id || !checking.has(id)) return;
+      const badge = li.querySelector(".file-ui-badge");
+      if (!badge) return;
+      badge.className = "badge badge-warn file-ui-badge";
+      badge.title = "Качается или проверяется на master";
+      badge.textContent = "проверка";
+    });
+    block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
+      const id = slot.getAttribute("data-file-id");
+      if (!id) return;
+      // checking и не-downloadable — убрать кнопки (в т.ч. stale media_present).
+      if (!ids.has(id) || checking.has(id)) {
+        clearDownloadableSlotButtons(slot);
+        return;
+      }
+      if (!slot.querySelector("a.file-download")) {
+        const link = document.createElement("a");
+        link.className = "btn-icon file-download";
+        link.href = `/api/torrent-files/${id}/download`;
+        link.title = "Скачать файл";
+        link.setAttribute("download", "");
+        link.innerHTML = _DOWNLOAD_ICON;
+        slot.insertBefore(link, slot.firstChild);
+      }
+      ensureCopyPathButton(slot);
+      ensureEncoderButton(slot);
+      ensureMediaInfoButton(slot);
+    });
+  }
+
+  function probeResultIsEmpty(data) {
+    if (!data) return true;
+    return !(data.file_ids || []).length && !(data.checking_ids || []).length;
+  }
+
+  function cacheDownloadableProbe(hash, data) {
+    if (!hash || !data) return;
+    // Пустой ответ не кэшируем — иначе блокируем повторный probe на том же DOM.
+    if (probeResultIsEmpty(data)) {
+      _downloadProbeCache.delete(hash);
+      return;
+    }
+    _downloadProbeCache.set(hash, {
+      file_ids: data.file_ids || [],
+      checking_ids: data.checking_ids || [],
+      ts: Date.now(),
+    });
+  }
+
+  function cachedDownloadableProbe(hash) {
+    const hit = _downloadProbeCache.get(hash);
+    if (!hit) return null;
+    if (Date.now() - hit.ts > _DOWNLOAD_PROBE_TTL_MS) return null;
+    if (probeResultIsEmpty(hit)) return null;
+    return hit;
+  }
+
+  function clearDownloadQueued(blocks) {
+    (blocks || []).forEach((el) => {
+      if (el && el.removeAttribute) el.removeAttribute("data-download-queued");
+    });
+  }
+
   function enqueueDownloadableChecks(root) {
     const scope = root || document;
     scope.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
-      ensureMediaInfoButton(slot);
+      // MediaInfo / copy / encoder — только для downloadable (как «Скачать»).
+      if (slot.querySelector("a.file-download")) {
+        ensureCopyPathButton(slot);
+        ensureEncoderButton(slot);
+        ensureMediaInfoButton(slot);
+      }
     });
-    // Copy/encoder — только вместе с download, после /downloadable-files.
     scope.querySelectorAll(".torrent-files[data-download-check]:not([data-download-queued])").forEach((el) => {
       el.setAttribute("data-download-queued", "1");
+      const hash = el.getAttribute("data-download-check");
+      const cached = hash ? cachedDownloadableProbe(hash) : null;
+      if (cached) {
+        applyDownloadableProbe(el, cached);
+        // checking / refresh — всё равно догрузим свежие флаги.
+        if (el.getAttribute("data-download-refresh") !== "1") return;
+      }
       _downloadCheckQueue.push(el);
     });
     pumpDownloadableQueue();
+  }
+
+  function chunkHashes(hashes, size) {
+    const out = [];
+    for (let i = 0; i < hashes.length; i += size) out.push(hashes.slice(i, i + size));
+    return out;
+  }
+
+  async function postDownloadableProbe(hashes, refresh, byHash) {
+    if (!hashes.length) return;
+    const chunks = chunkHashes(hashes, _DOWNLOAD_PROBE_CHUNK);
+    for (const chunk of chunks) {
+      const chunkBlocks = [];
+      chunk.forEach((hash) => {
+        (byHash.get(hash) || []).forEach((block) => chunkBlocks.push(block));
+      });
+      try {
+        const resp = await fetch("/api/torrents/downloadable-files", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ hashes: chunk, refresh: !!refresh }),
+        });
+        if (!resp.ok) {
+          clearDownloadQueued(chunkBlocks);
+          continue;
+        }
+        const payload = await resp.json();
+        (payload.items || []).forEach((item) => {
+          const hash = item.info_hash;
+          if (!hash) return;
+          cacheDownloadableProbe(hash, item);
+          (byHash.get(hash) || []).forEach((block) => {
+            applyDownloadableProbe(block, item);
+            // Пустой ответ — не блокируем повторный enqueue (Hash backfill / retry).
+            if (probeResultIsEmpty(item)) {
+              block.removeAttribute("data-download-queued");
+            }
+          });
+        });
+      } catch (_) {
+        clearDownloadQueued(chunkBlocks);
+      }
+    }
   }
 
   async function pumpDownloadableQueue() {
     if (_downloadCheckBusy) return;
     _downloadCheckBusy = true;
     while (_downloadCheckQueue.length) {
-      const block = _downloadCheckQueue.shift();
-      const hash = block.getAttribute("data-download-check");
-      if (!hash) continue;
-      try {
-        const resp = await fetch(`/api/torrents/${encodeURIComponent(hash)}/downloadable-files`);
-        if (!resp.ok) continue;
-        const data = await resp.json();
-        const ids = new Set((data.file_ids || []).map(String));
-        const checking = new Set((data.checking_ids || []).map(String));
-        block.querySelectorAll("li[data-file-id]").forEach((li) => {
-          const id = li.getAttribute("data-file-id");
-          if (!id || !checking.has(id)) return;
-          const badge = li.querySelector(".file-ui-badge");
-          if (!badge) return;
-          badge.className = "badge badge-warn file-ui-badge";
-          badge.title = "Качается или проверяется на master";
-          badge.textContent = "проверка";
-        });
-        block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
-          const id = slot.getAttribute("data-file-id");
-          if (!id || !ids.has(id)) return;
-          if (!slot.querySelector("a.file-download")) {
-            const link = document.createElement("a");
-            link.className = "btn-icon file-download";
-            link.href = `/api/torrent-files/${id}/download`;
-            link.title = "Скачать файл";
-            link.setAttribute("download", "");
-            link.innerHTML = _DOWNLOAD_ICON;
-            slot.insertBefore(link, slot.firstChild);
+      const batch = _downloadCheckQueue.splice(0, _downloadCheckQueue.length);
+      const byHash = new Map();
+      const refreshHashes = [];
+      const dbOnlyHashes = [];
+      const seenRefresh = new Set();
+      const seenDb = new Set();
+      batch.forEach((block) => {
+        const hash = block.getAttribute("data-download-check");
+        if (!hash) return;
+        if (!byHash.has(hash)) byHash.set(hash, []);
+        byHash.get(hash).push(block);
+      });
+      byHash.forEach((blocks, hash) => {
+        const wantRefresh = blocks.some((b) => b.getAttribute("data-download-refresh") === "1");
+        if (wantRefresh) {
+          if (!seenRefresh.has(hash)) {
+            seenRefresh.add(hash);
+            refreshHashes.push(hash);
           }
-          ensureCopyPathButton(slot);
-          ensureEncoderButton(slot);
-          ensureMediaInfoButton(slot);
-        });
-      } catch (_) {
-        /* сеть/сервер — слот остаётся пустым */
-      }
+        } else if (!seenDb.has(hash)) {
+          seenDb.add(hash);
+          dbOnlyHashes.push(hash);
+        }
+      });
+      // refresh не должен заражать весь батч: две группы запросов.
+      await postDownloadableProbe(refreshHashes, true, byHash);
+      await postDownloadableProbe(dbOnlyHashes, false, byHash);
     }
     _downloadCheckBusy = false;
   }

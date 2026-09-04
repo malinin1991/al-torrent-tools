@@ -889,7 +889,7 @@ def _build_file_rows(
     for item in files:
         latest_kind = events_by_path.get(item.relative_path)
         disk_hash = hash_map.get(item.full_path) if item.full_path else None
-        # Диск не трогаем на SSR: .!qB→проверка и кнопки — фоновый /downloadable-files.
+        # Диск не трогаем на SSR: downloadable/checking из колонок БД.
         status = file_status_for_ui(
             relative_path=item.relative_path,
             full_path=item.full_path,
@@ -901,6 +901,13 @@ def _build_file_rows(
             incomplete=False,
             is_checking=bool(getattr(item, "is_checking", False)),
         )
+        sticky = (getattr(item, "ui_status", None) or "").strip().lower() or "ok"
+        downloadable = (
+            sticky in _DOWNLOADABLE_STATUSES
+            and bool(getattr(item, "media_present", False))
+            and status != UI_STATUS_CHECKING
+            and getattr(item, "id", None) is not None
+        )
         full_path = item.full_path
         rows.append(
             ReleaseFileRow(
@@ -911,7 +918,7 @@ def _build_file_rows(
                 in_torrent=True,
                 status=status,
                 file_id=getattr(item, "id", None),
-                downloadable=False,
+                downloadable=downloadable,
             )
         )
         seen_keys.add(item.relative_path)
@@ -985,34 +992,20 @@ def _active_archive_for_hash(db: Session, info_hash: str) -> TorrentArchive | No
 
 @dataclass
 class TorrentMediaProbe:
-    """Результат фонового опроса диска для одного торрента."""
+    """Результат опроса downloadable/checking для одного торрента."""
 
     downloadable_ids: list[int] = field(default_factory=list)
     checking_ids: list[int] = field(default_factory=list)
 
 
-def probe_torrent_media_files(db: Session, info_hash: str) -> TorrentMediaProbe:
-    """Кнопки скачивания с диска + overlay «проверка» (is_checking / master progress / hash_torrent).
-
-    Только api_present и не superseded. «проверка» не сканирует .!qB на диске:
-    live-флаг берём из qB master (progress < 1) и колонки is_checking.
-    """
-    if _active_archive_for_hash(db, info_hash) is None:
-        return TorrentMediaProbe()
-
-    normalized = (info_hash or "").strip().lower()
-    from app.services.qb_inventory import refresh_checking_flags_from_master
-
-    refresh_checking_flags_from_master(db, normalized)
-    rows = list(
-        db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all()
-    )
-    if not rows:
-        return TorrentMediaProbe()
-
-    hash_job_active = normalized in _info_hashes_with_active_hash_job(db, [normalized])
+def _probe_rows_from_db(
+    rows: list[TorrentFile],
+    *,
+    hash_job_active: bool,
+) -> TorrentMediaProbe:
+    """downloadable/checking только из колонок БД (без FS/qB)."""
     checking: list[int] = []
-    download_candidates: list[tuple[TorrentFile, str]] = []
+    downloadable: list[int] = []
     for row in rows:
         status = (row.ui_status or "").strip().lower() or "ok"
         ui = file_status_for_ui(
@@ -1026,34 +1019,169 @@ def probe_torrent_media_files(db: Session, info_hash: str) -> TorrentMediaProbe:
         )
         if ui == UI_STATUS_CHECKING and row.id is not None:
             checking.append(int(row.id))
+        if row.id is None:
+            continue
         if status not in _DOWNLOADABLE_STATUSES:
             continue
-        if not row.full_path or row.id is None:
+        if ui == UI_STATUS_CHECKING:
             continue
-        download_candidates.append((row, status))
-
-    downloadable: list[int] = []
-    if download_candidates:
-        paths = [row.full_path for row, _ in download_candidates if row.full_path]
-        media_root = resolve_media_root().resolve()
-        existing, partial = _scan_media_presence(paths, media_root=media_root)
-        for row, status in download_candidates:
-            full = row.full_path or ""
-            canon = str(complete_path_for(full))
-            if canon in partial:
-                continue
-            if _file_is_downloadable(
-                status=status,
-                full_path=full,
-                media_root=media_root,
-                existing_resolved=existing,
-            ):
-                downloadable.append(int(row.id))
+        if bool(getattr(row, "media_present", False)):
+            downloadable.append(int(row.id))
     return TorrentMediaProbe(downloadable_ids=downloadable, checking_ids=checking)
 
 
+def _refresh_media_flags_from_disk(
+    db: Session,
+    rows: list[TorrentFile],
+    *,
+    info_hash: str,
+) -> None:
+    """qB progress + FS → is_checking / media_present (sticky ui_status не трогаем)."""
+    from app.services.file_tracker import (
+        apply_checking_flag,
+        apply_media_present,
+        checking_flag_from_path,
+        media_present_from_path,
+    )
+    from app.services.qb_inventory import refresh_checking_flags_from_master
+
+    master_result = refresh_checking_flags_from_master(db, info_hash)
+    media_root = resolve_media_root().resolve()
+    candidates = [
+        row
+        for row in rows
+        if row.full_path
+        and ((row.ui_status or "").strip().lower() or "ok") in _DOWNLOADABLE_STATUSES
+    ]
+    paths = [row.full_path for row in candidates if row.full_path]
+    existing, partial = _scan_media_presence(paths, media_root=media_root)
+    dirty = False
+    for row in rows:
+        full = row.full_path or ""
+        present = False
+        if full:
+            canon = str(complete_path_for(full))
+            if canon not in partial:
+                try:
+                    resolved = str(complete_path_for(full).resolve())
+                except OSError:
+                    resolved = ""
+                present = bool(resolved and resolved in existing)
+            if not present:
+                present = media_present_from_path(full, media_root=media_root)
+        if apply_media_present(row, present):
+            dirty = True
+        # Master доступен — is_checking уже из progress+path.
+        # Master недоступен — сверка с диском в обе стороны (в т.ч. true→false).
+        if full and master_result is None:
+            if apply_checking_flag(row, checking_flag_from_path(full)):
+                dirty = True
+    if dirty:
+        db.commit()
+
+
+def probe_torrent_media_files(
+    db: Session, info_hash: str, *, refresh: bool = False
+) -> TorrentMediaProbe:
+    """Кнопки скачивания + overlay «проверка» из БД.
+
+    По умолчанию только колонки media_present / is_checking (без FS/qB).
+    refresh=True — обновить флаги с диска и master, затем отдать из БД.
+    """
+    if _active_archive_for_hash(db, info_hash) is None:
+        return TorrentMediaProbe()
+
+    normalized = (info_hash or "").strip().lower()
+    rows = list(
+        db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all()
+    )
+    if not rows:
+        return TorrentMediaProbe()
+
+    if refresh:
+        _refresh_media_flags_from_disk(db, rows, info_hash=normalized)
+        # Перечитать после commit (те же объекты обычно уже обновлены).
+        rows = list(
+            db.scalars(select(TorrentFile).where(TorrentFile.info_hash == normalized)).all()
+        )
+
+    hash_job_active = normalized in _info_hashes_with_active_hash_job(db, [normalized])
+    return _probe_rows_from_db(rows, hash_job_active=hash_job_active)
+
+
+def probe_torrents_media_files(
+    db: Session,
+    info_hashes: Sequence[str],
+    *,
+    refresh: bool = False,
+) -> dict[str, TorrentMediaProbe]:
+    """Batch probe: один ответ на список hash. По умолчанию только БД."""
+    normalized_list: list[str] = []
+    seen: set[str] = set()
+    for raw in info_hashes:
+        key = (raw or "").strip().lower()
+        if not key or len(key) < 16 or key in seen:
+            continue
+        seen.add(key)
+        normalized_list.append(key)
+    if not normalized_list:
+        return {}
+
+    active: set[str] = set()
+    archives = list(
+        db.scalars(
+            select(TorrentArchive)
+            .where(TorrentArchive.info_hash.in_(normalized_list))
+            .order_by(TorrentArchive.superseded.asc(), TorrentArchive.id.desc())
+        ).all()
+    )
+    for archive in archives:
+        key = (archive.info_hash or "").strip().lower()
+        if not key or key in active:
+            continue
+        if bool(getattr(archive, "superseded", False)):
+            continue
+        if not bool(getattr(archive, "api_present", True)):
+            continue
+        active.add(key)
+
+    result: dict[str, TorrentMediaProbe] = {
+        h: TorrentMediaProbe() for h in normalized_list
+    }
+    if not active:
+        return result
+
+    rows = list(
+        db.scalars(select(TorrentFile).where(TorrentFile.info_hash.in_(sorted(active)))).all()
+    )
+    by_hash: dict[str, list[TorrentFile]] = {}
+    for row in rows:
+        key = (row.info_hash or "").strip().lower()
+        by_hash.setdefault(key, []).append(row)
+
+    if refresh:
+        for key, group in by_hash.items():
+            _refresh_media_flags_from_disk(db, group, info_hash=key)
+        rows = list(
+            db.scalars(
+                select(TorrentFile).where(TorrentFile.info_hash.in_(sorted(active)))
+            ).all()
+        )
+        by_hash = {}
+        for row in rows:
+            key = (row.info_hash or "").strip().lower()
+            by_hash.setdefault(key, []).append(row)
+
+    hash_jobs = _info_hashes_with_active_hash_job(db, list(active))
+    for key, group in by_hash.items():
+        result[key] = _probe_rows_from_db(
+            group, hash_job_active=key in hash_jobs
+        )
+    return result
+
+
 def list_downloadable_file_ids(db: Session, info_hash: str) -> list[int]:
-    """file_id актуального торрента, которые можно скачать с диска."""
+    """file_id актуального торрента с media_present в БД (без скана диска)."""
     return probe_torrent_media_files(db, info_hash).downloadable_ids
 
 

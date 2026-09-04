@@ -1,4 +1,15 @@
-<details class="torrent-files"{% if allow_file_downloads and info_hash %} data-download-check="{{ info_hash }}" data-sse-key="tf-{{ info_hash }}"{% elif info_hash %} data-sse-key="tf-{{ info_hash }}"{% endif %}>
+{% set ns = namespace(needs_probe=false, needs_refresh=false) %}
+{% if allow_file_downloads and info_hash %}
+  {% for f in files %}
+    {% if f.status == 'checking' %}
+      {% set ns.needs_probe = true %}
+      {% set ns.needs_refresh = true %}
+    {% elif f.file_id and not f.downloadable and f.status in ('ok', 'new', 'changed') %}
+      {% set ns.needs_probe = true %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
+<details class="torrent-files"{% if allow_file_downloads and info_hash and ns.needs_probe %} data-download-check="{{ info_hash }}"{% if ns.needs_refresh %} data-download-refresh="1"{% endif %} data-sse-key="tf-{{ info_hash }}"{% elif info_hash %} data-sse-key="tf-{{ info_hash }}"{% endif %}>
   <summary class="muted">{{ files|torrent_files_summary }}</summary>
   <ul class="file-list">
     {% for f in files %}
@@ -14,7 +25,7 @@
         class="file-download-slot"
         data-file-id="{{ f.file_id }}"
         {% if f.full_path %}data-full-path="{{ f.full_path }}"{% endif %}
-      ></span>
+      >{% if f.downloadable %}<a class="btn-icon file-download" href="/api/torrent-files/{{ f.file_id }}/download" title="Скачать файл" download><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg></a>{% endif %}</span>
       {% endif %}
     </li>
     {% endfor %}

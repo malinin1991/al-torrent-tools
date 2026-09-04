@@ -3204,6 +3204,19 @@ def test_checking_flag_from_path_partial_and_complete(tmp_path: Path) -> None:
     assert checking_flag_from_path(None) is False
 
 
+def test_media_present_from_path(tmp_path: Path, monkeypatch) -> None:
+    from app.services.file_tracker import media_present_from_path
+
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: tmp_path)
+    media = tmp_path / "ep.mkv"
+    assert media_present_from_path(str(media)) is False
+    Path(str(media) + ".!qB").write_bytes(b"part")
+    assert media_present_from_path(str(media)) is False
+    media.write_bytes(b"done")
+    assert media_present_from_path(str(media)) is True
+    assert media_present_from_path(None) is False
+
+
 def test_checking_flag_from_sources_qb_progress(tmp_path: Path) -> None:
     """Выбранный файл на master с progress < 1 → checking, даже если complete уже на диске."""
     from app.services.file_tracker import checking_flag_from_sources
@@ -3219,17 +3232,30 @@ def test_checking_flag_from_sources_qb_progress(tmp_path: Path) -> None:
     assert checking_flag_from_sources(str(media), qb_progress=1.0, selected=True) is True
 
 
-def test_hash_checking_overlay_sets_and_clears_after_settle(tmp_path: Path) -> None:
-    """hash_torrent → is_checking true; после settle без .!qB → false."""
+def test_hash_checking_overlay_sets_and_clears_after_settle(tmp_path: Path, monkeypatch) -> None:
+    """hash_torrent → is_checking true; после settle без .!qB → false + media_present."""
     from app.services.file_tracker import FileTrackerService
 
+    monkeypatch.setattr("app.services.file_tracker.resolve_media_root", lambda: tmp_path)
     complete = tmp_path / "ok.mkv"
     complete.write_bytes(b"done")
     partial = tmp_path / "part.mkv"
     Path(str(partial) + ".!qB").write_bytes(b"part")
     rows = [
-        SimpleNamespace(full_path=str(complete), is_checking=False, ui_status="ok", updated_at=None),
-        SimpleNamespace(full_path=str(partial), is_checking=False, ui_status="changed", updated_at=None),
+        SimpleNamespace(
+            full_path=str(complete),
+            is_checking=False,
+            media_present=False,
+            ui_status="ok",
+            updated_at=None,
+        ),
+        SimpleNamespace(
+            full_path=str(partial),
+            is_checking=False,
+            media_present=False,
+            ui_status="changed",
+            updated_at=None,
+        ),
     ]
     db = MagicMock()
     service = FileTrackerService(db)
@@ -3241,6 +3267,8 @@ def test_hash_checking_overlay_sets_and_clears_after_settle(tmp_path: Path) -> N
     service._apply_hash_checking_overlay(rows, active=False)  # type: ignore[attr-defined]
     assert rows[0].is_checking is False
     assert rows[1].is_checking is True
+    assert rows[0].media_present is True
+    assert rows[1].media_present is False
     db.commit.assert_called()
 
 
