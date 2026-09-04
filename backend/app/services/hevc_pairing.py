@@ -1,7 +1,8 @@
 """Пары AVC↔HEVC внутри релиза для фильтров /releases.
 
 missing         — HEVC вообще нет для слота (release + batch_start + quality /
-                  source class). WEBRip↔WEB-DL не блокирует «HEVC есть».
+                  source class). Любые web*-типы (WEBRip/WEB-DL/WEB-DLRip…)
+                  в одном source_class «web» — не блокируют «HEVC есть».
                   AVC новее HEVC → не missing (это overdue после SLA).
 overdue         — на слоте уже есть HEVC (тот же batch_start; старый/частичный
                   ОК) И age > 24h без актуального exact-аналога
@@ -31,10 +32,10 @@ overdue         — на слоте уже есть HEVC (тот же batch_star
                   ALTT created_at не перебивает свежий AL-clock (нет backfill
                   api у torrent_id, исчезнувших из list API).
 type_mismatch   — HEVC есть (тот же start+quality в web-классе), но тип рипа
-                  WEBRip↔WEB-DL(WEBDL) расходится. Не попадаёт в missing.
+                  среди web* расходится (WEBRip↔WEB-DL↔WEB-DLRip…). Не missing.
 
 Бейдж (status): type_mismatch > overdue > missing.
-  WEBRip↔WEB-DL — допустимое presence (не missing); бирка «расхождение типов»
+  Разные web*-типы — допустимое presence (не missing); бирка «расхождение типов»
   важнее просрочки, даже если exact-пары нет и age > SLA.
 Число на бейдже «просрочка Nч» — часы сверх SLA: max(0, age − 24), не полный age.
 Бакеты фильтров раздельные: type_mismatch исключает overdue (флаг и фильтр
@@ -74,23 +75,32 @@ _CODEC_TOKEN_RE = re.compile(
 )
 _WS_RE = re.compile(r"\s+")
 _WEBRIP_RE = re.compile(r"^web[\s_-]?rip$", re.IGNORECASE)
+# WEB-DLRip раньше WEB-DL: иначе «web-dl-rip» съест префикс web-dl.
+_WEBDLRIP_RE = re.compile(r"^web[\s_-]?dl[\s_-]?rip$", re.IGNORECASE)
 _WEBDL_RE = re.compile(r"^web[\s_-]?dl$", re.IGNORECASE)
 
-# Эпизодный старт батча: regular / ova / film / special.
+# Эпизодный старт батча: regular / ova / ona / film / special / opaque label.
 # Все ярлыки одного семантического типа → общий ключ для presence/missing,
 # но film и special намеренно остаются разными слотами.
+# Неразобранный непустой текст → ("label", folded) — пара по одинаковому описанию.
 # overdue по-прежнему требует точный torrent_description (exact_pair_key).
-_FILM_RE = re.compile(
-    r"^(?:"
+_FILM_BASE = (
+    r"(?:"
     r"фильм|film|movie|"
     r"п\s*(?:/|\.)?\s*[фм]\.?(?:\s+фильм)?|"
     r"полнометражный(?:\s+фильм)?"
-    r")\.?$",
+    r")\.?"
+)
+_FILM_RE = re.compile(rf"^{_FILM_BASE}$", re.IGNORECASE)
+_FILM_RANGE_RE = re.compile(
+    rf"^{_FILM_BASE}\s+(\d+)(?:\s*-\s*(\d+))?$",
     re.IGNORECASE,
 )
 _SPECIAL_RE = re.compile(r"^(?:спешл|specials?)\.?$", re.IGNORECASE)
 _OVA_ALONE_RE = re.compile(r"^ova$", re.IGNORECASE)
 _OVA_RANGE_RE = re.compile(r"^ova\s+(\d+)(?:\s*-\s*(\d+))?$", re.IGNORECASE)
+_ONA_ALONE_RE = re.compile(r"^ona$", re.IGNORECASE)
+_ONA_RANGE_RE = re.compile(r"^ona\s+(\d+)(?:\s*-\s*(\d+))?$", re.IGNORECASE)
 _REGULAR_RE = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?$")
 
 # Неполный ключ: не кладём в множества HEVC и не считаем «есть пара».
@@ -128,7 +138,7 @@ def normalize_episodes(description: str | None) -> str:
 
 
 def batch_start_key(description: str | None) -> BatchStartKey | None:
-    """Ключ старта батча эпизодов; None — неразобранное / пустое (не пара)."""
+    """Ключ старта батча эпизодов; None — пустое описание (не пара)."""
     span = episode_span(description)
     if span is None:
         return None
@@ -138,13 +148,14 @@ def batch_start_key(description: str | None) -> BatchStartKey | None:
 def episode_span(
     description: str | None,
 ) -> tuple[BatchStartKey, int, int] | None:
-    """(batch_start, first_ep, last_ep); None если не разобрали."""
+    """(batch_start, first_ep, last_ep); None только для пустого описания."""
     folded = normalize_episodes(description)
     if not folded:
         return None
 
     if _FILM_RE.match(folded):
-        return (("film",), 1, 1)
+        # Как голый OVA → ("ova", 1): singleton film в том же слоте, что Film 1-N.
+        return (("film", 1), 1, 1)
 
     if _SPECIAL_RE.match(folded):
         return (("special",), 1, 1)
@@ -159,6 +170,23 @@ def episode_span(
         lo, hi = (start, end) if end >= start else (end, start)
         return (("ova", start), lo, hi)
 
+    if _ONA_ALONE_RE.match(folded):
+        return (("ona", 1), 1, 1)
+
+    ona_m = _ONA_RANGE_RE.match(folded)
+    if ona_m:
+        start = int(ona_m.group(1))
+        end = int(ona_m.group(2) or start)
+        lo, hi = (start, end) if end >= start else (end, start)
+        return (("ona", start), lo, hi)
+
+    film_m = _FILM_RANGE_RE.match(folded)
+    if film_m:
+        start = int(film_m.group(1))
+        end = int(film_m.group(2) or start)
+        lo, hi = (start, end) if end >= start else (end, start)
+        return (("film", start), lo, hi)
+
     regular_m = _REGULAR_RE.match(folded)
     if regular_m:
         start = int(regular_m.group(1))
@@ -166,7 +194,8 @@ def episode_span(
         lo, hi = (start, end) if end >= start else (end, start)
         return (("regular", start), lo, hi)
 
-    return None
+    # Opaque label: одинаковый текст AVC/HEVC → пара без новых regex.
+    return (("label", folded), 1, 1)
 
 
 def content_file_keys(relative_paths: Sequence[str] | None) -> frozenset[str]:
@@ -263,19 +292,23 @@ def _strip_codec_tokens(raw: str) -> str:
 
 
 def normalize_rip_type(raw: str | None) -> str:
-    """Канон типа рипа: WEBDL/WEB-DL → WEB-DL; WEBRip → WEBRip; иначе as-is."""
+    """Канон: WEBRip; WEB-DLRip; WEBDL/WEB-DL → WEB-DL; иначе as-is."""
     text = (raw or "").strip()
     if not text:
         return ""
     if _WEBRIP_RE.match(text):
         return "WEBRip"
+    if _WEBDLRIP_RE.match(text):
+        return "WEB-DLRip"
     if _WEBDL_RE.match(text):
         return "WEB-DL"
     return text
 
 
 def is_web_rip_type(rip_type: str | None) -> bool:
-    return normalize_rip_type(rip_type) in ("WEBRip", "WEB-DL")
+    """Любой web*-тип (WEBRip, WEB-DL, WEB-DLRip, …) — одно presence-семейство."""
+    normalized = normalize_rip_type(rip_type)
+    return bool(normalized) and normalized.casefold().startswith("web")
 
 
 def source_class_for_rip(rip_type: str | None) -> str:

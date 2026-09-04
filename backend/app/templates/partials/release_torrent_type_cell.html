@@ -3,7 +3,7 @@
   {% if t.hevc_pair_status == "overdue" %}
   <span class="badge {% if t.hevc_overdue_age_from_api %}badge-danger{% else %}badge-warn{% endif %}" title="{% if t.hevc_overdue_age_from_api %}Просрочка по дате загрузки AniLiberty (api_created_at){% else %}Просрочка по дате появления в ALTT (нет api_created_at){% endif %}">просрочка {{ (t.hevc_pair_age_hours or 0)|int }}ч</span>
   {% elif t.hevc_pair_status == "type_mismatch" %}
-  <span class="badge badge-muted" title="HEVC есть на том же старте батча, но тип рипа WEBRip↔WEB-DL расходится">расхождение типов</span>
+  <span class="badge badge-muted" title="HEVC есть на том же старте батча и quality, но web-тип рипа расходится (WEBRip/WEB-DL/WEB-DLRip…)">расхождение типов</span>
   {% elif t.hevc_pair_status == "missing" %}
   <span class="badge badge-warn" title="Для этого батча в релизе нет HEVC (тот же старт и quality)">нет HEVC</span>
   {% endif %}

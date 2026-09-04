@@ -129,44 +129,57 @@ def test_batch_start_key_regular_ova_film() -> None:
     assert batch_start_key("OVA 1-2") == ("ova", 1)
     assert batch_start_key("ova 3") == ("ova", 3)
     assert batch_start_key("OVA") == ("ova", 1)
-    assert batch_start_key("Фильм") == ("film",)
-    assert batch_start_key("ФИЛЬМ") == ("film",)
-    assert batch_start_key("фильм") == ("film",)
-    assert batch_start_key("Film") == ("film",)
-    assert batch_start_key("FILM") == ("film",)
-    assert batch_start_key("П/ф фильм") == ("film",)
-    assert batch_start_key("П/Ф ФИЛЬМ") == ("film",)
-    assert batch_start_key("п/ф") == ("film",)
-    assert batch_start_key("п / ф фильм") == ("film",)
-    assert batch_start_key("П/м фильм") == ("film",)
-    assert batch_start_key("п / М ФИЛЬМ") == ("film",)
-    assert batch_start_key("п.м. фильм") == ("film",)
-    assert batch_start_key("полнометражный фильм") == ("film",)
-    assert batch_start_key("Полнометражный") == ("film",)
-    assert batch_start_key("Movie") == ("film",)
-    assert batch_start_key("MOVIE.") == ("film",)
+    assert batch_start_key("ONA") == ("ona", 1)
+    assert batch_start_key("ONA 1-15") == ("ona", 1)
+    assert batch_start_key("ona 3") == ("ona", 3)
+    assert batch_start_key("Фильм") == ("film", 1)
+    assert batch_start_key("ФИЛЬМ") == ("film", 1)
+    assert batch_start_key("фильм") == ("film", 1)
+    assert batch_start_key("Film") == ("film", 1)
+    assert batch_start_key("FILM") == ("film", 1)
+    assert batch_start_key("Фильм 1-3") == ("film", 1)
+    assert batch_start_key("Film 1-3") == ("film", 1)
+    assert batch_start_key("П/ф фильм") == ("film", 1)
+    assert batch_start_key("П/Ф ФИЛЬМ") == ("film", 1)
+    assert batch_start_key("п/ф") == ("film", 1)
+    assert batch_start_key("п / ф фильм") == ("film", 1)
+    assert batch_start_key("П/м фильм") == ("film", 1)
+    assert batch_start_key("п / М ФИЛЬМ") == ("film", 1)
+    assert batch_start_key("п.м. фильм") == ("film", 1)
+    assert batch_start_key("полнометражный фильм") == ("film", 1)
+    assert batch_start_key("Полнометражный") == ("film", 1)
+    assert batch_start_key("Movie") == ("film", 1)
+    assert batch_start_key("MOVIE.") == ("film", 1)
     assert batch_start_key("Спешл") == ("special",)
     assert batch_start_key("СПЕШЛ.") == ("special",)
     assert batch_start_key("Special") == ("special",)
     assert batch_start_key("Specials") == ("special",)
     assert batch_start_key("") is None
-    assert batch_start_key("Movie Special") is None
+    # Неразобранный ярлык → opaque label (пара по одинаковому тексту).
+    assert batch_start_key("Movie Special") == ("label", "movie special")
+    assert batch_start_key("Extras 1-2") == ("label", "extras 1-2")
     # Регистр не создаёт разные start-key.
-    assert batch_start_key("ФИЛЬМ") == batch_start_key("Фильм") == ("film",)
+    assert batch_start_key("ФИЛЬМ") == batch_start_key("Фильм") == ("film", 1)
     assert batch_start_key("OVA") == batch_start_key("ova") == ("ova", 1)
+    assert batch_start_key("ONA") == batch_start_key("ona") == ("ona", 1)
 
 
 def test_episode_span_and_hevc_covers_range() -> None:
     assert episode_span("1-17") == (("regular", 1), 1, 17)
     assert episode_span("1-16") == (("regular", 1), 1, 16)
     assert episode_span("OVA 1-2") == (("ova", 1), 1, 2)
-    assert episode_span("Фильм") == (("film",), 1, 1)
+    assert episode_span("ONA 1-15") == (("ona", 1), 1, 15)
+    assert episode_span("Фильм") == (("film", 1), 1, 1)
+    assert episode_span("Фильм 1-3") == (("film", 1), 1, 3)
     # Инвертированный хвост: start-key как раньше от первого числа, lo/hi упорядочены.
     assert episode_span("10-5") == (("regular", 10), 5, 10)
     assert hevc_covers_avc_episodes("1-17", "1-16") is True
     assert hevc_covers_avc_episodes("1-16", "1-17") is False
     assert hevc_covers_avc_episodes("1-17", "1-17") is True
     assert hevc_covers_avc_episodes("OVA 1-2", "1-2") is False
+    assert hevc_covers_avc_episodes("ONA 1-15", "ONA 1-14") is True
+    assert hevc_covers_avc_episodes("Фильм 1-3", "Фильм") is True
+    assert hevc_covers_avc_episodes("Фильм", "Фильм 1-3") is False
 
 
 def test_film_case_avc_hevc_not_missing() -> None:
@@ -316,7 +329,7 @@ def test_movie_special_and_cross_rip_do_not_form_false_exact_pairs() -> None:
     unpaired = find_unpaired_avc(semantic_mismatch, now=now)
     assert len(unpaired) == 1
     assert unpaired[0].missing is True
-    assert unpaired[0].batch_start == ("film",)
+    assert unpaired[0].batch_start == ("film", 1)
 
     cross_rip = [
         _row(
@@ -371,11 +384,20 @@ def test_rip_family_strips_codec_from_quality_json_type() -> None:
 
 
 def test_normalize_rip_type_web_variants() -> None:
-    """WEBRip/WEB-DL канон: пробел, дефис, подчёркивание, слитное написание."""
+    """WEBRip/WEB-DL/WEB-DLRip канон: пробел, дефис, подчёркивание, слитное."""
     for raw in ("WEBRip", "WEB Rip", "WEB_Rip", "web-rip", "WEBRIP"):
         assert normalize_rip_type(raw) == "WEBRip"
     for raw in ("WEB-DL", "WEBDL", "WEB DL", "WEB_DL", "web-dl", "Web Dl"):
         assert normalize_rip_type(raw) == "WEB-DL"
+    for raw in (
+        "WEB-DLRip",
+        "WEBDLRip",
+        "WEB DL Rip",
+        "WEB_DL_Rip",
+        "web-dl-rip",
+        "Web Dl Rip",
+    ):
+        assert normalize_rip_type(raw) == "WEB-DLRip"
     assert normalize_rip_type("BDRip") == "BDRip"
 
 
@@ -505,6 +527,110 @@ def test_bdrip_still_distinct_from_web() -> None:
     assert unpaired[0].rip_family == "BDRip 1080p"
     assert unpaired[0].missing is True
     assert unpaired[0].type_mismatch is False
+
+
+def test_webdl_avc_webdlrip_hevc_type_mismatch_not_missing() -> None:
+    """WEB-DL AVC + WEB-DLRip HEVC same start+quality → type_mismatch, не missing."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    old = now - timedelta(hours=HEVC_SLA_HOURS + 2)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-12",
+            codec="AVC",
+            rip_type="WEB-DL",
+            created_at=old,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-12",
+            codec="HEVC",
+            rip_type="WEB-DLRip",
+            created_at=old,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is False
+    assert unpaired[0].type_mismatch is True
+    assert unpaired[0].overdue is False
+    assert unpaired[0].status == "type_mismatch"
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="missing", now=now) == set()
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="overdue", now=now) == set()
+    assert release_ids_matching_hevc_filter(
+        rows, hevc_filter="type_mismatch", now=now
+    ) == {1}
+
+
+def test_bdrip_vs_webdlrip_still_missing() -> None:
+    """BDRip vs WEB-DLRip — разные source → missing, не type_mismatch."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    rows = [
+        _row(
+            archive_id=1,
+            episodes="1-4",
+            codec="AVC",
+            rip_type="BDRip",
+            created_at=now,
+        ),
+        _row(
+            archive_id=2,
+            episodes="1-4",
+            codec="HEVC",
+            rip_type="WEB-DLRip",
+            created_at=now,
+        ),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is True
+    assert unpaired[0].type_mismatch is False
+
+
+def test_ona_avc_hevc_pair_ok() -> None:
+    """ONA / ONA 1-15 AVC+HEVC — пара; без HEVC → missing."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    paired = [
+        _row(archive_id=1, episodes="ONA 1-15", codec="AVC", created_at=now),
+        _row(archive_id=2, episodes="ONA 1-15", codec="HEVC", created_at=now),
+    ]
+    assert find_unpaired_avc(paired, now=now) == []
+    alone = [
+        _row(archive_id=3, episodes="ONA", codec="AVC", created_at=now),
+    ]
+    unpaired = find_unpaired_avc(alone, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is True
+    assert unpaired[0].batch_start == ("ona", 1)
+
+
+def test_film_range_avc_hevc_pair_ok() -> None:
+    """Фильм 1-3 / Film 1-3 AVC+HEVC — пара по film-start."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    for label in ("Фильм 1-3", "Film 1-3"):
+        rows = [
+            _row(archive_id=1, episodes=label, codec="AVC", created_at=now),
+            _row(archive_id=2, episodes=label, codec="HEVC", created_at=now),
+        ]
+        assert find_unpaired_avc(rows, now=now) == []
+
+
+def test_opaque_label_pairs_by_same_description() -> None:
+    """Произвольный одинаковый ярлык → пара; разный → не пара."""
+    now = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    same = [
+        _row(archive_id=1, episodes="Extras 1-2", codec="AVC", created_at=now),
+        _row(archive_id=2, episodes="Extras 1-2", codec="HEVC", created_at=now),
+    ]
+    assert find_unpaired_avc(same, now=now) == []
+    different = [
+        _row(archive_id=3, episodes="Extras 1-2", codec="AVC", created_at=now),
+        _row(archive_id=4, episodes="Bonus", codec="HEVC", created_at=now),
+    ]
+    unpaired = find_unpaired_avc(different, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].missing is True
+    assert unpaired[0].batch_start == ("label", "extras 1-2")
 
 
 def test_avc_newer_than_hevc_not_missing_until_sla() -> None:
