@@ -1,6 +1,8 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,7 +37,11 @@ from app.services.runtime_settings import SECRET_SETTING_KEYS, get_setting_value
 from app.services.system_status import collect_system_status
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.video_kensetsu import (
+    ENCODE_BATCH_MAX_FILES,
+    VideoKensetsuHttpError,
+    coerce_preset_available,
     encode as video_kensetsu_encode,
+    encode_timeout_for_paths,
     find_preset,
     is_video_kensetsu_enabled,
     list_presets as video_kensetsu_list_presets,
@@ -504,14 +510,106 @@ class SendToEncoderIn(BaseModel):
     preset_id: str
 
 
-@router.get("/video-kensetsu/presets")
-async def video_kensetsu_presets(db: Session = Depends(get_db)) -> dict:
-    """Прокси списка пресетов Video Kensetsu (без CORS с браузера)."""
+class SendToEncoderBatchIn(BaseModel):
+    file_ids: list[int] = Field(default_factory=list, max_length=ENCODE_BATCH_MAX_FILES)
+    preset_id: str
+
+
+def _require_video_kensetsu_base_url(db: Session) -> str:
     if not is_video_kensetsu_enabled(db):
         raise HTTPException(status_code=400, detail="Video Kensetsu выключен в настройках")
     base_url = resolve_video_kensetsu_base_url(db)
     if not base_url:
         raise HTTPException(status_code=400, detail="Не задан URL Video Kensetsu")
+    return base_url
+
+
+def _resolve_encode_path_for_file(
+    db: Session,
+    file_id: int,
+) -> tuple[str | None, str | None]:
+    """Возвращает (encode_path, error). error заполнен при локальном fail."""
+    row = db.get(TorrentFile, file_id)
+    if row is None:
+        return None, "Файл не найден"
+    if not torrent_allows_media_download(db, row.info_hash or ""):
+        return None, "Файл недоступен для кодирования"
+    resolved = resolve_media_file_for_download(row)
+    if resolved is None:
+        return None, "Файл недоступен для кодирования"
+    encode_path = str(resolved)
+    if not encode_path:
+        return None, "У файла нет пути для кодировщика"
+    return encode_path, None
+
+
+def _map_encoder_exception(exc: Exception) -> HTTPException:
+    """Пробрасывает 400/403/(404) от энкодера; остальное → 502 с текстом."""
+    if isinstance(exc, VideoKensetsuHttpError):
+        status = exc.status_code if exc.status_code in (400, 403, 404, 409, 422) else 502
+        return HTTPException(status_code=status, detail=exc.message)
+    return HTTPException(status_code=502, detail=f"Ошибка кодировщика: {exc}")
+
+
+def _match_encoder_error_file_id(
+    err: dict[str, Any],
+    paths: list[str],
+    path_file_ids: list[int],
+) -> int | None:
+    marker = str(err.get("path") or err.get("filename") or "").strip()
+    if not marker:
+        return None
+    for idx, path in enumerate(paths):
+        if path == marker or path.endswith(marker) or path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] == marker:
+            return path_file_ids[idx]
+    return None
+
+
+def _enrich_encoder_errors(
+    raw_errors: Any,
+    paths: list[str],
+    path_file_ids: list[int],
+) -> tuple[list[dict[str, Any]] | None, set[int]]:
+    if not isinstance(raw_errors, list) or not raw_errors:
+        return None, set()
+    enriched: list[dict[str, Any]] = []
+    failed: set[int] = set()
+    for item in raw_errors:
+        if not isinstance(item, dict):
+            enriched.append({"error": str(item)})
+            continue
+        row = dict(item)
+        fid = _match_encoder_error_file_id(row, paths, path_file_ids)
+        if fid is not None:
+            row["file_id"] = fid
+            failed.add(fid)
+        enriched.append(row)
+    return enriched, failed
+
+
+async def _resolve_encoder_preset(base_url: str, preset_id: str) -> str:
+    cleaned = (preset_id or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Не передан preset_id")
+    try:
+        presets = await video_kensetsu_list_presets(base_url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Video Kensetsu недоступен: {exc}") from exc
+    preset = find_preset(presets, cleaned)
+    if preset is None:
+        raise HTTPException(status_code=404, detail=f"Пресет не найден: {cleaned}")
+    if not coerce_preset_available(preset.get("available"), default=True):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Пресет недоступен на кодировщике: {cleaned}",
+        )
+    return cleaned
+
+
+@router.get("/video-kensetsu/presets")
+async def video_kensetsu_presets(db: Session = Depends(get_db)) -> dict:
+    """Прокси списка пресетов Video Kensetsu (без CORS с браузера)."""
+    base_url = _require_video_kensetsu_base_url(db)
     try:
         presets = await video_kensetsu_list_presets(base_url)
     except Exception as exc:
@@ -523,6 +621,8 @@ async def video_kensetsu_presets(db: Session = Depends(get_db)) -> dict:
                 "id": str(item.get("id") or ""),
                 "name": str(item.get("name") or item.get("id") or ""),
                 "description": item.get("description"),
+                "group": item.get("group"),
+                "available": coerce_preset_available(item.get("available"), default=True),
             }
             for item in presets
             if item.get("id")
@@ -530,54 +630,138 @@ async def video_kensetsu_presets(db: Session = Depends(get_db)) -> dict:
     }
 
 
+@router.post("/torrent-files/send-to-encoder")
+async def send_torrent_files_to_encoder_batch(
+    body: SendToEncoderBatchIn,
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Пакетная отправка media-файлов в Video Kensetsu."""
+    base_url = _require_video_kensetsu_base_url(db)
+    preset_id = await _resolve_encoder_preset(base_url, body.preset_id)
+
+    file_ids = list(dict.fromkeys(int(fid) for fid in (body.file_ids or [])))
+    if not file_ids:
+        raise HTTPException(status_code=400, detail="Не переданы file_ids")
+    if len(file_ids) > ENCODE_BATCH_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Слишком много файлов за раз (макс. {ENCODE_BATCH_MAX_FILES})",
+        )
+
+    paths: list[str] = []
+    path_file_ids: list[int] = []
+    local_errors: list[dict[str, Any]] = []
+    for file_id in file_ids:
+        encode_path, error = _resolve_encode_path_for_file(db, file_id)
+        if error or not encode_path:
+            local_errors.append({"file_id": file_id, "error": error or "Файл недоступен"})
+            continue
+        paths.append(encode_path)
+        path_file_ids.append(file_id)
+
+    if not paths:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Нет файлов для отправки в кодировщик",
+                "local_errors": local_errors,
+            },
+        )
+
+    try:
+        encoded = await video_kensetsu_encode(
+            base_url,
+            paths=paths,
+            preset_id=preset_id,
+            timeout_sec=encode_timeout_for_paths(len(paths)),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _map_encoder_exception(exc) from exc
+
+    status_code = int(encoded.get("status_code") or 200)
+    encoder_body = encoded.get("body")
+    encoder_payload = encoder_body if isinstance(encoder_body, dict) else {"result": encoder_body}
+    created = encoder_payload.get("created")
+    if created is None and status_code in (200, 207):
+        created = len(encoder_payload.get("jobs") or []) or (1 if encoder_payload.get("job") else 0)
+
+    enriched_errors, failed_ids = _enrich_encoder_errors(
+        encoder_payload.get("errors"),
+        paths,
+        path_file_ids,
+    )
+    accepted_file_ids = [fid for fid in path_file_ids if fid not in failed_ids]
+    partial = status_code == 207 or bool(local_errors) or bool(enriched_errors)
+
+    response_body: dict[str, Any] = {
+        "ok": True,
+        "partial": partial,
+        "preset_id": preset_id,
+        "created": created,
+        "file_ids": accepted_file_ids,
+        "jobs": encoder_payload.get("jobs"),
+        "job": encoder_payload.get("job"),
+        "errors": enriched_errors,
+        "local_errors": local_errors or None,
+        "result": encoder_payload,
+    }
+    http_status = 207 if partial else 200
+    return JSONResponse(content=response_body, status_code=http_status)
+
+
 @router.post("/torrent-files/{file_id}/send-to-encoder")
 async def send_torrent_file_to_encoder(
     file_id: int,
     body: SendToEncoderIn,
     db: Session = Depends(get_db),
-) -> dict:
+) -> JSONResponse:
     """Отправить media-файл в Video Kensetsu с выбранным пресетом."""
-    if not is_video_kensetsu_enabled(db):
-        raise HTTPException(status_code=400, detail="Video Kensetsu выключен в настройках")
-    base_url = resolve_video_kensetsu_base_url(db)
-    if not base_url:
-        raise HTTPException(status_code=400, detail="Не задан URL Video Kensetsu")
+    base_url = _require_video_kensetsu_base_url(db)
 
-    row = db.get(TorrentFile, file_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Файл не найден")
-    if not torrent_allows_media_download(db, row.info_hash or ""):
-        raise HTTPException(status_code=404, detail="Файл недоступен для кодирования")
-    resolved = resolve_media_file_for_download(row)
-    if resolved is None:
-        raise HTTPException(status_code=404, detail="Файл недоступен для кодирования")
+    encode_path, error = _resolve_encode_path_for_file(db, file_id)
+    if error or not encode_path:
+        raise HTTPException(status_code=404, detail=error or "Файл недоступен для кодирования")
 
-    encode_path = str(resolved)
-    if not encode_path:
-        raise HTTPException(status_code=404, detail="У файла нет пути для кодировщика")
-
-    preset_id = (body.preset_id or "").strip()
-    if not preset_id:
-        raise HTTPException(status_code=400, detail="Не передан preset_id")
+    preset_id = await _resolve_encoder_preset(base_url, body.preset_id)
 
     try:
-        presets = await video_kensetsu_list_presets(base_url)
-        preset = find_preset(presets, preset_id)
-        if preset is None:
-            raise HTTPException(status_code=404, detail=f"Пресет не найден: {preset_id}")
-        result = await video_kensetsu_encode(base_url, path=encode_path, preset=preset)
+        encoded = await video_kensetsu_encode(
+            base_url,
+            paths=[encode_path],
+            preset_id=preset_id,
+        )
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Ошибка кодировщика: {exc}") from exc
+        raise _map_encoder_exception(exc) from exc
 
-    return {
-        "ok": True,
+    status_code = int(encoded.get("status_code") or 200)
+    encoder_body = encoded.get("body")
+    encoder_payload = encoder_body if isinstance(encoder_body, dict) else {"result": encoder_body}
+    errors = encoder_payload.get("errors") if isinstance(encoder_payload, dict) else None
+    if isinstance(errors, list) and not errors:
+        errors = None
+    partial = status_code == 207 or bool(errors)
+    created = encoder_payload.get("created") if isinstance(encoder_payload, dict) else None
+    if created is None and status_code in (200, 207):
+        created = len(encoder_payload.get("jobs") or []) or (1 if encoder_payload.get("job") else 0)
+
+    result: dict[str, Any] = {
+        "ok": not partial,
+        "partial": partial,
         "file_id": file_id,
         "path": encode_path,
         "preset_id": preset_id,
-        "result": result,
+        "created": created,
+        "result": encoder_body,
+        "errors": errors,
+        "job": encoder_payload.get("job") if isinstance(encoder_payload, dict) else None,
+        "jobs": encoder_payload.get("jobs") if isinstance(encoder_payload, dict) else None,
+        "status_code": status_code,
     }
+    return JSONResponse(content=result, status_code=207 if partial else 200)
 
 
 @router.get("/torrent-files/{file_id}/mediainfo")

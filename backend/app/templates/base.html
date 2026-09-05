@@ -459,6 +459,11 @@
       padding: 0;
       cursor: pointer;
     }
+    .file-list .file-encode-check {
+      vertical-align: middle;
+      margin-right: 4px;
+      cursor: pointer;
+    }
     .file-list .file-download:hover,
     .file-list .file-copy-path:hover,
     .file-list .file-send-encoder:hover,
@@ -467,6 +472,28 @@
     .file-list .file-copy-path svg,
     .file-list .file-send-encoder svg,
     .file-list .file-mediainfo svg { width: 12px; height: 12px; fill: currentColor; }
+    .torrent-files summary {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .torrent-encode-select-actions {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .torrent-encode-select-actions[hidden] { display: none !important; }
+    .btn-link {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: #9ad1ff;
+      cursor: pointer;
+      font: inherit;
+      text-decoration: underline;
+    }
+    .btn-link:hover { color: #c5e4ff; }
     #encoder-preset-dialog {
       border: 1px solid #444;
       border-radius: 8px;
@@ -478,6 +505,36 @@
     #encoder-preset-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
     #encoder-preset-dialog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     #encoder-preset-dialog select.input { min-width: 220px; }
+    #encoder-batch-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      background: #1b1b1b;
+      border-top: 1px solid #444;
+      box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+    }
+    #encoder-batch-bar.is-visible { display: flex; }
+    #encoder-batch-bar .encoder-batch-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    #encoder-batch-bar .encoder-batch-status {
+      color: #aaa;
+      font-size: 0.9em;
+      min-width: 0;
+      flex: 1 1 160px;
+    }
+    body.has-encoder-batch-bar { padding-bottom: 64px; }
 
     #mediainfo-dialog {
       border: 1px solid #444;
@@ -587,7 +644,28 @@
         .join("; ");
     }
     if (typeof detail === "object") {
-      return detail.msg || JSON.stringify(detail);
+      const parts = [];
+      const main =
+        detail.message || detail.msg || detail.error || null;
+      if (main) parts.push(String(main));
+      if (Array.isArray(detail.local_errors) && detail.local_errors.length) {
+        const brief = detail.local_errors
+          .slice(0, 3)
+          .map((item) => {
+            if (!item) return "";
+            if (typeof item === "string") return item;
+            return item.error ? String(item.error) : "";
+          })
+          .filter(Boolean)
+          .join("; ");
+        const extra =
+          detail.local_errors.length > 3
+            ? ` (+${detail.local_errors.length - 3})`
+            : "";
+        if (brief) parts.push(brief + extra);
+      }
+      if (parts.length) return parts.join(" — ");
+      return JSON.stringify(detail);
     }
     return String(detail);
   }
@@ -639,17 +717,53 @@
     const data = await resp.json();
     const presets = data.presets || [];
     if (!presets.length) throw new Error("Пресеты не найдены");
+
+    const groups = new Map();
+    const ungrouped = [];
     presets.forEach((p) => {
+      const group = (p.group || "").trim();
+      if (!group) {
+        ungrouped.push(p);
+        return;
+      }
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push(p);
+    });
+
+    const groupLabels = { rip: "WEBRip / HDTV / BDRip", remux: "BD / Remux" };
+    const appendOption = (parent, p) => {
       const opt = document.createElement("option");
       opt.value = p.id;
-      opt.textContent = p.name || p.id;
-      select.appendChild(opt);
+      const name = p.name || p.id;
+      opt.textContent = p.id && p.id !== name ? `${name} (${p.id})` : name;
+      if (p.available === false) {
+        opt.disabled = true;
+        opt.textContent += " — недоступен";
+      }
+      parent.appendChild(opt);
+    };
+
+    groups.forEach((items, group) => {
+      const og = document.createElement("optgroup");
+      og.label = groupLabels[group] || group;
+      items.forEach((p) => appendOption(og, p));
+      select.appendChild(og);
     });
+    ungrouped.forEach((p) => appendOption(select, p));
+
+    const firstEnabled = [...select.querySelectorAll("option")].find((o) => !o.disabled);
+    if (firstEnabled) select.value = firstEnabled.value;
+
     dialog.showModal();
     return new Promise((resolve) => {
       const onClose = () => {
         dialog.removeEventListener("close", onClose);
         if (dialog.returnValue === "ok") {
+          const selected = select.selectedOptions[0];
+          if (!selected || selected.disabled) {
+            resolve(null);
+            return;
+          }
           resolve(select.value || null);
         } else {
           resolve(null);
@@ -657,6 +771,171 @@
       };
       dialog.addEventListener("close", onClose);
     });
+  }
+
+  function selectedEncodeFileIds(root) {
+    const scope = root || document;
+    return [...scope.querySelectorAll(".file-encode-check:checked")]
+      .map((el) => el.getAttribute("data-file-id"))
+      .filter(Boolean)
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id));
+  }
+
+  function ensureEncoderBatchBar() {
+    let bar = document.getElementById("encoder-batch-bar");
+    if (bar) return bar;
+    bar = document.createElement("div");
+    bar.id = "encoder-batch-bar";
+    bar.innerHTML =
+      '<div class="encoder-batch-count">Выбрано: <strong data-encoder-count>0</strong></div>' +
+      '<div class="encoder-batch-status" data-encoder-status></div>' +
+      '<div class="encoder-batch-actions">' +
+      '<button type="button" class="btn btn-secondary" data-encoder-clear>Снять все</button>' +
+      '<button type="button" class="btn" data-encoder-send>Отправить в кодировщик</button>' +
+      "</div>";
+    document.body.appendChild(bar);
+    bar.querySelector("[data-encoder-clear]").addEventListener("click", () => {
+      document.querySelectorAll(".file-encode-check:checked").forEach((el) => {
+        el.checked = false;
+      });
+      updateEncoderBatchBar();
+    });
+    bar.querySelector("[data-encoder-send]").addEventListener("click", async () => {
+      const ids = selectedEncodeFileIds();
+      if (!ids.length) return;
+      const sendBtn = bar.querySelector("[data-encoder-send]");
+      const statusEl = bar.querySelector("[data-encoder-status]");
+      try {
+        sendBtn.disabled = true;
+        statusEl.textContent = "Выбор пресета…";
+        const presetId = await pickEncoderPreset();
+        if (!presetId) {
+          statusEl.textContent = "";
+          return;
+        }
+        statusEl.textContent = "Отправка…";
+        const resp = await fetch("/api/torrent-files/send-to-encoder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ file_ids: ids, preset_id: presetId }),
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok && resp.status !== 207) {
+          throw new Error(formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`);
+        }
+        const created = payload.created;
+        const encErrors = Array.isArray(payload.errors) ? payload.errors.length : 0;
+        const localErrors = Array.isArray(payload.local_errors) ? payload.local_errors.length : 0;
+        const parts = [];
+        if (created != null) parts.push(`отправлено: ${created}`);
+        if (encErrors) parts.push(`ошибок энкодера: ${encErrors}`);
+        if (localErrors) parts.push(`локальных: ${localErrors}`);
+        statusEl.textContent = parts.join("; ") || "Готово";
+        // Снимаем только успешно принятые file_ids — local/encoder errors остаются выбранными.
+        const accepted = new Set(
+          (Array.isArray(payload.file_ids) ? payload.file_ids : []).map(String)
+        );
+        if (accepted.size) {
+          document.querySelectorAll(".file-encode-check:checked").forEach((el) => {
+            const id = el.getAttribute("data-file-id");
+            if (id && accepted.has(String(id))) el.checked = false;
+          });
+          updateEncoderBatchBar();
+        }
+      } catch (err) {
+        statusEl.textContent = err && err.message ? err.message : "Ошибка отправки";
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+    return bar;
+  }
+
+  function updateEncoderBatchBar() {
+    if (!isEncoderUiEnabled()) {
+      const existing = document.getElementById("encoder-batch-bar");
+      if (existing) existing.classList.remove("is-visible");
+      document.body.classList.remove("has-encoder-batch-bar");
+      return;
+    }
+    const bar = ensureEncoderBatchBar();
+    const count = selectedEncodeFileIds().length;
+    const countEl = bar.querySelector("[data-encoder-count]");
+    if (countEl) countEl.textContent = String(count);
+    if (count > 0) {
+      bar.classList.add("is-visible");
+      document.body.classList.add("has-encoder-batch-bar");
+    } else {
+      bar.classList.remove("is-visible");
+      document.body.classList.remove("has-encoder-batch-bar");
+      const statusEl = bar.querySelector("[data-encoder-status]");
+      if (statusEl && !statusEl.textContent.includes("отправлено") && !statusEl.textContent.includes("ошиб")) {
+        statusEl.textContent = "";
+      }
+    }
+  }
+
+  function ensureFileEncodeCheckbox(li, fileId) {
+    if (!isEncoderUiEnabled() || !li || !fileId) return;
+    let check = li.querySelector(":scope > .file-encode-check");
+    if (check) {
+      check.setAttribute("data-file-id", String(fileId));
+      return;
+    }
+    check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "file-encode-check";
+    check.setAttribute("data-file-id", String(fileId));
+    check.title = "Выбрать для кодировщика";
+    check.addEventListener("change", updateEncoderBatchBar);
+    check.addEventListener("click", (event) => event.stopPropagation());
+    li.insertBefore(check, li.firstChild);
+  }
+
+  function removeFileEncodeCheckbox(li) {
+    if (!li) return;
+    const check = li.querySelector(":scope > .file-encode-check");
+    if (check) {
+      check.remove();
+      updateEncoderBatchBar();
+    }
+  }
+
+  function syncTorrentEncodeSelectActions(block) {
+    if (!block) return;
+    const actions = block.querySelector(".torrent-encode-select-actions");
+    if (!actions) return;
+    if (!isEncoderUiEnabled()) {
+      actions.hidden = true;
+      return;
+    }
+    const hasChecks = !!block.querySelector(".file-encode-check");
+    actions.hidden = !hasChecks;
+    if (actions.dataset.bound === "1") return;
+    actions.dataset.bound = "1";
+    const selectAll = actions.querySelector(".torrent-encode-select-all");
+    const clearBtn = actions.querySelector(".torrent-encode-clear");
+    if (selectAll) {
+      selectAll.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        block.querySelectorAll(".file-encode-check").forEach((el) => {
+          el.checked = true;
+        });
+        updateEncoderBatchBar();
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        block.querySelectorAll(".file-encode-check").forEach((el) => {
+          el.checked = false;
+        });
+        updateEncoderBatchBar();
+      });
+    }
   }
 
   function ensureCopyPathButton(slot) {
@@ -718,13 +997,28 @@
           body: JSON.stringify({ preset_id: presetId }),
         });
         const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
+        if (!resp.ok && resp.status !== 207) {
           throw new Error(formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`);
         }
-        btn.title = "Отправлено";
-        setTimeout(() => {
-          btn.title = prevTitle;
-        }, 2000);
+        const encErrors = Array.isArray(payload.errors) ? payload.errors.length : 0;
+        const isPartial =
+          resp.status === 207 || payload.partial === true || encErrors > 0 || payload.ok === false;
+        if (isPartial) {
+          const errHint =
+            encErrors > 0
+              ? (payload.errors[0] && (payload.errors[0].error || payload.errors[0].message)) ||
+                "частичный ответ"
+              : "частичный ответ";
+          btn.title = `Ошибка / частично: ${errHint}`;
+          setTimeout(() => {
+            btn.title = prevTitle;
+          }, 3500);
+        } else {
+          btn.title = "Отправлено";
+          setTimeout(() => {
+            btn.title = prevTitle;
+          }, 2000);
+        }
       } catch (err) {
         btn.title = err && err.message ? err.message : "Ошибка отправки";
         setTimeout(() => {
@@ -995,6 +1289,8 @@
   function clearDownloadableSlotButtons(slot) {
     if (!slot) return;
     slot.querySelectorAll("a.file-download, .file-copy-path, .file-send-encoder, .file-mediainfo").forEach((el) => el.remove());
+    const li = slot.closest("li[data-file-id]");
+    removeFileEncodeCheckbox(li);
   }
 
   function applyDownloadableProbe(block, data) {
@@ -1013,6 +1309,7 @@
     block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
       const id = slot.getAttribute("data-file-id");
       if (!id) return;
+      const li = slot.closest("li[data-file-id]");
       // checking и не-downloadable — убрать кнопки (в т.ч. stale media_present).
       if (!ids.has(id) || checking.has(id)) {
         clearDownloadableSlotButtons(slot);
@@ -1030,7 +1327,10 @@
       ensureCopyPathButton(slot);
       ensureEncoderButton(slot);
       ensureMediaInfoButton(slot);
+      ensureFileEncodeCheckbox(li, id);
     });
+    syncTorrentEncodeSelectActions(block);
+    updateEncoderBatchBar();
   }
 
   function probeResultIsEmpty(data) {
@@ -1074,8 +1374,14 @@
         ensureCopyPathButton(slot);
         ensureEncoderButton(slot);
         ensureMediaInfoButton(slot);
+        const li = slot.closest("li[data-file-id]");
+        ensureFileEncodeCheckbox(li, slot.getAttribute("data-file-id"));
       }
     });
+    scope.querySelectorAll(".torrent-files").forEach((block) => {
+      syncTorrentEncodeSelectActions(block);
+    });
+    updateEncoderBatchBar();
     scope.querySelectorAll(".torrent-files[data-download-check]:not([data-download-queued])").forEach((el) => {
       el.setAttribute("data-download-queued", "1");
       const hash = el.getAttribute("data-download-check");

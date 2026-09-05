@@ -10,7 +10,13 @@
   {% endfor %}
 {% endif %}
 <details class="torrent-files"{% if allow_file_downloads and info_hash and ns.needs_probe %} data-download-check="{{ info_hash }}"{% if ns.needs_refresh %} data-download-refresh="1"{% endif %} data-sse-key="tf-{{ info_hash }}"{% elif info_hash %} data-sse-key="tf-{{ info_hash }}"{% endif %}>
-  <summary class="muted">{{ files|torrent_files_summary }}</summary>
+  <summary class="muted">
+    <span class="torrent-files-summary-text">{{ files|torrent_files_summary }}</span>
+    <span class="torrent-encode-select-actions" hidden>
+      <button type="button" class="btn-link torrent-encode-select-all">Выбрать все на диске</button>
+      <button type="button" class="btn-link torrent-encode-clear">Снять</button>
+    </span>
+  </summary>
   <ul class="file-list">
     {% for f in files %}
     <li{% if f.file_id %} data-file-id="{{ f.file_id }}"{% endif %}>

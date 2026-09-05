@@ -10,19 +10,65 @@ from sqlalchemy.orm import Session
 
 from app.services.runtime_settings import get_setting_value, upsert_setting
 
-DEFAULT_METADATA_NICKNAME = "GeeKaZ0iD"
-
-_SKIP_PRESET_KEYS = frozenset({"id", "name", "description", "audio_settings"})
-_AUDIO_FIELD_MAP = {
-    "codec": "audio_codec",
-    "bitrate": "audio_bitrate",
-    "sample_rate": "audio_sample_rate",
-    "vbr": "audio_vbr",
-}
-
 HEALTH_CACHE_TTL_SEC = 60.0
 SETTING_HEALTH_OK = "video_kensetsu_health_ok"
 SETTING_HEALTH_AT = "video_kensetsu_health_checked_at"
+ENCODE_TIMEOUT_BASE_SEC = 60.0
+ENCODE_TIMEOUT_PER_PATH_SEC = 15.0
+ENCODE_TIMEOUT_MAX_SEC = 300.0
+ENCODE_BATCH_MAX_FILES = 100
+
+
+class VideoKensetsuHttpError(RuntimeError):
+    """HTTP-ошибка Video Kensetsu с исходным status_code и текстом тела."""
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = int(status_code)
+
+
+def coerce_preset_available(value: Any, *, default: bool = True) -> bool:
+    """Нормализует available пресета: falsey / \"false\" / 0 → недоступен."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if cleaned in {"", "0", "false", "no", "off"}:
+            return False
+        if cleaned in {"1", "true", "yes", "on"}:
+            return True
+        return True
+    return bool(value)
+
+
+def _encoder_error_message(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+        if isinstance(data, dict):
+            for key in ("error", "detail", "message"):
+                raw = data.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw.strip()
+                if raw is not None and not isinstance(raw, (dict, list)):
+                    return str(raw)
+    except Exception:
+        pass
+    text = (response.text or "").strip()
+    if text:
+        return text[:500]
+    return f"HTTP {response.status_code}"
+
+
+def encode_timeout_for_paths(path_count: int, *, base_sec: float = ENCODE_TIMEOUT_BASE_SEC) -> float:
+    """Таймаут encode: для batch растёт с числом путей, с потолком."""
+    n = max(1, int(path_count))
+    scaled = base_sec if n <= 1 else base_sec + ENCODE_TIMEOUT_PER_PATH_SEC * (n - 1)
+    return float(min(ENCODE_TIMEOUT_MAX_SEC, max(base_sec, scaled)))
 
 
 def normalize_video_kensetsu_base_url(base_url: str | None) -> str:
@@ -135,41 +181,6 @@ def video_kensetsu_ui_context(
     }
 
 
-def _form_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
-def build_encode_form_fields(path: str, preset: dict[str, Any]) -> dict[str, str]:
-    """Multipart-поля для POST /api/internal/encode (без None)."""
-    fields: dict[str, str] = {
-        "path": path,
-        "preset_id": str(preset.get("id") or ""),
-        "preset_modified": "false",
-        "cpu_threads": "0",
-        "thread_queue_size": "0",
-        "x265_pools": "0",
-        "update_metadata": "true",
-        "metadata_nickname": DEFAULT_METADATA_NICKNAME,
-    }
-    for key, value in preset.items():
-        if key in _SKIP_PRESET_KEYS or value is None:
-            continue
-        if isinstance(value, (dict, list)):
-            continue
-        fields[key] = _form_value(value)
-
-    audio = preset.get("audio_settings")
-    if isinstance(audio, dict):
-        for src, dst in _AUDIO_FIELD_MAP.items():
-            raw = audio.get(src)
-            if raw is None:
-                continue
-            fields[dst] = _form_value(raw)
-    return fields
-
-
 async def health(base_url: str, *, timeout_sec: float = 10.0) -> dict[str, Any]:
     """GET {base_url} — ok при HTTP 200."""
     root = normalize_video_kensetsu_base_url(base_url)
@@ -203,30 +214,55 @@ async def list_presets(base_url: str, *, timeout_sec: float = 15.0) -> list[dict
 async def encode(
     base_url: str,
     *,
-    path: str,
-    preset: dict[str, Any],
-    timeout_sec: float = 60.0,
-) -> Any:
+    paths: list[str],
+    preset_id: str,
+    timeout_sec: float | None = None,
+) -> dict[str, Any]:
+    """POST /api/internal/encode JSON: path/paths + preset_id.
+
+    HTTP 200 и 207 считаются успешным ответом (207 — частичный batch).
+    Прочие коды → ``VideoKensetsuHttpError`` с текстом ``{error}`` из тела.
+    Возвращает ``{"status_code": int, "body": ...}``.
+    """
     root = normalize_video_kensetsu_base_url(base_url)
     if not root:
         raise ValueError("Не задан URL Video Kensetsu")
-    cleaned_path = (path or "").strip()
-    if not cleaned_path:
+    cleaned_id = (preset_id or "").strip()
+    if not cleaned_id:
+        raise ValueError("Не передан preset_id")
+    cleaned_paths = [str(p).strip() for p in (paths or []) if str(p).strip()]
+    if not cleaned_paths:
         raise ValueError("Не задан путь к файлу")
-    if not isinstance(preset, dict) or not preset.get("id"):
-        raise ValueError("Некорректный пресет")
 
-    form = build_encode_form_fields(cleaned_path, preset)
-    # multipart/form-data как в UI кодировщика (поля без файлов).
-    multipart = {key: (None, value) for key, value in form.items()}
-    async with httpx.AsyncClient(timeout=timeout_sec) as client:
-        response = await client.post(f"{root}/api/internal/encode", files=multipart)
-        response.raise_for_status()
-        content_type = (response.headers.get("content-type") or "").lower()
-        if "application/json" in content_type:
-            return response.json()
+    if len(cleaned_paths) == 1:
+        payload: dict[str, Any] = {"path": cleaned_paths[0], "preset_id": cleaned_id}
+    else:
+        payload = {"paths": cleaned_paths, "preset_id": cleaned_id}
+
+    effective_timeout = (
+        float(timeout_sec)
+        if timeout_sec is not None
+        else encode_timeout_for_paths(len(cleaned_paths))
+    )
+
+    async with httpx.AsyncClient(timeout=effective_timeout) as client:
+        response = await client.post(
+            f"{root}/api/internal/encode",
+            json=payload,
+            headers={"Accept": "application/json"},
+        )
+    if response.status_code not in (200, 207):
+        raise VideoKensetsuHttpError(
+            _encoder_error_message(response),
+            status_code=response.status_code,
+        )
+    content_type = (response.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        body: Any = response.json()
+    else:
         text = (response.text or "").strip()
-        return {"ok": True, "status_code": response.status_code, "body": text or None}
+        body = {"ok": True, "body": text or None}
+    return {"status_code": response.status_code, "body": body}
 
 
 def find_preset(presets: list[dict[str, Any]], preset_id: str) -> dict[str, Any] | None:
