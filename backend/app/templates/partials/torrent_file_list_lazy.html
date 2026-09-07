@@ -2,10 +2,6 @@
 <details class="torrent-files"{% if info_hash %} data-sse-key="tf-{{ info_hash }}"{% endif %}>
   <summary class="muted">
     <span class="torrent-files-summary-text">{{ files_summary }}</span>
-    <span class="torrent-encode-select-actions" hidden>
-      <button type="button" class="btn-link torrent-encode-select-all">Выбрать все</button>
-      <button type="button" class="btn-link torrent-encode-clear">Снять</button>
-    </span>
   </summary>
   <div
     class="torrent-files-body"

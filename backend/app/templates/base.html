@@ -487,9 +487,10 @@
       gap: 8px;
     }
     .torrent-encode-select-actions {
-      display: inline-flex;
+      display: flex;
       gap: 8px;
       align-items: center;
+      margin: 6px 0 4px;
     }
     .torrent-encode-select-actions[hidden] { display: none !important; }
     .btn-link {
@@ -1548,17 +1549,22 @@
     _downloadCheckBusy = false;
   }
 
-  // Название релиза в <summary>: разрешаем выделение текста без toggle details.
+  // Название релиза в <summary>: выделение текста без toggle details.
+  // Клик по .release-title / .release-name не раскрывает ряд (в т.ч. 1-й клик
+  // двойного клика). Toggle — по .release-meta / пустой зоне summary.
   document.addEventListener("click", (event) => {
     const summary = event.target.closest("summary.release-summary");
     if (!summary) return;
     if (event.target.closest("button, a, input, label")) return;
+    if (event.target.closest(".release-name, .release-title")) {
+      event.preventDefault();
+      return;
+    }
     const selection = window.getSelection();
     const hasRange =
       selection &&
       selection.type === "Range" &&
       String(selection).length > 0;
-    // detail > 1: double/triple-click по слову/строке не должны снова схлопывать ряд
     if (hasRange || event.detail > 1) {
       event.preventDefault();
     }

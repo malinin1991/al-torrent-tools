@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,64 @@ from app.services.torrent_files_meta import (
 from app.utils.datetime_fmt import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_mediainfo_version() -> str:
+    """Версия libmediainfo / CLI, которую использует приложение через pymediainfo.
+
+    Сначала библиотека (тот же путь, что у parse), иначе ``mediainfo --Version``.
+    При отсутствии — «не установлен» или текст ошибки.
+    """
+    lib_ver = _mediainfo_library_version()
+    if lib_ver:
+        return lib_ver
+    return _mediainfo_cli_version()
+
+
+def _mediainfo_library_version() -> str | None:
+    try:
+        from pymediainfo import MediaInfo
+    except ImportError:
+        return None
+    try:
+        if hasattr(MediaInfo, "can_parse") and not MediaInfo.can_parse():
+            return None
+        get_lib = getattr(MediaInfo, "_get_library", None)
+        if not callable(get_lib):
+            return None
+        result = get_lib()
+        # (CDLL/WinDLL, handle, version_str, version_tuple)
+        if isinstance(result, tuple) and len(result) >= 3:
+            version_str = result[2]
+            if version_str:
+                return f"libmediainfo {version_str}"
+    except Exception as exc:
+        logger.debug("Не удалось получить версию libmediainfo: %s", exc)
+    return None
+
+
+def _mediainfo_cli_version() -> str:
+    try:
+        completed = subprocess.run(
+            ["mediainfo", "--Version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except FileNotFoundError:
+        return "не установлен"
+    except Exception as exc:
+        return str(exc)
+
+    out = (completed.stdout or "").strip() or (completed.stderr or "").strip()
+    if not out:
+        return "не установлен"
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    for ln in lines:
+        if "MediaInfoLib" in ln or "libmediainfo" in ln.lower():
+            return ln
+    return lines[0] if lines else "не установлен"
 
 MEDIA_EXTENSIONS = frozenset(
     {

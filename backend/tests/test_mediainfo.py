@@ -9,6 +9,7 @@ from app.services.mediainfo import (
     format_duration_human,
     get_or_extract_mediainfo,
     is_media_filename,
+    resolve_mediainfo_version,
     upsert_file_mediainfo,
 )
 
@@ -20,6 +21,54 @@ def test_is_media_filename() -> None:
     assert is_media_filename("info.txt") is False
     assert is_media_filename("poster.jpg") is False
     assert is_media_filename(".DS_Store") is False
+
+
+def test_resolve_mediainfo_version_prefers_library(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.mediainfo._mediainfo_library_version",
+        lambda: "libmediainfo 24.06",
+    )
+    monkeypatch.setattr(
+        "app.services.mediainfo._mediainfo_cli_version",
+        lambda: "should-not-call",
+    )
+    assert resolve_mediainfo_version() == "libmediainfo 24.06"
+
+
+def test_resolve_mediainfo_version_cli_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.mediainfo._mediainfo_library_version",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.services.mediainfo._mediainfo_cli_version",
+        lambda: "MediaInfoLib - v24.06",
+    )
+    assert resolve_mediainfo_version() == "MediaInfoLib - v24.06"
+
+
+def test_mediainfo_cli_version_missing(monkeypatch) -> None:
+    from app.services.mediainfo import _mediainfo_cli_version
+
+    def _boom(*_a, **_k):
+        raise FileNotFoundError("mediainfo")
+
+    monkeypatch.setattr("app.services.mediainfo.subprocess.run", _boom)
+    assert _mediainfo_cli_version() == "не установлен"
+
+
+def test_mediainfo_cli_version_parses_lib_line(monkeypatch) -> None:
+    from app.services.mediainfo import _mediainfo_cli_version
+
+    completed = MagicMock()
+    completed.returncode = 0
+    completed.stdout = "MediaInfo Command line - v24.06\nMediaInfoLib - v24.06\n"
+    completed.stderr = ""
+    monkeypatch.setattr(
+        "app.services.mediainfo.subprocess.run",
+        lambda *_a, **_k: completed,
+    )
+    assert _mediainfo_cli_version() == "MediaInfoLib - v24.06"
 
 
 def test_format_duration_human() -> None:

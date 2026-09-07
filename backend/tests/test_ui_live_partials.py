@@ -147,6 +147,7 @@ def test_releases_live_partial_has_sse_keys() -> None:
     assert "toggle once from:closest details" in html
     assert "2 файла." in html
     assert 'class="file-list"' not in html  # полный список — lazy
+    assert "Выбрать все" not in html  # select-all внутри загруженного body, не в summary
 
 
 def test_releases_live_url_uses_urlencode() -> None:
@@ -596,3 +597,64 @@ def test_build_archive_page_rows_filters_sibling_orphans(monkeypatch, tmp_path) 
     alone = next(r for r in rows_alone if r.id == 1)
     alone_paths = {f.relative_path for f in alone.files}
     assert "Show/ep02.mkv" in alone_paths
+
+
+def test_torrent_file_list_select_actions_in_body_not_summary() -> None:
+    """«Выбрать все» / «Снять» живут в body списка файлов, не в summary."""
+    from app.services.releases_view import ReleaseFileRow
+
+    templates = _templates()
+    request = MagicMock()
+    files = [
+        ReleaseFileRow(
+            relative_path="ep01.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/ep01.mkv",
+            status="ok",
+            file_id=5,
+            downloadable=True,
+        )
+    ]
+    eager = templates.TemplateResponse(
+        request,
+        "partials/torrent_file_list.html",
+        {
+            "request": request,
+            "files": files,
+            "allow_file_downloads": True,
+            "info_hash": "ab" * 20,
+        },
+    ).body.decode("utf-8")
+    assert "torrent-encode-select-actions" in eager
+    assert "Выбрать все" in eager
+    assert eager.index("torrent-files-body") < eager.index("torrent-encode-select-actions")
+    assert eager.index("</summary>") < eager.index("torrent-encode-select-actions")
+
+    items = templates.TemplateResponse(
+        request,
+        "partials/torrent_file_list_items.html",
+        {
+            "request": request,
+            "files": files,
+            "allow_file_downloads": True,
+            "info_hash": "ab" * 20,
+        },
+    ).body.decode("utf-8")
+    assert "torrent-encode-select-actions" in items
+    assert "Выбрать все" in items
+    assert items.index("torrent-files-loaded") < items.index("torrent-encode-select-actions")
+
+    lazy = templates.TemplateResponse(
+        request,
+        "partials/torrent_file_list_lazy.html",
+        {
+            "request": request,
+            "files_summary": "1 файл.",
+            "archive_id": 7,
+            "allow_file_downloads": True,
+            "info_hash": "ab" * 20,
+        },
+    ).body.decode("utf-8")
+    assert "Выбрать все" not in lazy
+    assert "torrent-encode-select-actions" not in lazy

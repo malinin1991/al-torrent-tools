@@ -37,6 +37,7 @@ from app.services.telegram_notify import (
     test_telegram_get_me,
 )
 from app.services.torrent_archive import resolve_torrent_storage_root
+from app.services.mediainfo import resolve_mediainfo_version
 from app.services.video_kensetsu import (
     health as video_kensetsu_health,
     is_video_kensetsu_enabled,
@@ -127,6 +128,7 @@ async def collect_system_status(db: Session) -> dict[str, Any]:
             "platform": platform.platform(),
             "build_time": build["time"],
             "git_sha": build["git_sha"],
+            "mediainfo": resolve_mediainfo_version(),
         },
         "anilibria": {
             "base_url": al_settings.base_url,

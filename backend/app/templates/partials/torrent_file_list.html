@@ -12,28 +12,30 @@
 <details class="torrent-files"{% if allow_file_downloads and info_hash and ns.needs_probe %} data-download-check="{{ info_hash }}"{% if ns.needs_refresh %} data-download-refresh="1"{% endif %} data-sse-key="tf-{{ info_hash }}"{% elif info_hash %} data-sse-key="tf-{{ info_hash }}"{% endif %}>
   <summary class="muted">
     <span class="torrent-files-summary-text">{{ files|torrent_files_summary }}</span>
-    <span class="torrent-encode-select-actions" hidden>
+  </summary>
+  <div class="torrent-files-body">
+    <div class="torrent-encode-select-actions" hidden>
       <button type="button" class="btn-link torrent-encode-select-all">Выбрать все</button>
       <button type="button" class="btn-link torrent-encode-clear">Снять</button>
-    </span>
-  </summary>
-  <ul class="file-list">
-    {% for f in files %}
-    <li{% if f.file_id %} data-file-id="{{ f.file_id }}"{% endif %}>
-      {% if f.status == 'new' %}<span class="badge badge-ok file-ui-badge" title="Добавлен в состав этого торрента">новый</span>
-      {% elif f.status == 'changed' %}<span class="badge badge-warn file-ui-badge" title="Хеш не совпал с предыдущей версией">изменён</span>
-      {% elif f.status == 'checking' %}<span class="badge badge-warn file-ui-badge" title="Качается или проверяется на master">проверка</span>
-      {% elif f.status == 'removed' %}<span class="badge badge-danger file-ui-badge" title="Убран из состава этого торрента">удалён</span>
-      {% else %}<span class="badge badge-muted file-ui-badge" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
-      <code>{{ f.relative_path }}</code>
-      {% if f.file_id %}
-      <span
-        class="file-download-slot"
-        data-file-id="{{ f.file_id }}"
-        {% if f.full_path %}data-full-path="{{ f.full_path }}"{% endif %}
-      >{% if f.downloadable %}<a class="btn-icon file-download" href="/api/torrent-files/{{ f.file_id }}/download" title="Скачать файл" download><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg></a>{% endif %}</span>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
+    </div>
+    <ul class="file-list">
+      {% for f in files %}
+      <li{% if f.file_id %} data-file-id="{{ f.file_id }}"{% endif %}>
+        {% if f.status == 'new' %}<span class="badge badge-ok file-ui-badge" title="Добавлен в состав этого торрента">новый</span>
+        {% elif f.status == 'changed' %}<span class="badge badge-warn file-ui-badge" title="Хеш не совпал с предыдущей версией">изменён</span>
+        {% elif f.status == 'checking' %}<span class="badge badge-warn file-ui-badge" title="Качается или проверяется на master">проверка</span>
+        {% elif f.status == 'removed' %}<span class="badge badge-danger file-ui-badge" title="Убран из состава этого торрента">удалён</span>
+        {% else %}<span class="badge badge-muted file-ui-badge" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
+        <code>{{ f.relative_path }}</code>
+        {% if f.file_id %}
+        <span
+          class="file-download-slot"
+          data-file-id="{{ f.file_id }}"
+          {% if f.full_path %}data-full-path="{{ f.full_path }}"{% endif %}
+        >{% if f.downloadable %}<a class="btn-icon file-download" href="/api/torrent-files/{{ f.file_id }}/download" title="Скачать файл" download><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg></a>{% endif %}</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
 </details>
