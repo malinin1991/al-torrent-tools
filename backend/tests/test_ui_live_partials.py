@@ -147,7 +147,7 @@ def test_releases_live_partial_has_sse_keys() -> None:
     assert "toggle once from:closest details" in html
     assert "2 файла." in html
     assert 'class="file-list"' not in html  # полный список — lazy
-    assert "Выбрать все" not in html  # select-all внутри загруженного body, не в summary
+    assert "Выбрать готовое" not in html  # select-all внутри загруженного body, не в summary
 
 
 def test_releases_live_url_uses_urlencode() -> None:
@@ -600,7 +600,7 @@ def test_build_archive_page_rows_filters_sibling_orphans(monkeypatch, tmp_path) 
 
 
 def test_torrent_file_list_select_actions_in_body_not_summary() -> None:
-    """«Выбрать все» / «Снять» живут в body списка файлов, не в summary."""
+    """«Выбрать готовое» / «Снять» живут в body списка файлов, не в summary."""
     from app.services.releases_view import ReleaseFileRow
 
     templates = _templates()
@@ -627,7 +627,8 @@ def test_torrent_file_list_select_actions_in_body_not_summary() -> None:
         },
     ).body.decode("utf-8")
     assert "torrent-encode-select-actions" in eager
-    assert "Выбрать все" in eager
+    assert "Выбрать готовое" in eager
+    assert 'hidden' not in eager.split("torrent-encode-select-actions", 1)[1].split(">", 1)[0]
     assert eager.index("torrent-files-body") < eager.index("torrent-encode-select-actions")
     assert eager.index("</summary>") < eager.index("torrent-encode-select-actions")
 
@@ -642,7 +643,8 @@ def test_torrent_file_list_select_actions_in_body_not_summary() -> None:
         },
     ).body.decode("utf-8")
     assert "torrent-encode-select-actions" in items
-    assert "Выбрать все" in items
+    assert "Выбрать готовое" in items
+    assert 'hidden' not in items.split("torrent-encode-select-actions", 1)[1].split(">", 1)[0]
     assert items.index("torrent-files-loaded") < items.index("torrent-encode-select-actions")
 
     lazy = templates.TemplateResponse(
@@ -656,5 +658,7 @@ def test_torrent_file_list_select_actions_in_body_not_summary() -> None:
             "info_hash": "ab" * 20,
         },
     ).body.decode("utf-8")
-    assert "Выбрать все" not in lazy
+    assert "Выбрать готовое" not in lazy
     assert "torrent-encode-select-actions" not in lazy
+    assert "intersect" not in lazy
+    assert 'hx-trigger="toggle once from:closest details"' in lazy

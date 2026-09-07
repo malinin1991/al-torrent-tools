@@ -81,6 +81,12 @@ docker compose up --build
 
 Один образ используется и для `api`, и для `worker`. Контекст сборки — `./backend`.
 
+MediaInfo ставится из репозитория MediaArea (≥26.x). MIME вложений Matroska (FileMimeType) читается лёгким pure-Python EBML walk секции Attachments — **без** mkvtoolnix. Сборка **падает**, если после `apt install` версия MediaInfo ниже 26 (типичный признак: apt тихо взял пакет Debian вместо MediaArea).
+
+Локально (`docker-compose.yml`): `docker compose build --no-cache api worker` и `up -d`.  
+Прод (Unraid / registry): multi-arch `buildx ... --push` как ниже, затем `docker compose -f docker-compose.unraid.yml pull && up -d`.  
+Если на `/info` всё ещё старая `libmediainfo` (например 24.12) — слой apt был из кэша BuildKit со старым Dockerfile без MediaArea: пересобери с `--no-cache` и убедись, что Unraid подтянул новый digest `latest`.
+
 Мультиархитектурная сборка и пуш в registry.
 
 Один раз создай именованный builder `container` (драйвер `docker-container` нужен для multi-arch `--push`; обычный `default`/`desktop-linux` для этого не подходит):

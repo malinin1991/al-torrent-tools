@@ -6,7 +6,7 @@
   <div
     class="torrent-files-body"
     hx-get="/archive/{{ archive_id }}/files?allow_downloads={% if allow_file_downloads %}1{% else %}0{% endif %}"
-    hx-trigger="toggle once from:closest details, intersect once"
+    hx-trigger="toggle once from:closest details"
     hx-swap="innerHTML"
   ></div>
 </details>

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import FileMediaInfo, TorrentFile
+from app.services.matroska_attachments import read_matroska_attachments
 from app.services.torrent_files_meta import (
     complete_path_for,
     is_incomplete_path,
@@ -22,6 +23,9 @@ from app.services.torrent_files_meta import (
 from app.utils.datetime_fmt import utcnow
 
 logger = logging.getLogger(__name__)
+
+# Ключ в raw_json: вложения Matroska (FileName + FileMimeType + size) из EBML walk.
+MKV_ATTACHMENTS_KEY = "mkv_attachments"
 
 
 def resolve_mediainfo_version() -> str:
@@ -107,10 +111,16 @@ def is_media_filename(path: Path | str) -> bool:
     return ext in MEDIA_EXTENSIONS
 
 
-def format_duration_human(seconds: float | None) -> str:
-    if seconds is None or seconds <= 0:
+def format_duration_human(seconds: float | int | str | None) -> str:
+    if seconds is None:
         return ""
-    total = int(round(seconds))
+    try:
+        total_f = float(seconds)
+    except (ValueError, TypeError):
+        return ""
+    if total_f <= 0:
+        return ""
+    total = int(round(total_f))
     hours = total // 3600
     minutes = (total % 3600) // 60
     secs = total % 60
@@ -123,10 +133,15 @@ def format_duration_human(seconds: float | None) -> str:
     return " ".join(parts)
 
 
-def format_bitrate_human(bps: int | float | None) -> str:
-    if bps is None or bps <= 0:
+def format_bitrate_human(bps: int | float | str | None) -> str:
+    if bps is None:
         return ""
-    num = float(bps)
+    try:
+        num = float(bps)
+    except (ValueError, TypeError):
+        return ""
+    if num <= 0:
+        return ""
     if num >= 1_000_000:
         return f"{num / 1_000_000:.1f} Мбит/с"
     if num >= 1_000:
@@ -219,8 +234,8 @@ def _track_original(
             return flag
 
     tokens = _service_kind_tokens(track)
-    # Matroska: ServiceKind "O" + String "Original" (не путать с title).
-    if any(t == "o" or t == "original" or "original" in t for t in tokens):
+    # Matroska: ServiceKind "O" / String "Original" целиком (не "non-original").
+    if any(t == "o" or t == "original" for t in tokens):
         return True
 
     if default is not None or forced is not None:
@@ -312,11 +327,69 @@ def _subtitle_format_and_encoding(track: dict[str, Any]) -> tuple[str, str]:
     return raw_format, explicit_encoding
 
 
+# Стандартный pymediainfo (snake_case) + редкие алиасы MIME.
+_MIME_TRACK_KEYS = (
+    "internet_media_type",
+    "mime",
+    "mime_type",
+    "other_internet_media_type",
+)
+
+_COVER_NAME_MARKERS = ("cover", "thumbnail", "poster", "artwork", "album art")
+_FONT_NAME_EXTS = (".ttf", ".otf", ".ttc", ".woff", ".woff2")
+_FONT_MIME_MARKERS = (
+    "font/",
+    "truetype",
+    "opentype",
+    "application/font",
+    "application/x-font",
+    "application/vnd.ms-opentype",
+)
+
+
+def _first_nonempty_str(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            text = _first_nonempty_str(item)
+            if text:
+                return text
+        return ""
+    text = str(value).strip()
+    return text
+
+
+def _track_mime(track: dict[str, Any]) -> str:
+    """InternetMediaType / mime из трека MediaInfo (стандартный snake_case)."""
+    for key in _MIME_TRACK_KEYS:
+        if key not in track:
+            continue
+        text = _first_nonempty_str(track.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _is_cover_name(name: str) -> bool:
+    lower = name.strip().lower()
+    return any(m in lower for m in _COVER_NAME_MARKERS)
+
+
 def _is_cover_attachment(track: dict[str, Any]) -> bool:
     type_val = str(track.get("type") or track.get("attachment_type") or "").strip().lower()
     title = str(track.get("title") or "").strip().lower()
-    cover_markers = ("cover", "thumbnail", "poster", "artwork", "album art")
-    return any(m in type_val for m in cover_markers) or any(m in title for m in cover_markers)
+    return any(m in type_val for m in _COVER_NAME_MARKERS) or any(m in title for m in _COVER_NAME_MARKERS)
+
+
+def _looks_like_font_name(name: str) -> bool:
+    lower = name.strip().lower()
+    return any(ext in lower for ext in _FONT_NAME_EXTS)
+
+
+def _is_font_mime(mime: str) -> bool:
+    lower = mime.strip().lower()
+    return bool(lower) and any(m in lower for m in _FONT_MIME_MARKERS)
 
 
 def _is_font_attachment(track: dict[str, Any]) -> bool:
@@ -327,75 +400,132 @@ def _is_font_attachment(track: dict[str, Any]) -> bool:
         return False
 
     type_val = str(track.get("type") or track.get("muxing_mode") or "").strip().lower()
-    mime = str(track.get("internet_media_type") or track.get("mime") or "").strip().lower()
+    mime = _track_mime(track)
     fmt = str(track.get("format") or "").strip().lower()
     name = " ".join(
         str(track.get(k) or "")
         for k in ("title", "complete_name", "file_name", "format")
-    ).lower()
+    )
 
     if "attachment" in type_val:
         return True
-
-    font_mimes = (
-        "font/",
-        "truetype",
-        "opentype",
-        "application/font",
-        "application/x-font",
-        "application/vnd.ms-opentype",
-    )
-    if any(m in mime for m in font_mimes):
+    if _is_font_mime(mime):
         return True
-
-    font_exts = (".ttf", ".otf", ".ttc", ".woff", ".woff2")
-    if any(ext in name for ext in font_exts):
+    if _looks_like_font_name(name):
         return True
     if fmt in {"ttf", "otf", "ttc", "woff", "woff2", "truetype", "opentype"}:
         return True
-    if "font" in type_val or "font" in mime:
+    if "font" in type_val:
         return True
     return False
 
 
-def _collect_fonts(tracks: list[dict[str, Any]], general: dict[str, Any]) -> tuple[list[dict[str, Any]], str, int | None]:
-    fonts: list[dict[str, Any]] = []
-    total_bytes = 0
-    has_any_size = False
-
-    for tr in tracks:
-        if not _is_font_attachment(tr):
+def _read_mkv_attachments(path: Path) -> list[dict[str, Any]]:
+    """Читает Matroska AttachedFile (имя + FileMimeType + size) через EBML walk."""
+    raw = read_matroska_attachments(path)
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        name = str(item.get("name") or "").strip()
+        if not name:
             continue
-        name = (
-            str(tr.get("title") or "").strip()
-            or str(tr.get("complete_name") or "").strip()
-            or str(tr.get("file_name") or "").strip()
-            or str(tr.get("format") or "").strip()
-            or "font"
-        )
-        mime = str(tr.get("internet_media_type") or tr.get("mime") or "").strip()
-        size_bytes = _parse_size_bytes(tr.get("stream_size") or tr.get("file_size"))
-        if size_bytes is not None:
-            has_any_size = True
-            total_bytes += size_bytes
-        fonts.append(
+        mime = str(item.get("mime") or "").strip()
+        size_bytes = item.get("size_bytes")
+        if size_bytes is not None and not isinstance(size_bytes, int):
+            size_bytes = _parse_size_bytes(size_bytes)
+        out.append(
             {
                 "name": name,
-                "size": format_file_size_human(size_bytes),
-                "size_bytes": size_bytes,
                 "mime": mime,
+                "size_bytes": size_bytes if isinstance(size_bytes, int) else None,
             }
         )
+    return out
+
+
+def _font_entry(name: str, *, mime: str = "", size_bytes: int | None = None) -> dict[str, Any]:
+    return {
+        "name": name,
+        "size": format_file_size_human(size_bytes),
+        "size_bytes": size_bytes,
+        "mime": mime,
+    }
+
+
+def _collect_fonts_from_mkv_attachments(
+    attachments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Вложения из EBML: MIME только из FileMimeType контейнера."""
+    fonts: list[dict[str, Any]] = []
+    for att in attachments:
+        name = str(att.get("name") or "").strip()
+        if not name or _is_cover_name(name):
+            continue
+        mime = str(att.get("mime") or "").strip()
+        mime_l = mime.lower()
+        # Обложки с image/* пропускаем; шрифты с legacy MIME оставляем.
+        if mime_l.startswith("image/") and not _looks_like_font_name(name):
+            continue
+        size_bytes = att.get("size_bytes")
+        if size_bytes is not None and not isinstance(size_bytes, int):
+            size_bytes = _parse_size_bytes(size_bytes)
+        fonts.append(
+            _font_entry(
+                name,
+                mime=mime,
+                size_bytes=size_bytes if isinstance(size_bytes, int) else None,
+            )
+        )
+    return fonts
+
+
+def _collect_fonts(
+    tracks: list[dict[str, Any]],
+    general: dict[str, Any],
+    *,
+    mkv_attachments: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], str, int | None]:
+    """Список вложений для summary.
+
+    MIME: только из контейнера (Matroska FileMimeType / MediaInfo InternetMediaType).
+    По расширению файла MIME никогда не угадываем.
+    """
+    fonts: list[dict[str, Any]] = []
+
+    if mkv_attachments:
+        fonts = _collect_fonts_from_mkv_attachments(mkv_attachments)
+
+    if not fonts:
+        for tr in tracks:
+            if not _is_font_attachment(tr):
+                continue
+            name = (
+                str(tr.get("title") or "").strip()
+                or str(tr.get("complete_name") or "").strip()
+                or str(tr.get("file_name") or "").strip()
+                or str(tr.get("format") or "").strip()
+                or "font"
+            )
+            # Только MIME из трека MediaInfo — без fallback по расширению.
+            mime = _track_mime(tr)
+            size_bytes = _parse_size_bytes(tr.get("stream_size") or tr.get("file_size"))
+            fonts.append(_font_entry(name, mime=mime, size_bytes=size_bytes))
 
     if not fonts:
         attachments_raw = general.get("attachments")
         if attachments_raw:
             names = [p.strip() for p in str(attachments_raw).split("/") if p.strip()]
             for name in names:
-                lower = name.lower()
-                if any(x in lower for x in ("cover", "thumbnail", "poster", "artwork")):
+                if _is_cover_name(name):
                     continue
-                fonts.append({"name": name, "size": "", "size_bytes": None, "mime": ""})
+                fonts.append(_font_entry(name, mime="", size_bytes=None))
+
+    total_bytes = 0
+    has_any_size = False
+    for f in fonts:
+        size_bytes = f.get("size_bytes")
+        if isinstance(size_bytes, int):
+            has_any_size = True
+            total_bytes += size_bytes
 
     fonts_total_bytes: int | None = total_bytes if has_any_size else None
     fonts_total_size = format_file_size_human(fonts_total_bytes) if fonts_total_bytes is not None else ""
@@ -410,6 +540,8 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
     sub_list: list[dict[str, Any]] = []
 
     for tr in tracks:
+        if not isinstance(tr, dict):
+            continue
         ttype = (tr.get("track_type") or "").strip().lower()
         if ttype == "general" and not general:
             general = tr
@@ -525,7 +657,11 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    fonts, fonts_total_size, fonts_total_bytes = _collect_fonts(tracks, general)
+    mkv_raw = data.get(MKV_ATTACHMENTS_KEY)
+    mkv_attachments = mkv_raw if isinstance(mkv_raw, list) else None
+    fonts, fonts_total_size, fonts_total_bytes = _collect_fonts(
+        tracks, general, mkv_attachments=mkv_attachments
+    )
 
     return {
         "format": general.get("format") or "",
@@ -581,8 +717,14 @@ def parse_media_file(path: Path) -> tuple[dict[str, Any], dict[str, Any], str] |
         if hasattr(MediaInfo, "can_parse") and not MediaInfo.can_parse():
             logger.warning("Библиотека libmediainfo не найдена в системе")
 
-        mi = MediaInfo.parse(str(path))
+        # Стандартный вывод pymediainfo (snake_case), без Language=raw.
+        mi = MediaInfo.parse(str(path), full=True)
         raw_dict = mi.to_data()
+        # Matroska FileMimeType для вложений MediaInfo не отдаёт — читаем EBML Attachments.
+        if path.suffix.lower() in {".mkv", ".mka", ".mks", ".mk3d"}:
+            mkv_atts = _read_mkv_attachments(path)
+            if mkv_atts:
+                raw_dict = {**raw_dict, MKV_ATTACHMENTS_KEY: mkv_atts}
         summary = _build_summary_from_data(raw_dict)
         raw_text = _format_raw_text_report(raw_dict, path)
         return summary, raw_dict, raw_text
@@ -618,6 +760,33 @@ def _effective_summary(existing: FileMediaInfo) -> dict[str, Any]:
             )
     summary = getattr(existing, "summary_json", None)
     return summary if isinstance(summary, dict) else {}
+
+
+def _attachments_columns_from_summary(summary: dict[str, Any]) -> tuple[list[dict[str, Any]], int, int | None]:
+    """Колонки БД для вложений из summary.fonts (name / mime / size_bytes)."""
+    fonts = summary.get("fonts") if isinstance(summary, dict) else None
+    if not isinstance(fonts, list):
+        return [], 0, None
+    rows: list[dict[str, Any]] = []
+    total = 0
+    has_size = False
+    for item in fonts:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        mime = str(item.get("mime") or "").strip()
+        size_bytes = item.get("size_bytes")
+        if size_bytes is not None and not isinstance(size_bytes, int):
+            size_bytes = _parse_size_bytes(size_bytes)
+        if not isinstance(size_bytes, int):
+            size_bytes = None
+        if size_bytes is not None:
+            total += size_bytes
+            has_size = True
+        rows.append({"name": name, "mime": mime, "size_bytes": size_bytes})
+    return rows, len(rows), (total if has_size else None)
 
 
 def upsert_file_mediainfo(
@@ -656,6 +825,7 @@ def upsert_file_mediainfo(
         return None
 
     summary, raw_json, raw_text = parsed
+    attachments, attachments_count, attachments_total = _attachments_columns_from_summary(summary)
     now = utcnow()
 
     if existing is None:
@@ -666,6 +836,9 @@ def upsert_file_mediainfo(
             summary_json=summary,
             raw_json=raw_json,
             raw_text=raw_text,
+            attachments_json=attachments,
+            attachments_count=attachments_count,
+            attachments_total_bytes=attachments_total,
             created_at=now,
             updated_at=now,
         )
@@ -676,6 +849,9 @@ def upsert_file_mediainfo(
         existing.summary_json = summary
         existing.raw_json = raw_json
         existing.raw_text = raw_text
+        existing.attachments_json = attachments
+        existing.attachments_count = attachments_count
+        existing.attachments_total_bytes = attachments_total
         existing.updated_at = now
 
     db.commit()

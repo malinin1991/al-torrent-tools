@@ -1,8 +1,31 @@
 FROM python:3.14-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    mediainfo \
-    && rm -rf /var/lib/apt/lists/*
+# MediaInfo CLI + libmediainfo из официального репозитория MediaArea
+# (свежее, чем пакет Debian freeze; pymediainfo линкуется к libmediainfo0v5).
+# MIME вложений Matroska читаем лёгким pure-Python EBML walk (без mkvtoolnix).
+# Если MediaArea недоступен и apt уйдёт на Debian (25.x / 24.x) — сборка падает на проверке версии.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates wget; \
+    wget --https-only -q -O /tmp/repo-mediaarea.deb \
+      https://mediaarea.net/repo/deb/repo-mediaarea_1.0-27_all.deb; \
+    # Лёгкая проверка: это debian-пакет репозитория, не HTML/ошибка зеркала.
+    dpkg-deb -I /tmp/repo-mediaarea.deb >/dev/null; \
+    dpkg -i /tmp/repo-mediaarea.deb; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends mediainfo libmediainfo0v5 libzen0v5; \
+    ldconfig; \
+    mediainfo --Version; \
+    ver="$(mediainfo --Version 2>&1 | sed -n 's/.*MediaInfoLib - v\([0-9][0-9.]*\).*/\1/p' | head -1)"; \
+    major="$(printf '%s' "$ver" | cut -d. -f1)"; \
+    if [ -z "$ver" ] || [ "$major" -lt 26 ]; then \
+      echo "ERROR: expected MediaArea MediaInfo >= 26.x, got: '${ver:-unknown}'" >&2; \
+      apt-cache policy mediainfo libmediainfo0v5 >&2 || true; \
+      exit 1; \
+    fi; \
+    apt-get purge -y --auto-remove wget; \
+    rm -f /tmp/repo-mediaarea.deb; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

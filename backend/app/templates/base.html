@@ -487,10 +487,14 @@
       gap: 8px;
     }
     .torrent-encode-select-actions {
-      display: flex;
+      display: none;
       gap: 8px;
       align-items: center;
       margin: 6px 0 4px;
+    }
+    /* Encoder UI: кнопки в DOM всегда (без jump после probe); без FOUC когда выключен. */
+    [data-encoder-enabled="1"] .torrent-encode-select-actions {
+      display: flex;
     }
     .torrent-encode-select-actions[hidden] { display: none !important; }
     .btn-link {
@@ -924,12 +928,9 @@
     if (!block) return;
     const actions = block.querySelector(".torrent-encode-select-actions");
     if (!actions) return;
-    if (!isEncoderUiEnabled()) {
-      actions.hidden = true;
-      return;
-    }
-    const hasChecks = !!block.querySelector(".file-encode-check");
-    actions.hidden = !hasChecks;
+    // CSS уже скрывает при data-encoder-enabled≠1; JS — запасной путь + bind кликов.
+    // Кнопки видны сразу при encoder on (даже без .file-encode-check — клик no-op).
+    actions.hidden = !isEncoderUiEnabled();
     if (actions.dataset.bound === "1") return;
     actions.dataset.bound = "1";
     const selectAll = actions.querySelector(".torrent-encode-select-all");
@@ -1549,14 +1550,13 @@
     _downloadCheckBusy = false;
   }
 
-  // Название релиза в <summary>: выделение текста без toggle details.
-  // Клик по .release-title / .release-name не раскрывает ряд (в т.ч. 1-й клик
-  // двойного клика). Toggle — по .release-meta / пустой зоне summary.
+  // .release-name — без toggle (выделение текста / dblclick).
+  // Остальной summary — native toggle, но не если есть Range-selection или dblclick.
   document.addEventListener("click", (event) => {
     const summary = event.target.closest("summary.release-summary");
     if (!summary) return;
     if (event.target.closest("button, a, input, label")) return;
-    if (event.target.closest(".release-name, .release-title")) {
+    if (event.target.closest(".release-name")) {
       event.preventDefault();
       return;
     }

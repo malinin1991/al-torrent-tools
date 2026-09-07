@@ -378,6 +378,10 @@ class FileMediaInfo(Base):
     summary_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     raw_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Вложения контейнера (Matroska AttachedFile): [{name, mime, size_bytes}, ...]
+    attachments_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    attachments_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attachments_total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

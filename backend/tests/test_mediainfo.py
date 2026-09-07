@@ -3,7 +3,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.db.models import FileMediaInfo, TorrentFile
+from app.services.matroska_attachments import (
+    build_minimal_mkv_with_attachments,
+    build_mkv_attachments_after_cluster,
+    read_matroska_attachments,
+    read_matroska_attachments_bytes,
+)
 from app.services.mediainfo import (
+    MKV_ATTACHMENTS_KEY,
+    _attachments_columns_from_summary,
     _build_summary_from_data,
     format_bitrate_human,
     format_duration_human,
@@ -85,6 +93,9 @@ def test_format_bitrate_human() -> None:
     assert format_bitrate_human(500) == "500 бит/с"
     assert format_bitrate_human(128_000) == "128 кбит/с"
     assert format_bitrate_human(5_400_000) == "5.4 Мбит/с"
+    # MediaInfo иногда отдаёт числовые поля строками
+    assert format_bitrate_human("208228") == "208 кбит/с"
+    assert format_bitrate_human("not-a-number") == ""
 
 
 def test_build_summary_from_data() -> None:
@@ -364,7 +375,45 @@ def test_build_summary_fonts_from_attachment_tracks() -> None:
     assert summary["fonts_total_size"]
 
 
-def test_build_summary_fonts_fallback_from_general_attachments() -> None:
+def test_build_summary_fonts_mime_from_internet_media_type() -> None:
+    """Стандартный ключ InternetMediaType → internet_media_type в summary.mime."""
+    raw_data = {
+        "tracks": [
+            {"track_type": "General", "format": "Matroska"},
+            {
+                "track_type": "Other",
+                "type": "Attachment",
+                "title": "NotoSans.otf",
+                "internet_media_type": "font/otf",
+                "stream_size": 102400,
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert len(summary["fonts"]) == 1
+    assert summary["fonts"][0]["mime"] == "font/otf"
+    assert summary["fonts"][0]["size_bytes"] == 102400
+
+
+def test_build_summary_fonts_mime_from_mime_key() -> None:
+    raw_data = {
+        "tracks": [
+            {"track_type": "General", "format": "Matroska"},
+            {
+                "track_type": "Other",
+                "muxing_mode": "Attachment",
+                "title": "Legacy.ttf",
+                "mime": "application/x-font-ttf",
+                "stream_size": 4096,
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert summary["fonts"][0]["mime"] == "application/x-font-ttf"
+
+
+def test_build_summary_fonts_from_general_attachments_no_extension_mime() -> None:
+    """Без EBML-метаданных MIME не угадываем по расширению — пустая строка (UI: —)."""
     raw_data = {
         "tracks": [
             {
@@ -376,10 +425,189 @@ def test_build_summary_fonts_fallback_from_general_attachments() -> None:
     }
     summary = _build_summary_from_data(raw_data)
     assert len(summary["fonts"]) == 2
-    names = {f["name"] for f in summary["fonts"]}
-    assert names == {"NotoSans.ttf", "OpenSans.otf"}
+    by_name = {f["name"]: f for f in summary["fonts"]}
+    assert set(by_name) == {"NotoSans.ttf", "OpenSans.otf"}
     assert all(f["size_bytes"] is None for f in summary["fonts"])
     assert summary["fonts_total_bytes"] is None
+    assert by_name["NotoSans.ttf"]["mime"] == ""
+    assert by_name["OpenSans.otf"]["mime"] == ""
+
+
+def test_read_matroska_attachments_from_minimal_ebml(tmp_path: Path) -> None:
+    blob = build_minimal_mkv_with_attachments(
+        [
+            ("trebucbd_0.ttf", "application/x-truetype-font", b"font-bytes-here"),
+            ("cover.jpg", "image/jpeg", b"\xff\xd8\xff"),
+            ("AdobeArabic-Bold.otf", "application/vnd.ms-opentype", b"OTTO" + b"\0" * 20),
+        ]
+    )
+    parsed = read_matroska_attachments_bytes(blob)
+    assert parsed == [
+        {
+            "name": "trebucbd_0.ttf",
+            "mime": "application/x-truetype-font",
+            "size_bytes": 15,
+        },
+        {"name": "cover.jpg", "mime": "image/jpeg", "size_bytes": 3},
+        {
+            "name": "AdobeArabic-Bold.otf",
+            "mime": "application/vnd.ms-opentype",
+            "size_bytes": 24,
+        },
+    ]
+
+    mkv_path = tmp_path / "sample.mkv"
+    mkv_path.write_bytes(blob)
+    assert read_matroska_attachments(mkv_path) == parsed
+
+
+def test_read_matroska_attachments_after_cluster_no_seekhead() -> None:
+    """Attachments после Cluster без SeekHead — линейный scan Segment (seek по size)."""
+    blob = build_mkv_attachments_after_cluster(
+        [("NotoSans.ttf", "font/ttf", b"FONTDATA"), ("cover.png", "image/png", b"PNG")],
+        cluster_payload=b"\x01" * 128,
+    )
+    parsed = read_matroska_attachments_bytes(blob)
+    assert parsed == [
+        {"name": "NotoSans.ttf", "mime": "font/ttf", "size_bytes": 8},
+        {"name": "cover.png", "mime": "image/png", "size_bytes": 3},
+    ]
+
+
+def test_read_matroska_attachments_skips_oversized_string_elements() -> None:
+    """FileName с заявленным size > 64KiB — attachment пропускается, без OOM."""
+    from app.services.matroska_attachments import (
+        _ID_ATTACHED_FILE,
+        _ID_ATTACHMENTS,
+        _ID_EBML,
+        _ID_FILE_DATA,
+        _ID_FILE_MIME_TYPE,
+        _ID_FILE_NAME,
+        _ID_SEGMENT,
+        _encode_id,
+        _encode_size,
+    )
+
+    def elem(eid: int, payload: bytes) -> bytes:
+        return _encode_id(eid) + _encode_size(len(payload)) + payload
+
+    def elem_sized(eid: int, size: int, payload: bytes) -> bytes:
+        assert len(payload) == size
+        return _encode_id(eid) + _encode_size(size) + payload
+
+    ok = elem(
+        _ID_ATTACHED_FILE,
+        b"".join(
+            [
+                elem(_ID_FILE_NAME, b"ok.ttf"),
+                elem(_ID_FILE_MIME_TYPE, b"font/ttf"),
+                elem(_ID_FILE_DATA, b"OK"),
+            ]
+        ),
+    )
+    huge = 200_000
+    bad = elem(
+        _ID_ATTACHED_FILE,
+        b"".join(
+            [
+                elem_sized(_ID_FILE_NAME, huge, b"x" * huge),
+                elem(_ID_FILE_MIME_TYPE, b"font/ttf"),
+                elem(_ID_FILE_DATA, b"BAD"),
+            ]
+        ),
+    )
+    blob = elem(_ID_EBML, elem(0x4282, b"matroska")) + elem(
+        _ID_SEGMENT, elem(_ID_ATTACHMENTS, ok + bad)
+    )
+    parsed = read_matroska_attachments_bytes(blob)
+    assert parsed == [{"name": "ok.ttf", "mime": "font/ttf", "size_bytes": 2}]
+
+
+def test_build_summary_flag_original_ignores_non_original_token() -> None:
+    """Подстрока «original» в токене (non-original) не даёт FlagOriginal."""
+    raw_data = {
+        "tracks": [
+            {"track_type": "General", "format": "Matroska"},
+            {
+                "track_type": "Audio",
+                "language": "eng",
+                "format": "AAC",
+                "default": "Yes",
+                "forced": "No",
+                "service_kind_string": "non-original",
+            },
+            {
+                "track_type": "Audio",
+                "language": "jpn",
+                "format": "AAC",
+                "default": "No",
+                "forced": "No",
+                "service_kind": "O",
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert summary["audios"][0]["original"] is False
+    assert summary["audios"][1]["original"] is True
+
+
+def test_build_summary_fonts_mime_from_mkv_attachments() -> None:
+    raw_data = {
+        "tracks": [
+            {
+                "track_type": "General",
+                "format": "Matroska",
+                "attachments": "trebucbd_0.ttf / cover.jpg",
+            },
+        ],
+        MKV_ATTACHMENTS_KEY: [
+            {
+                "name": "trebucbd_0.ttf",
+                "mime": "application/x-truetype-font",
+                "size_bytes": 135006,
+            },
+            {
+                "name": "cover.jpg",
+                "mime": "image/jpeg",
+                "size_bytes": 50000,
+            },
+        ],
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert len(summary["fonts"]) == 1
+    font = summary["fonts"][0]
+    assert font["name"] == "trebucbd_0.ttf"
+    assert font["mime"] == "application/x-truetype-font"
+    assert font["size_bytes"] == 135006
+    assert summary["fonts_total_bytes"] == 135006
+
+
+def test_attachments_columns_from_summary() -> None:
+    rows, count, total = _attachments_columns_from_summary(
+        {
+            "fonts": [
+                {
+                    "name": "a.ttf",
+                    "mime": "application/x-truetype-font",
+                    "size_bytes": 100,
+                    "size": "100 Б",
+                },
+                {"name": "b.otf", "mime": "application/vnd.ms-opentype", "size_bytes": 50},
+            ]
+        }
+    )
+    assert count == 2
+    assert total == 150
+    assert rows == [
+        {"name": "a.ttf", "mime": "application/x-truetype-font", "size_bytes": 100},
+        {"name": "b.otf", "mime": "application/vnd.ms-opentype", "size_bytes": 50},
+    ]
+    assert _attachments_columns_from_summary({}) == ([], 0, None)
+    assert _attachments_columns_from_summary({"fonts": [{"name": "x.ttf", "mime": ""}]}) == (
+        [{"name": "x.ttf", "mime": "", "size_bytes": None}],
+        1,
+        None,
+    )
 
 
 def test_get_or_extract_mediainfo_not_found() -> None:
@@ -500,6 +728,88 @@ def test_upsert_file_mediainfo_gate_skip(tmp_path: Path) -> None:
         res = upsert_file_mediainfo(db, str(sample_file), force=False)
         assert res is existing
         mock_parse.assert_not_called()
+
+
+def test_upsert_file_mediainfo_writes_attachments_columns(tmp_path: Path) -> None:
+    sample_file = tmp_path / "ep1.mkv"
+    sample_file.write_bytes(b"sample media content for test")
+
+    db = MagicMock()
+    db.scalar.return_value = None
+
+    summary = {
+        "format": "Matroska",
+        "fonts": [
+            {
+                "name": "arial.ttf",
+                "mime": "application/x-truetype-font",
+                "size_bytes": 1000,
+                "size": "1000 Б",
+            },
+            {"name": "empty.otf", "mime": "", "size_bytes": None, "size": ""},
+        ],
+        "fonts_total_bytes": 1000,
+    }
+    raw_json = {"tracks": [], MKV_ATTACHMENTS_KEY: []}
+    raw_text = "report"
+
+    with patch(
+        "app.services.mediainfo.parse_media_file",
+        return_value=(summary, raw_json, raw_text),
+    ):
+        res = upsert_file_mediainfo(db, str(sample_file), force=True)
+
+    assert res is not None
+    db.add.assert_called_once()
+    created = db.add.call_args[0][0]
+    assert isinstance(created, FileMediaInfo)
+    assert created.attachments_count == 2
+    assert created.attachments_total_bytes == 1000
+    assert created.attachments_json == [
+        {"name": "arial.ttf", "mime": "application/x-truetype-font", "size_bytes": 1000},
+        {"name": "empty.otf", "mime": "", "size_bytes": None},
+    ]
+    assert created.summary_json == summary
+    db.commit.assert_called()
+    db.refresh.assert_called()
+
+
+def test_upsert_file_mediainfo_updates_attachments_on_existing(tmp_path: Path) -> None:
+    sample_file = tmp_path / "ep1.mkv"
+    sample_file.write_bytes(b"sample media content for test")
+    st = sample_file.stat()
+
+    db = MagicMock()
+    existing = FileMediaInfo(
+        full_path=str(sample_file.resolve()),
+        file_size=st.st_size,
+        mtime=float(st.st_mtime),
+        summary_json={},
+        attachments_json=[],
+        attachments_count=0,
+        attachments_total_bytes=None,
+    )
+    db.scalar.return_value = existing
+
+    summary = {
+        "fonts": [
+            {"name": "x.ttf", "mime": "application/x-truetype-font", "size_bytes": 42},
+        ]
+    }
+    with patch(
+        "app.services.mediainfo.parse_media_file",
+        return_value=(summary, {}, "text"),
+    ):
+        res = upsert_file_mediainfo(db, str(sample_file), force=True)
+
+    assert res is existing
+    assert existing.attachments_count == 1
+    assert existing.attachments_total_bytes == 42
+    assert existing.attachments_json == [
+        {"name": "x.ttf", "mime": "application/x-truetype-font", "size_bytes": 42}
+    ]
+    db.add.assert_not_called()
+    db.commit.assert_called()
 
 
 def test_run_mediainfo_sync() -> None:
