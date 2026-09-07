@@ -1,7 +1,8 @@
 FROM python:3.14-slim
 
 # MediaInfo CLI + libmediainfo из официального репозитория MediaArea
-# (свежее, чем пакет Debian freeze; pymediainfo линкуется к libmediainfo0v5).
+# (свежее, чем пакет Debian freeze). После pip — см. ниже: удаляем bundled
+# libmediainfo из wheel pymediainfo, иначе /info показывает ~24.x из пакета.
 # MIME вложений Matroska читаем лёгким pure-Python EBML walk (без mkvtoolnix).
 # Если MediaArea недоступен и apt уйдёт на Debian (25.x / 24.x) — сборка падает на проверке версии.
 RUN set -eux; \
@@ -30,7 +31,13 @@ RUN set -eux; \
 WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Wheel pymediainfo тащит свой libmediainfo.so (~24.x) и грузит его ПЕРВЫМ
+# из каталога пакета — системный MediaArea (≥26) при этом игнорируется.
+# Удаляем bundled .so и проверяем, что ctypes/pymediainfo берёт system lib.
+RUN set -eux; \
+    pip install --no-cache-dir -r /app/requirements.txt; \
+    python -c "from pathlib import Path; import pymediainfo; pkg=Path(pymediainfo.__file__).resolve().parent; paths=list(pkg.glob('libmediainfo*')); [p.unlink() for p in paths]; print('removed bundled:', ', '.join(p.name for p in paths) or '(none)')"; \
+    python -c "from pymediainfo import MediaInfo; _l,_h,ver,tup=MediaInfo._get_library(); print(f'pymediainfo uses libmediainfo {ver} from system'); assert tup and tup[0] >= 26, ver"
 
 COPY . /app
 

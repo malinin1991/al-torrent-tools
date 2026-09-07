@@ -85,7 +85,7 @@ MediaInfo ставится из репозитория MediaArea (≥26.x). MIME
 
 Локально (`docker-compose.yml`): `docker compose build --no-cache api worker` и `up -d`.  
 Прод (Unraid / registry): multi-arch `buildx ... --push` как ниже, затем `docker compose -f docker-compose.unraid.yml pull && up -d`.  
-Если на `/info` всё ещё старая `libmediainfo` (например 24.12) — слой apt был из кэша BuildKit со старым Dockerfile без MediaArea: пересобери с `--no-cache` и убедись, что Unraid подтянул новый digest `latest`.
+Если на `/info` всё ещё старая `libmediainfo` (например 24.12) при свежем MediaArea в образе — виноват **bundled** `.so` внутри wheel `pymediainfo` (он грузится раньше system). Dockerfile после `pip install` удаляет `libmediainfo*` из пакета и проверяет, что pymediainfo видит ≥26. Пересобери образ и подтяни новый digest на Unraid.
 
 Мультиархитектурная сборка и пуш в registry.
 

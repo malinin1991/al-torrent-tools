@@ -29,9 +29,12 @@ MKV_ATTACHMENTS_KEY = "mkv_attachments"
 
 
 def resolve_mediainfo_version() -> str:
-    """Версия libmediainfo / CLI, которую использует приложение через pymediainfo.
+    """Версия libmediainfo / CLI, которую реально грузит pymediainfo.
 
-    Сначала библиотека (тот же путь, что у parse), иначе ``mediainfo --Version``.
+    Берём ``MediaInfo._get_library()`` (тот же путь, что у ``parse``): wheel
+    pymediainfo предпочитает свой bundled ``libmediainfo`` в каталоге пакета —
+    поэтому на /info важна именно library-версия, а не только CLI.
+    Если библиотека недоступна — ``mediainfo --Version``.
     При отсутствии — «не установлен» или текст ошибки.
     """
     lib_ver = _mediainfo_library_version()
@@ -313,18 +316,13 @@ def _subtitle_format_from_codec(track: dict[str, Any], encoding: str) -> str:
     return codec_id or ""
 
 
-def _subtitle_format_and_encoding(track: dict[str, Any]) -> tuple[str, str]:
+def _subtitle_format(track: dict[str, Any]) -> str:
+    """Нормализация format: S_TEXT/UTF8 → Plain Text (кодировку в summary не кладём)."""
     raw_format = str(track.get("format") or "").strip()
-    explicit_encoding = str(
-        track.get("encoding") or track.get("character_set") or ""
-    ).strip()
-
     if raw_format and _looks_like_encoding(raw_format):
-        encoding = raw_format
-        fmt = _subtitle_format_from_codec(track, encoding)
-        return fmt or "Plain Text", encoding
-
-    return raw_format, explicit_encoding
+        fmt = _subtitle_format_from_codec(track, raw_format)
+        return fmt or "Plain Text"
+    return raw_format
 
 
 # Стандартный pymediainfo (snake_case) + редкие алиасы MIME.
@@ -628,7 +626,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                 "title": a.get("title") or "",
                 "format": a.get("format") or "",
                 "format_profile": a.get("format_profile") or "",
-                "channels": f"{ch_val} каналов" if ch_val else (ch_layout or ""),
+                "channels": str(ch_val) if ch_val else (ch_layout or ""),
                 "bit_rate": format_bitrate_human(br_val),
                 "stream_size": format_file_size_human(a.get("stream_size")),
                 "sampling_rate": sampling_rate,
@@ -641,15 +639,13 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
     # Subtitles summary
     subs: list[dict[str, Any]] = []
     for s in sub_list:
-        fmt, encoding = _subtitle_format_and_encoding(s)
         flags = _track_flags(s)
         subs.append(
             {
                 "stream_id": s.get("stream_identifier") or s.get("id"),
                 "language": (s.get("language") or "und").lower(),
                 "title": s.get("title") or "",
-                "format": fmt,
-                "encoding": encoding,
+                "format": _subtitle_format(s),
                 "stream_size": format_file_size_human(s.get("stream_size")),
                 "default": flags["default"],
                 "forced": flags["forced"],
@@ -744,7 +740,7 @@ def get_canonical_path(path: Path | str) -> str:
 def _effective_summary(existing: FileMediaInfo) -> dict[str, Any]:
     """Summary для UI: при наличии raw_json всегда пересобираем (новые ключи).
 
-    Старые кэши могли не содержать fonts/default/encoding — без файла на диске
+    Старые кэши могли не содержать fonts/default — без файла на диске
     и без force-refresh отдаём актуальный summary из сохранённого raw_json.
     Если raw нет — graceful degradation на summary_json как есть.
     """

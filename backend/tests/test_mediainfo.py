@@ -34,13 +34,13 @@ def test_is_media_filename() -> None:
 def test_resolve_mediainfo_version_prefers_library(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.mediainfo._mediainfo_library_version",
-        lambda: "libmediainfo 24.06",
+        lambda: "libmediainfo 26.03",
     )
     monkeypatch.setattr(
         "app.services.mediainfo._mediainfo_cli_version",
         lambda: "should-not-call",
     )
-    assert resolve_mediainfo_version() == "libmediainfo 24.06"
+    assert resolve_mediainfo_version() == "libmediainfo 26.03"
 
 
 def test_resolve_mediainfo_version_cli_fallback(monkeypatch) -> None:
@@ -50,9 +50,31 @@ def test_resolve_mediainfo_version_cli_fallback(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "app.services.mediainfo._mediainfo_cli_version",
-        lambda: "MediaInfoLib - v24.06",
+        lambda: "MediaInfoLib - v26.03",
     )
-    assert resolve_mediainfo_version() == "MediaInfoLib - v24.06"
+    assert resolve_mediainfo_version() == "MediaInfoLib - v26.03"
+
+
+def test_mediainfo_library_version_from_get_library(monkeypatch) -> None:
+    """Версия с /info — то, что вернул _get_library (в т.ч. bundled wheel)."""
+    from app.services.mediainfo import _mediainfo_library_version
+
+    class _FakeMediaInfo:
+        @staticmethod
+        def can_parse() -> bool:
+            return True
+
+        @staticmethod
+        def _get_library():
+            return (object(), 0, "26.03", (26, 3))
+
+    import sys
+    import types
+
+    fake_mod = types.ModuleType("pymediainfo")
+    fake_mod.MediaInfo = _FakeMediaInfo  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pymediainfo", fake_mod)
+    assert _mediainfo_library_version() == "libmediainfo 26.03"
 
 
 def test_mediainfo_cli_version_missing(monkeypatch) -> None:
@@ -155,13 +177,14 @@ def test_build_summary_from_data() -> None:
     assert a["language"] == "rus"
     assert a["format"] == "AAC"
     assert a["title"] == "AniLibria"
+    assert a["channels"] == "2"
     assert a["sampling_rate"] == "48 кГц"
 
     assert len(summary["subtitles"]) == 1
     s = summary["subtitles"][0]
     assert s["language"] == "rus"
     assert s["format"] == "ASS"
-    assert s["encoding"] == ""
+    assert "encoding" not in s
     assert s["stream_size"] == ""
     assert s["default"] is None
     assert s["forced"] is None
@@ -298,7 +321,7 @@ def test_build_summary_flag_original_explicit_yes_no_fields() -> None:
 
 
 def test_build_summary_subtitle_utf8_plain_text_and_ass() -> None:
-    """S_TEXT/UTF8: MediaInfo кладёт кодировку в format — разделяем format/encoding."""
+    """S_TEXT/UTF8: MediaInfo кладёт кодировку в format — нормализуем в Plain Text."""
     raw_data = {
         "tracks": [
             {"track_type": "General", "format": "Matroska"},
@@ -328,14 +351,14 @@ def test_build_summary_subtitle_utf8_plain_text_and_ass() -> None:
     summary = _build_summary_from_data(raw_data)
     ass, plain = summary["subtitles"]
     assert ass["format"] == "ASS"
-    assert ass["encoding"] == ""
+    assert "encoding" not in ass
     assert "КиБ" in ass["stream_size"] or "МиБ" in ass["stream_size"] or ass["stream_size"]
     assert ass["default"] is True
     assert ass["forced"] is False
     assert ass["original"] is False
 
     assert plain["format"] == "Plain Text"
-    assert plain["encoding"] == "UTF-8"
+    assert "encoding" not in plain
     assert plain["default"] is False
     assert plain["forced"] is True
     assert "МиБ" in plain["stream_size"] or "КиБ" in plain["stream_size"]
@@ -705,7 +728,8 @@ def test_get_or_extract_mediainfo_rebuilds_stale_summary_from_raw_json() -> None
     assert "fonts" in summary
     assert len(summary["fonts"]) == 1
     assert summary["fonts"][0]["name"] == "NotoSans.ttf"
-    assert summary["subtitles"][0]["encoding"] == "UTF-8"
+    assert summary["subtitles"][0]["format"] == "Plain Text"
+    assert "encoding" not in summary["subtitles"][0]
     assert summary["subtitles"][0]["default"] is True
     assert summary["subtitles"][0]["original"] is True
 

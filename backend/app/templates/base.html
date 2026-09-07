@@ -1248,13 +1248,12 @@
     if (subs.length) {
       html += '<div class="mi-section">';
       html += `<div class="mi-section-title">Субтитры (${subs.length})</div>`;
-      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Формат</th><th>Кодировка</th><th>Размер</th><th class="mi-flag-col">Def</th><th class="mi-flag-col">Forced</th><th class="mi-flag-col">Ориг.</th><th>Название</th></tr></thead><tbody>';
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Формат</th><th>Размер</th><th class="mi-flag-col">Def</th><th class="mi-flag-col">Forced</th><th class="mi-flag-col">Ориг.</th><th>Название</th></tr></thead><tbody>';
       subs.forEach((s, i) => {
         html += `<tr>
           <td style="color:#888;">${i + 1}</td>
           <td><strong>${escapeHtml((s.language || "und").toUpperCase())}</strong></td>
           <td>${escapeHtml(s.format || "—")}</td>
-          <td>${escapeHtml(s.encoding || "—")}</td>
           <td>${escapeHtml(s.stream_size || "—")}</td>
           <td class="mi-flag-col">${miFlagIcon(s.default, "Default")}</td>
           <td class="mi-flag-col">${miFlagIcon(s.forced, "Forced")}</td>
