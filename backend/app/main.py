@@ -1437,12 +1437,12 @@ async def run_job_action(
 
         raw_release = (release or "").strip()
         try:
-            parse_release_ref(raw_release)
+            ref = parse_release_ref(raw_release)
         except ReleaseRefParseError as exc:
             return templates.TemplateResponse(
                 request, "partials/action_result.html", {"message": str(exc)}
             )
-        params = {"release": raw_release}
+        params = {"release": raw_release, "release_scope": ref.sync_scope()}
     else:
         params = {}
     try:

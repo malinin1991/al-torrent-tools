@@ -673,12 +673,30 @@ def test_get_or_extract_mediainfo_cached() -> None:
     db.get.return_value = tf
     db.scalar.return_value = fmi
 
-    with patch("pathlib.Path.is_file", return_value=False):
+    with (
+        patch("app.services.mediainfo.is_under_media_root", return_value=True),
+        patch("pathlib.Path.is_file", return_value=False),
+    ):
         res = get_or_extract_mediainfo(db, 1)
         assert res["ok"] is True
         assert res["status"] == "ready"
         assert res["summary"] == {"format": "Matroska"}
         assert res["raw_text"] == "MediaInfo report text"
+
+
+def test_get_or_extract_mediainfo_forbidden_outside_media_root() -> None:
+    db = MagicMock()
+    tf = TorrentFile(
+        id=1,
+        full_path="/etc/passwd",
+        relative_path="passwd",
+        is_checking=False,
+    )
+    db.get.return_value = tf
+    with patch("app.services.mediainfo.is_under_media_root", return_value=False):
+        res = get_or_extract_mediainfo(db, 1)
+    assert res["ok"] is False
+    assert res["status"] == "forbidden"
 
 
 def test_get_or_extract_mediainfo_rebuilds_stale_summary_from_raw_json() -> None:
@@ -720,7 +738,10 @@ def test_get_or_extract_mediainfo_rebuilds_stale_summary_from_raw_json() -> None
     db.get.return_value = tf
     db.scalar.return_value = fmi
 
-    with patch("pathlib.Path.is_file", return_value=False):
+    with (
+        patch("app.services.mediainfo.is_under_media_root", return_value=True),
+        patch("pathlib.Path.is_file", return_value=False),
+    ):
         res = get_or_extract_mediainfo(db, 1)
     assert res["ok"] is True
     assert res["cached_only"] is True
@@ -748,10 +769,26 @@ def test_upsert_file_mediainfo_gate_skip(tmp_path: Path) -> None:
     )
     db.scalar.return_value = existing
 
-    with patch("app.services.mediainfo.parse_media_file") as mock_parse:
+    with (
+        patch("app.services.mediainfo.is_under_media_root", return_value=True),
+        patch("app.services.mediainfo.parse_media_file") as mock_parse,
+    ):
         res = upsert_file_mediainfo(db, str(sample_file), force=False)
         assert res is existing
         mock_parse.assert_not_called()
+
+
+def test_upsert_file_mediainfo_rejects_outside_media_root(tmp_path: Path) -> None:
+    sample_file = tmp_path / "ep1.mkv"
+    sample_file.write_bytes(b"sample")
+    db = MagicMock()
+    with (
+        patch("app.services.mediainfo.is_under_media_root", return_value=False),
+        patch("app.services.mediainfo.parse_media_file") as mock_parse,
+    ):
+        assert upsert_file_mediainfo(db, str(sample_file), force=True) is None
+        mock_parse.assert_not_called()
+        db.scalar.assert_not_called()
 
 
 def test_upsert_file_mediainfo_writes_attachments_columns(tmp_path: Path) -> None:
@@ -777,9 +814,12 @@ def test_upsert_file_mediainfo_writes_attachments_columns(tmp_path: Path) -> Non
     raw_json = {"tracks": [], MKV_ATTACHMENTS_KEY: []}
     raw_text = "report"
 
-    with patch(
-        "app.services.mediainfo.parse_media_file",
-        return_value=(summary, raw_json, raw_text),
+    with (
+        patch("app.services.mediainfo.is_under_media_root", return_value=True),
+        patch(
+            "app.services.mediainfo.parse_media_file",
+            return_value=(summary, raw_json, raw_text),
+        ),
     ):
         res = upsert_file_mediainfo(db, str(sample_file), force=True)
 
@@ -820,9 +860,12 @@ def test_upsert_file_mediainfo_updates_attachments_on_existing(tmp_path: Path) -
             {"name": "x.ttf", "mime": "application/x-truetype-font", "size_bytes": 42},
         ]
     }
-    with patch(
-        "app.services.mediainfo.parse_media_file",
-        return_value=(summary, {}, "text"),
+    with (
+        patch("app.services.mediainfo.is_under_media_root", return_value=True),
+        patch(
+            "app.services.mediainfo.parse_media_file",
+            return_value=(summary, {}, "text"),
+        ),
     ):
         res = upsert_file_mediainfo(db, str(sample_file), force=True)
 

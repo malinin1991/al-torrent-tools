@@ -18,7 +18,6 @@ from app.services.torrent_files_meta import (
     complete_path_for,
     is_incomplete_path,
     is_under_media_root,
-    resolve_media_root,
 )
 from app.utils.datetime_fmt import utcnow
 
@@ -798,6 +797,9 @@ def upsert_file_mediainfo(
     path = Path(full_path)
     if is_incomplete_path(path) or not path.is_file():
         return None
+    if not is_under_media_root(path):
+        logger.warning("MediaInfo upsert отклонён: путь вне media root: %s", path)
+        return None
 
     canonical = get_canonical_path(path)
     try:
@@ -894,6 +896,14 @@ def get_or_extract_mediainfo(
             "file_id": file_id,
             "status": "in_progress",
             "error": "Файл проверяется или ещё загружается на master",
+        }
+
+    if not is_under_media_root(path):
+        return {
+            "ok": False,
+            "file_id": file_id,
+            "status": "forbidden",
+            "error": "Путь к файлу вне media root",
         }
 
     # Поиск в кэше БД

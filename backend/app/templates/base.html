@@ -587,6 +587,8 @@
     #mediainfo-dialog details.mi-fonts { margin: 0; }
     #mediainfo-dialog details.mi-fonts > summary { cursor: pointer; font-weight: 600; font-size: 0.82rem; color: #7cb8ff; text-transform: uppercase; letter-spacing: 0.5px; list-style: none; }
     #mediainfo-dialog details.mi-fonts > summary::-webkit-details-marker { display: none; }
+    #mediainfo-dialog tr.mi-att-mismatch td { color: #e07070; }
+    #mediainfo-dialog tr.mi-att-nonfont td { color: #888; }
     #mediainfo-dialog pre.mi-raw { background: #141414; border: 1px solid #333; border-radius: 4px; padding: 10px; font-size: 0.8rem; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     #mediainfo-dialog .mi-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 10px; border-top: 1px solid #333; flex-wrap: wrap; gap: 8px; }
   </style>
@@ -901,10 +903,11 @@
   function ensureFileEncodeCheckbox(li, fileId) {
     if (!isEncoderUiEnabled() || !li || !fileId) return;
     let check = li.querySelector(":scope > .file-encode-check");
-    if (check) {
+    if (check && _jsBoundEncodeChecks.has(check)) {
       check.setAttribute("data-file-id", String(fileId));
       return;
     }
+    if (check) check.remove();
     check = document.createElement("input");
     check.type = "checkbox";
     check.className = "file-encode-check";
@@ -912,6 +915,7 @@
     check.title = "Выбрать для кодировщика";
     check.addEventListener("change", updateEncoderBatchBar);
     check.addEventListener("click", (event) => event.stopPropagation());
+    _jsBoundEncodeChecks.add(check);
     li.insertBefore(check, li.firstChild);
   }
 
@@ -959,8 +963,11 @@
 
   function ensureCopyPathButton(slot) {
     const fullPath = slot.getAttribute("data-full-path");
-    if (!fullPath || slot.querySelector(".file-copy-path")) return;
-    const btn = document.createElement("button");
+    if (!fullPath) return;
+    let btn = slot.querySelector(".file-copy-path");
+    if (btn && _jsBoundCopyPathBtns.has(btn)) return;
+    if (btn) btn.remove();
+    btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn-icon file-copy-path";
     btn.title = "Копировать путь";
@@ -979,6 +986,7 @@
         btn.title = "Не удалось скопировать";
       }
     });
+    _jsBoundCopyPathBtns.add(btn);
     const download = slot.querySelector("a.file-download");
     if (download) {
       download.after(btn);
@@ -990,8 +998,11 @@
   function ensureEncoderButton(slot) {
     if (!isEncoderUiEnabled()) return;
     const id = slot.getAttribute("data-file-id");
-    if (!id || slot.querySelector(".file-send-encoder")) return;
-    const btn = document.createElement("button");
+    if (!id) return;
+    let btn = slot.querySelector(".file-send-encoder");
+    if (btn && _jsBoundEncoderBtns.has(btn)) return;
+    if (btn) btn.remove();
+    btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn-icon file-send-encoder";
     btn.title = "Отправить в кодировщик";
@@ -1047,6 +1058,7 @@
         btn.disabled = false;
       }
     });
+    _jsBoundEncoderBtns.add(btn);
     slot.appendChild(btn);
   }
 
@@ -1172,6 +1184,40 @@
     return `<span class="mi-flag mi-flag-unk" title="${title}: неизвестно">—</span>`;
   }
 
+  function attachmentRowClass(name, mime) {
+    // Правила проекта: ttf/ttc → application/x-truetype-font; otf → application/vnd.ms-opentype.
+    // Пустой MIME — данные ещё не получены, строку не красим.
+    const lower = String(name || "").toLowerCase();
+    const m = String(mime || "").trim().toLowerCase();
+    if (!m) return "";
+    let expected = null;
+    if (lower.endsWith(".ttf") || lower.endsWith(".ttc")) {
+      expected = "application/x-truetype-font";
+    } else if (lower.endsWith(".otf")) {
+      expected = "application/vnd.ms-opentype";
+    } else {
+      return "mi-att-nonfont";
+    }
+    if (m === expected) return "";
+    return "mi-att-mismatch";
+  }
+
+  function attachmentRowTitle(name, mime) {
+    const lower = String(name || "").toLowerCase();
+    const m = String(mime || "").trim();
+    if (!m) return "";
+    let expected = null;
+    if (lower.endsWith(".ttf") || lower.endsWith(".ttc")) {
+      expected = "application/x-truetype-font";
+    } else if (lower.endsWith(".otf")) {
+      expected = "application/vnd.ms-opentype";
+    } else {
+      return "Не шрифт проекта (ожидаются .ttf / .ttc / .otf)";
+    }
+    if (m.toLowerCase() === expected) return "";
+    return `Ожидался MIME ${expected}, в файле: ${m}`;
+  }
+
   function renderMediaInfoContent(container, data, fileId) {
     const summary = data.summary || {};
     const videos = summary.videos || [];
@@ -1280,10 +1326,15 @@
       html += `<details class="mi-fonts"><summary>Вложения (${fonts.length})</summary>`;
       html += '<table class="mi-table"><thead><tr><th>Название</th><th>Размер</th><th>MIME</th></tr></thead><tbody>';
       fonts.forEach((f) => {
-        html += `<tr>
+        const rowClass = attachmentRowClass(f.name, f.mime);
+        const rowTitle = attachmentRowTitle(f.name, f.mime);
+        const trAttrs =
+          (rowClass ? ` class="${rowClass}"` : "") +
+          (rowTitle ? ` title="${escapeHtml(rowTitle)}"` : "");
+        html += `<tr${trAttrs}>
           <td>${escapeHtml(f.name || "—")}</td>
           <td>${escapeHtml(f.size || "—")}</td>
-          <td class="muted">${escapeHtml(f.mime || "—")}</td>
+          <td>${escapeHtml(f.mime || "—")}</td>
         </tr>`;
       });
       if (totalLabel) {
@@ -1292,7 +1343,7 @@
       html += '</tbody></table></details>';
     } else {
       html += '<div class="mi-section-title">Вложения</div>';
-      html += '<div class="muted" style="font-size:0.88rem;">Вложения не приложены</div>';
+      html += '<div class="muted" style="font-size:0.88rem;">Нет вложений</div>';
     }
     html += '</div>';
 
@@ -1331,9 +1382,17 @@
     });
   }
 
+  const _jsBoundMediaInfoBtns = new WeakSet();
+  const _jsBoundCopyPathBtns = new WeakSet();
+  const _jsBoundEncoderBtns = new WeakSet();
+  const _jsBoundEncodeChecks = new WeakSet();
+
   function ensureMediaInfoButton(slot) {
     const id = slot.getAttribute("data-file-id");
-    if (!id || slot.querySelector(".file-mediainfo")) return;
+    if (!id) return;
+    let btn = slot.querySelector(".file-mediainfo");
+    if (btn && _jsBoundMediaInfoBtns.has(btn)) return;
+    if (btn) btn.remove();
     const fullPath = slot.getAttribute("data-full-path") || "";
     const li = slot.closest("li");
     const codeEl = li ? li.querySelector("code") : null;
@@ -1345,7 +1404,7 @@
     const mediaExts = new Set(["mkv", "mp4", "avi", "m4v", "mov", "flv", "wmv", "webm", "ts", "m2ts", "flac", "mp3", "aac", "ac3", "mka"]);
     if (ext && !mediaExts.has(ext)) return;
 
-    const btn = document.createElement("button");
+    btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn-icon file-mediainfo";
     btn.title = "MediaInfo";
@@ -1356,6 +1415,7 @@
       event.stopPropagation();
       showMediaInfoModal(id, relPath, fullPath);
     });
+    _jsBoundMediaInfoBtns.add(btn);
     slot.appendChild(btn);
   }
 
@@ -1364,6 +1424,34 @@
     slot.querySelectorAll("a.file-download, .file-copy-path, .file-send-encoder, .file-mediainfo").forEach((el) => el.remove());
     const li = slot.closest("li[data-file-id]");
     removeFileEncodeCheckbox(li);
+  }
+
+  function restoreEncodeChecksIfNeeded(block) {
+    const details =
+      (block && block.closest && block.closest("details.torrent-files, details.torrent-files-loaded")) ||
+      block;
+    if (!details || !details.dataset) return;
+    const ids = (details.dataset.encodeRestoreIds || "").split(",").filter(Boolean);
+    if (!ids.length) return;
+    let found = 0;
+    ids.forEach((fileId) => {
+      const box = details.querySelector(
+        `.file-encode-check[data-file-id="${cssAttrQuote(fileId)}"]`
+      );
+      if (box) {
+        box.checked = true;
+        found += 1;
+      }
+    });
+    if (found > 0) {
+      if (typeof updateEncoderBatchBar === "function") updateEncoderBatchBar();
+      if (typeof syncTorrentEncodeSelectActions === "function") {
+        syncTorrentEncodeSelectActions(details);
+      }
+    }
+    if (found >= ids.length) {
+      delete details.dataset.encodeRestoreIds;
+    }
   }
 
   function applyDownloadableProbe(block, data) {
@@ -1404,6 +1492,7 @@
     });
     syncTorrentEncodeSelectActions(block.closest(".torrent-files") || block);
     updateEncoderBatchBar();
+    restoreEncodeChecksIfNeeded(block);
   }
 
   function probeResultIsEmpty(data) {
@@ -1628,6 +1717,27 @@
     };
   }
 
+  function stripTorrentFileActionWidgets(scope) {
+    // После innerHTML-restore JS-кнопки без listeners — снести и создать заново.
+    // a.file-download не трогаем: href работает без rewire; без него enqueue не восстановит
+    // кнопки у блоков без data-download-check (eager archive).
+    if (!scope) return;
+    scope
+      .querySelectorAll(".file-copy-path, .file-send-encoder, .file-mediainfo, .file-encode-check")
+      .forEach((el) => el.remove());
+    scope.querySelectorAll(".torrent-encode-select-actions").forEach((el) => {
+      delete el.dataset.bound;
+    });
+    // Иначе :not([data-download-queued]) пропустит повторный probe.
+    const details =
+      (scope.closest && scope.closest("details.torrent-files, details.torrent-files-loaded")) ||
+      (scope.matches &&
+      scope.matches("details.torrent-files, details.torrent-files-loaded")
+        ? scope
+        : null);
+    if (details) details.removeAttribute("data-download-queued");
+  }
+
   function restoreUiSsePreserve(root, state) {
     if (!state) return;
     const scope = root || document;
@@ -1636,6 +1746,13 @@
     (state.openKeys || []).forEach((key) => {
       const el = scope.querySelector(`details[data-sse-key="${cssAttrQuote(key)}"]`);
       if (!el) return;
+      const checked = encodeChecked[key] || [];
+      if (checked.length) {
+        // Чекбоксы пересоздаст probe → restoreEncodeChecksIfNeeded в applyDownloadableProbe.
+        el.dataset.encodeRestoreIds = checked.join(",");
+      } else {
+        delete el.dataset.encodeRestoreIds;
+      }
       const savedHtml = lazyBodies[key];
       if (savedHtml) {
         const body = el.querySelector(":scope > .torrent-files-body");
@@ -1645,24 +1762,17 @@
           body.removeAttribute("hx-get");
           body.removeAttribute("hx-trigger");
           if (window.htmx) htmx.process(body);
+          stripTorrentFileActionWidgets(body);
           if (typeof enqueueDownloadableChecks === "function") {
             enqueueDownloadableChecks(el);
           }
         }
       }
       el.open = true;
-      const checked = encodeChecked[key] || [];
-      if (checked.length) {
-        checked.forEach((fileId) => {
-          const box = el.querySelector(
-            `.file-encode-check[data-file-id="${cssAttrQuote(fileId)}"]`
-          );
-          if (box) box.checked = true;
-        });
-        if (typeof updateEncoderBatchBar === "function") updateEncoderBatchBar();
-        if (typeof syncTorrentEncodeSelectActions === "function") {
-          syncTorrentEncodeSelectActions(el);
-        }
+      // Уже есть download-ссылки (eager / кэш) — чекбоксы могли появиться в первом ensure-цикле.
+      restoreEncodeChecksIfNeeded(el);
+      if (!checked.length && typeof syncTorrentEncodeSelectActions === "function") {
+        syncTorrentEncodeSelectActions(el);
       }
     });
     window.scrollTo(0, state.scrollY || 0);

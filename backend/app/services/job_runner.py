@@ -38,6 +38,7 @@ _JOB_RUN_LOCK_CLASS = 8721
 # Типы, допускающие несколько pending/running; уникальность — по ключу в params.
 _CONCURRENT_UNIQUE_PARAM: dict[str, str] = {
     "hash_torrent": "info_hash",
+    "force_release_sync": "release_scope",
 }
 
 # Чтобы background tasks не собрал GC до завершения.

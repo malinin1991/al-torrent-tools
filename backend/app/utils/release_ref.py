@@ -23,6 +23,12 @@ class ReleaseRef:
         if has_id == has_alias:
             raise ValueError("ReleaseRef: нужен ровно один из release_id / alias")
 
+    def sync_scope(self) -> str:
+        """Ключ уникальности для concurrent force_release_sync."""
+        if self.release_id is not None:
+            return f"id:{self.release_id}"
+        return f"alias:{(self.alias or '').strip().lower()}"
+
 
 _RELEASE_SEGMENT_RE = re.compile(r"/release/([^/\s?#]+)", re.IGNORECASE)
 _HAS_LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")

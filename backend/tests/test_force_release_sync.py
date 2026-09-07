@@ -244,6 +244,83 @@ def test_force_release_sync_job_action_runs(monkeypatch) -> None:
             db=db,
         )
     )
-    create.assert_called_once_with(db, "force_release_sync", {"release": "re-creators"})
+    create.assert_called_once_with(
+        db,
+        "force_release_sync",
+        {"release": "re-creators", "release_scope": "alias:re-creators"},
+    )
     schedule.assert_called_once_with(77)
     assert "77" in result.context["message"]
+
+
+def test_force_release_sync_job_action_scope_by_id(monkeypatch) -> None:
+    from app.main import run_job_action
+
+    db = MagicMock()
+    request = MagicMock()
+    job = MagicMock()
+    job.id = 78
+    job.type = "force_release_sync"
+
+    create = MagicMock(return_value=job)
+    monkeypatch.setattr("app.main.job_runner.create_job", create)
+    monkeypatch.setattr("app.main.job_runner.schedule_job", MagicMock())
+    monkeypatch.setattr(
+        "app.main.templates.TemplateResponse",
+        lambda request, name, ctx: MagicMock(context=ctx, name=name),
+    )
+
+    asyncio.run(
+        run_job_action(
+            request,
+            job_type="force_release_sync",
+            release="3993",
+            db=db,
+        )
+    )
+    create.assert_called_once_with(
+        db,
+        "force_release_sync",
+        {"release": "3993", "release_scope": "id:3993"},
+    )
+
+
+def test_create_job_force_release_sync_unique_by_scope() -> None:
+    from app.services.job_runner import JobAlreadyRunningError, JobRunner
+
+    runner = JobRunner()
+    runner.register("force_release_sync", AsyncMock())
+
+    existing = MagicMock()
+    existing.id = 10
+    existing.params_json = {"release": "re-creators", "release_scope": "alias:re-creators"}
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [existing]
+
+    with pytest.raises(JobAlreadyRunningError):
+        runner.create_job(
+            db,
+            "force_release_sync",
+            {"release": "re-creators", "release_scope": "alias:re-creators"},
+        )
+
+    # Другой релиз — можно параллельно.
+    def _refresh(obj):  # noqa: ANN001
+        obj.id = 12
+        obj.type = "force_release_sync"
+        obj.status = "pending"
+
+    db.refresh.side_effect = _refresh
+    job = runner.create_job(
+        db,
+        "force_release_sync",
+        {"release": "3993", "release_scope": "id:3993"},
+    )
+    assert job.id == 12
+    db.add.assert_called()
+
+
+def test_release_ref_sync_scope() -> None:
+    assert ReleaseRef(release_id=3993).sync_scope() == "id:3993"
+    assert ReleaseRef(alias="re-creators").sync_scope() == "alias:re-creators"

@@ -158,7 +158,21 @@ def test_releases_live_url_uses_urlencode() -> None:
     assert "_uiSsePreserveByTarget" in base
     assert "lazyBodies" in base
     assert "encodeChecked" in base
+    assert "stripTorrentFileActionWidgets" in base
+    assert "restoreEncodeChecksIfNeeded" in base
+    assert "data-download-queued" in base
+    # Download-ссылку не снимаем при SSE restore — иначе eager archive без probe.
+    assert ".file-copy-path, .file-send-encoder, .file-mediainfo, .file-encode-check" in base
+    strip_fn = base.split("function stripTorrentFileActionWidgets", 1)[1].split(
+        "function restoreUiSsePreserve", 1
+    )[0]
+    assert 'querySelectorAll(".file-copy-path, .file-send-encoder, .file-mediainfo, .file-encode-check")' in strip_fn
+    assert "removeAttribute(\"data-download-queued\")" in strip_fn
+    # Пустой MIME — без цвета (данные ещё не получены).
+    assert 'if (!m) return "";' in base
     assert "Вложения" in base
+    assert "mi-att-mismatch" in base
+    assert "mi-att-nonfont" in base
     assert "Шрифты" not in base
     assert "visibilitychange" in base
     assert "setTimeout(() => _uiSseRefreshing.delete(key), 3000)" in base
