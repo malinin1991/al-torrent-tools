@@ -14,6 +14,7 @@ from app.jobs.full_sync import run_full_sync
 from app.jobs.hash_backfill import run_hash_backfill
 from app.jobs.hash_torrent import run_hash_torrent
 from app.jobs.mediainfo_sync import run_mediainfo_sync
+from app.jobs.force_release_sync import run_force_release_sync
 from app.jobs.meta_sync import run_full_meta_sync, run_meta_sync
 from app.jobs.ongoing import run_ongoing
 from app.jobs.orphan_cleanup import run_orphan_cleanup
@@ -56,6 +57,7 @@ job_runner.register("ongoing", run_ongoing)
 job_runner.register("full_sync", run_full_sync)
 job_runner.register("meta_sync", run_meta_sync)
 job_runner.register("full_meta_sync", run_full_meta_sync)
+job_runner.register("force_release_sync", run_force_release_sync)
 job_runner.register("cleanup_master", run_cleanup)
 job_runner.register("cleanup_slave", run_cleanup)
 job_runner.register("cleanup_logs", run_cleanup_logs)

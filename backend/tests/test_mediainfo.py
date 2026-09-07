@@ -101,6 +101,236 @@ def test_build_summary_from_data() -> None:
     s = summary["subtitles"][0]
     assert s["language"] == "rus"
     assert s["format"] == "ASS"
+    assert s["encoding"] == ""
+    assert s["stream_size"] == ""
+    assert s["default"] is None
+    assert s["forced"] is None
+    assert s["original"] is None
+    assert summary["fonts"] == []
+    assert summary["fonts_total_size"] == ""
+    assert summary["fonts_total_bytes"] is None
+
+
+def test_build_summary_flags_and_original_from_service_kind() -> None:
+    raw_data = {
+        "tracks": [
+            {"track_type": "General", "format": "Matroska"},
+            {
+                "track_type": "Video",
+                "format": "AVC",
+                "width": 1280,
+                "height": 720,
+                "default": "Yes",
+                "forced": "No",
+                "title": "Original",  # название дорожки, не FlagOriginal
+            },
+            {
+                "track_type": "Audio",
+                "language": "jpn",
+                "format": "AAC",
+                "default": "Yes",
+                "forced": "No",
+                "service_kind": "Original",
+                "title": "Original",
+            },
+            {
+                "track_type": "Audio",
+                "language": "rus",
+                "format": "AAC",
+                "default": "No",
+                "forced": "No",
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    v = summary["videos"][0]
+    assert v["default"] is True
+    assert v["forced"] is False
+    assert v["original"] is False  # title != FlagOriginal; нет service_kind
+    assert v["title"] == "Original"
+
+    a0, a1 = summary["audios"]
+    assert a0["original"] is True
+    assert a0["default"] is True
+    assert a1["original"] is False
+    assert a1["default"] is False
+
+
+def test_build_summary_flag_original_matroska_service_kind_o() -> None:
+    """Matroska FlagOriginal → ServiceKind «O» (+ String «Original»)."""
+    raw_data = {
+        "tracks": [
+            {"track_type": "General", "format": "Matroska"},
+            {
+                "track_type": "Audio",
+                "language": "jpn",
+                "format": "AAC",
+                "default": "Yes",
+                "forced": "No",
+                "service_kind": "O",
+                "service_kind_string": "Original",
+                "title": "Japanese",
+            },
+            {
+                "track_type": "Audio",
+                "language": "rus",
+                "format": "AAC",
+                "default": "No",
+                "forced": "No",
+                "service_kind": "O",  # только код, без string
+            },
+            {
+                "track_type": "Text",
+                "language": "jpn",
+                "format": "ASS",
+                "default": "No",
+                "forced": "No",
+                # только string — тоже FlagOriginal
+                "service_kind_string": "Original",
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert summary["audios"][0]["original"] is True
+    assert summary["audios"][1]["original"] is True
+    assert summary["subtitles"][0]["original"] is True
+
+
+def test_build_summary_flag_original_explicit_yes_no_fields() -> None:
+    """Явные Yes/No-поля original / flag_original; title не считается флагом."""
+    raw_data = {
+        "tracks": [
+            {"track_type": "General", "format": "Matroska"},
+            {
+                "track_type": "Audio",
+                "language": "jpn",
+                "format": "AAC",
+                "default": "Yes",
+                "forced": "No",
+                "original": "Yes",
+                "title": "Dub",
+            },
+            {
+                "track_type": "Audio",
+                "language": "eng",
+                "format": "AAC",
+                "default": "No",
+                "forced": "No",
+                "flag_original": "No",
+                "title": "Original",
+            },
+            {
+                "track_type": "Text",
+                "language": "und",
+                "format": "ASS",
+                "default": "Yes",
+                "forced": "No",
+                # Original/Track name — не Yes/No → игнор, fallback false
+                "original_track": "Signs & Songs",
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert summary["audios"][0]["original"] is True
+    assert summary["audios"][1]["original"] is False
+    assert summary["audios"][1]["title"] == "Original"
+    assert summary["subtitles"][0]["original"] is False
+
+
+def test_build_summary_subtitle_utf8_plain_text_and_ass() -> None:
+    """S_TEXT/UTF8: MediaInfo кладёт кодировку в format — разделяем format/encoding."""
+    raw_data = {
+        "tracks": [
+            {"track_type": "General", "format": "Matroska"},
+            {
+                "track_type": "Text",
+                "language": "rus",
+                "format": "ASS",
+                "codec_id": "S_TEXT/ASS",
+                "title": "Signs",
+                "default": "Yes",
+                "forced": "No",
+                "stream_size": 102400,
+            },
+            {
+                "track_type": "Text",
+                "language": "jpn",
+                "format": "UTF-8",
+                "codec_id": "S_TEXT/UTF8",
+                "codec_id_info": "UTF-8 Plain Text",
+                "title": "Full",
+                "default": "No",
+                "forced": "Yes",
+                "stream_size": 512000,
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    ass, plain = summary["subtitles"]
+    assert ass["format"] == "ASS"
+    assert ass["encoding"] == ""
+    assert "КиБ" in ass["stream_size"] or "МиБ" in ass["stream_size"] or ass["stream_size"]
+    assert ass["default"] is True
+    assert ass["forced"] is False
+    assert ass["original"] is False
+
+    assert plain["format"] == "Plain Text"
+    assert plain["encoding"] == "UTF-8"
+    assert plain["default"] is False
+    assert plain["forced"] is True
+    assert "МиБ" in plain["stream_size"] or "КиБ" in plain["stream_size"]
+
+
+def test_build_summary_fonts_from_attachment_tracks() -> None:
+    raw_data = {
+        "tracks": [
+            {
+                "track_type": "General",
+                "format": "Matroska",
+                "attachments": "Arial.ttf / cover.jpg",
+            },
+            {
+                "track_type": "Other",
+                "type": "Attachment",
+                "title": "Roboto-Regular.ttf",
+                "internet_media_type": "application/x-truetype-font",
+                "stream_size": 204800,
+            },
+            {
+                "track_type": "Image",
+                "type": "Cover",
+                "title": "cover.jpg",
+                "stream_size": 50000,
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert len(summary["fonts"]) == 1
+    font = summary["fonts"][0]
+    assert font["name"] == "Roboto-Regular.ttf"
+    assert font["size_bytes"] == 204800
+    assert "КиБ" in font["size"] or "МиБ" in font["size"]
+    assert "truetype" in font["mime"]
+    assert summary["fonts_total_bytes"] == 204800
+    assert summary["fonts_total_size"]
+
+
+def test_build_summary_fonts_fallback_from_general_attachments() -> None:
+    raw_data = {
+        "tracks": [
+            {
+                "track_type": "General",
+                "format": "Matroska",
+                "attachments": "NotoSans.ttf / OpenSans.otf",
+            },
+        ]
+    }
+    summary = _build_summary_from_data(raw_data)
+    assert len(summary["fonts"]) == 2
+    names = {f["name"] for f in summary["fonts"]}
+    assert names == {"NotoSans.ttf", "OpenSans.otf"}
+    assert all(f["size_bytes"] is None for f in summary["fonts"])
+    assert summary["fonts_total_bytes"] is None
 
 
 def test_get_or_extract_mediainfo_not_found() -> None:
@@ -149,6 +379,58 @@ def test_get_or_extract_mediainfo_cached() -> None:
         assert res["status"] == "ready"
         assert res["summary"] == {"format": "Matroska"}
         assert res["raw_text"] == "MediaInfo report text"
+
+
+def test_get_or_extract_mediainfo_rebuilds_stale_summary_from_raw_json() -> None:
+    """Старый summary без fonts/default — пересобираем из raw_json без файла на диске."""
+    db = MagicMock()
+    tf = TorrentFile(
+        id=1,
+        full_path="/media/test.mkv",
+        relative_path="test.mkv",
+        is_checking=False,
+    )
+    raw = {
+        "tracks": [
+            {
+                "track_type": "General",
+                "format": "Matroska",
+                "attachments": "NotoSans.ttf",
+            },
+            {
+                "track_type": "Text",
+                "language": "rus",
+                "format": "UTF-8",
+                "codec_id": "S_TEXT/UTF8",
+                "codec_id_info": "UTF-8 Plain Text",
+                "default": "Yes",
+                "forced": "No",
+                "service_kind": "O",
+            },
+        ]
+    }
+    fmi = FileMediaInfo(
+        full_path=str(Path("/media/test.mkv").resolve()),
+        file_size=1000,
+        mtime=12345.0,
+        summary_json={"format": "Matroska", "videos": [], "audios": [], "subtitles": []},
+        raw_json=raw,
+        raw_text="old report",
+    )
+    db.get.return_value = tf
+    db.scalar.return_value = fmi
+
+    with patch("pathlib.Path.is_file", return_value=False):
+        res = get_or_extract_mediainfo(db, 1)
+    assert res["ok"] is True
+    assert res["cached_only"] is True
+    summary = res["summary"]
+    assert "fonts" in summary
+    assert len(summary["fonts"]) == 1
+    assert summary["fonts"][0]["name"] == "NotoSans.ttf"
+    assert summary["subtitles"][0]["encoding"] == "UTF-8"
+    assert summary["subtitles"][0]["default"] is True
+    assert summary["subtitles"][0]["original"] is True
 
 
 def test_upsert_file_mediainfo_gate_skip(tmp_path: Path) -> None:

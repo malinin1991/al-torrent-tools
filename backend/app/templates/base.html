@@ -341,7 +341,15 @@
       flex: 0 0 auto;
     }
     details[open] > .release-summary::before { content: "▾"; }
-    .release-title { display: flex; flex-direction: column; gap: 2px; flex: 1 1 220px; min-width: 0; }
+    .release-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1 1 220px;
+      min-width: 0;
+      user-select: text;
+      -webkit-user-select: text;
+    }
     .release-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .release-meta { display: flex; flex-wrap: wrap; gap: 10px 14px; font-size: 0.9rem; }
     .release-body { padding: 0 16px 16px; border-top: 1px solid #2a2a2a; }
@@ -542,7 +550,7 @@
       background: #1e1e1e;
       color: #eee;
       padding: 18px 20px;
-      width: min(780px, 95vw);
+      width: min(860px, 95vw);
       max-height: 88vh;
       overflow: hidden;
       box-sizing: border-box;
@@ -565,6 +573,15 @@
     #mediainfo-dialog .mi-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; margin-top: 6px; }
     #mediainfo-dialog .mi-table th { text-align: left; color: #888; font-weight: 500; padding: 4px 6px; border-bottom: 1px solid #3a3a3a; font-size: 0.78rem; text-transform: uppercase; }
     #mediainfo-dialog .mi-table td { padding: 5px 6px; border-bottom: 1px solid #2d2d2d; }
+    #mediainfo-dialog .mi-flag { display: inline-block; font-weight: 700; font-size: 0.9rem; line-height: 1; }
+    #mediainfo-dialog .mi-flag-yes { color: #6dca8c; }
+    #mediainfo-dialog .mi-flag-no { color: #e07070; }
+    #mediainfo-dialog .mi-flag-unk { color: #888; }
+    #mediainfo-dialog .mi-table th.mi-flag-col,
+    #mediainfo-dialog .mi-table td.mi-flag-col { text-align: center; width: 3.2em; }
+    #mediainfo-dialog details.mi-fonts { margin: 0; }
+    #mediainfo-dialog details.mi-fonts > summary { cursor: pointer; font-weight: 600; font-size: 0.82rem; color: #7cb8ff; text-transform: uppercase; letter-spacing: 0.5px; list-style: none; }
+    #mediainfo-dialog details.mi-fonts > summary::-webkit-details-marker { display: none; }
     #mediainfo-dialog pre.mi-raw { background: #141414; border: 1px solid #333; border-radius: 4px; padding: 10px; font-size: 0.8rem; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     #mediainfo-dialog .mi-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 10px; border-top: 1px solid #333; flex-wrap: wrap; gap: 8px; }
   </style>
@@ -1142,11 +1159,23 @@
     }
   }
 
+  function miFlagIcon(value, label) {
+    const title = escapeHtml(label || "");
+    if (value === true) {
+      return `<span class="mi-flag mi-flag-yes" title="${title}: да">✓</span>`;
+    }
+    if (value === false) {
+      return `<span class="mi-flag mi-flag-no" title="${title}: нет">✕</span>`;
+    }
+    return `<span class="mi-flag mi-flag-unk" title="${title}: неизвестно">—</span>`;
+  }
+
   function renderMediaInfoContent(container, data, fileId) {
     const summary = data.summary || {};
     const videos = summary.videos || [];
     const audios = summary.audios || [];
     const subs = summary.subtitles || [];
+    const fonts = Array.isArray(summary.fonts) ? summary.fonts : [];
     const rawText = data.raw_text || "";
 
     let html = "";
@@ -1182,6 +1211,9 @@
         if (v.stream_size) html += `<div class="mi-grid-item"><span class="mi-label">Размер</span><span class="mi-value">${escapeHtml(v.stream_size)}</span></div>`;
         if (v.bit_depth) html += `<div class="mi-grid-item"><span class="mi-label">Глубина цвета</span><span class="mi-value">${escapeHtml(v.bit_depth)} бит</span></div>`;
         if (v.hdr_format) html += `<div class="mi-grid-item"><span class="mi-label">HDR</span><span class="mi-value badge badge-ok" style="display:inline-block;width:fit-content;">${escapeHtml(v.hdr_format)}</span></div>`;
+        html += `<div class="mi-grid-item"><span class="mi-label">Default</span><span class="mi-value">${miFlagIcon(v.default, "Default")}</span></div>`;
+        html += `<div class="mi-grid-item"><span class="mi-label">Forced</span><span class="mi-value">${miFlagIcon(v.forced, "Forced")}</span></div>`;
+        html += `<div class="mi-grid-item"><span class="mi-label">Язык оригинала</span><span class="mi-value">${miFlagIcon(v.original, "Язык оригинала")}</span></div>`;
         html += '</div>';
       });
       html += '</div>';
@@ -1191,16 +1223,19 @@
     if (audios.length) {
       html += '<div class="mi-section">';
       html += `<div class="mi-section-title">Аудиодорожки (${audios.length})</div>`;
-      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Кодек</th><th>Каналы</th><th>Частота</th><th>Битрейт</th><th>Размер</th><th>Название</th></tr></thead><tbody>';
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Кодек</th><th>Каналы</th><th>Частота</th><th>Битрейт</th><th>Размер</th><th class="mi-flag-col">Def</th><th class="mi-flag-col">Forced</th><th class="mi-flag-col">Ориг.</th><th>Название</th></tr></thead><tbody>';
       audios.forEach((a, i) => {
         html += `<tr>
           <td style="color:#888;">${i + 1}</td>
-          <td><strong>${escapeHtml(a.language.toUpperCase())}</strong></td>
-          <td>${escapeHtml(a.format)} ${escapeHtml(a.format_profile || "")}</td>
+          <td><strong>${escapeHtml((a.language || "und").toUpperCase())}</strong></td>
+          <td>${escapeHtml(a.format || "—")} ${escapeHtml(a.format_profile || "")}</td>
           <td>${escapeHtml(a.channels || "—")}</td>
           <td>${escapeHtml(a.sampling_rate || "—")}</td>
           <td>${escapeHtml(a.bit_rate || "—")}</td>
           <td>${escapeHtml(a.stream_size || "—")}</td>
+          <td class="mi-flag-col">${miFlagIcon(a.default, "Default")}</td>
+          <td class="mi-flag-col">${miFlagIcon(a.forced, "Forced")}</td>
+          <td class="mi-flag-col">${miFlagIcon(a.original, "Язык оригинала")}</td>
           <td class="muted">${escapeHtml(a.title || "—")}</td>
         </tr>`;
       });
@@ -1211,17 +1246,54 @@
     if (subs.length) {
       html += '<div class="mi-section">';
       html += `<div class="mi-section-title">Субтитры (${subs.length})</div>`;
-      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Формат</th><th>Название</th></tr></thead><tbody>';
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Формат</th><th>Кодировка</th><th>Размер</th><th class="mi-flag-col">Def</th><th class="mi-flag-col">Forced</th><th class="mi-flag-col">Ориг.</th><th>Название</th></tr></thead><tbody>';
       subs.forEach((s, i) => {
         html += `<tr>
           <td style="color:#888;">${i + 1}</td>
-          <td><strong>${escapeHtml(s.language.toUpperCase())}</strong></td>
+          <td><strong>${escapeHtml((s.language || "und").toUpperCase())}</strong></td>
           <td>${escapeHtml(s.format || "—")}</td>
+          <td>${escapeHtml(s.encoding || "—")}</td>
+          <td>${escapeHtml(s.stream_size || "—")}</td>
+          <td class="mi-flag-col">${miFlagIcon(s.default, "Default")}</td>
+          <td class="mi-flag-col">${miFlagIcon(s.forced, "Forced")}</td>
+          <td class="mi-flag-col">${miFlagIcon(s.original, "Язык оригинала")}</td>
           <td class="muted">${escapeHtml(s.title || "—")}</td>
         </tr>`;
       });
       html += '</tbody></table></div>';
     }
+
+    // Блок Вложения (fonts/attachments в summary)
+    html += '<div class="mi-section">';
+    if (fonts.length) {
+      const totalLabel = summary.fonts_total_size
+        ? escapeHtml(summary.fonts_total_size)
+        : (() => {
+            const known = fonts
+              .map((f) => (typeof f.size_bytes === "number" ? f.size_bytes : null))
+              .filter((n) => n != null);
+            if (!known.length) return "";
+            const sum = known.reduce((a, b) => a + b, 0);
+            return escapeHtml(formatMediaInfoFileSize(sum) || String(sum));
+          })();
+      html += `<details class="mi-fonts"><summary>Вложения (${fonts.length})</summary>`;
+      html += '<table class="mi-table"><thead><tr><th>Название</th><th>Размер</th><th>MIME</th></tr></thead><tbody>';
+      fonts.forEach((f) => {
+        html += `<tr>
+          <td>${escapeHtml(f.name || "—")}</td>
+          <td>${escapeHtml(f.size || "—")}</td>
+          <td class="muted">${escapeHtml(f.mime || "—")}</td>
+        </tr>`;
+      });
+      if (totalLabel) {
+        html += `<tr><td><strong>Итого</strong></td><td colspan="2"><strong>${totalLabel}</strong></td></tr>`;
+      }
+      html += '</tbody></table></details>';
+    } else {
+      html += '<div class="mi-section-title">Вложения</div>';
+      html += '<div class="muted" style="font-size:0.88rem;">Вложения не приложены</div>';
+    }
+    html += '</div>';
 
     // Блок Raw Text Report
     if (rawText) {
@@ -1329,7 +1401,7 @@
       ensureMediaInfoButton(slot);
       ensureFileEncodeCheckbox(li, id);
     });
-    syncTorrentEncodeSelectActions(block);
+    syncTorrentEncodeSelectActions(block.closest(".torrent-files") || block);
     updateEncoderBatchBar();
   }
 
@@ -1382,7 +1454,9 @@
       syncTorrentEncodeSelectActions(block);
     });
     updateEncoderBatchBar();
-    scope.querySelectorAll(".torrent-files[data-download-check]:not([data-download-queued])").forEach((el) => {
+    scope.querySelectorAll(
+      ".torrent-files[data-download-check]:not([data-download-queued]), .torrent-files-loaded[data-download-check]:not([data-download-queued])"
+    ).forEach((el) => {
       el.setAttribute("data-download-queued", "1");
       const hash = el.getAttribute("data-download-check");
       const cached = hash ? cachedDownloadableProbe(hash) : null;
@@ -1474,6 +1548,22 @@
     _downloadCheckBusy = false;
   }
 
+  // Название релиза в <summary>: разрешаем выделение текста без toggle details.
+  document.addEventListener("click", (event) => {
+    const summary = event.target.closest("summary.release-summary");
+    if (!summary) return;
+    if (event.target.closest("button, a, input, label")) return;
+    const selection = window.getSelection();
+    const hasRange =
+      selection &&
+      selection.type === "Range" &&
+      String(selection).length > 0;
+    // detail > 1: double/triple-click по слову/строке не должны снова схлопывать ряд
+    if (hasRange || event.detail > 1) {
+      event.preventDefault();
+    }
+  });
+
   document.addEventListener("DOMContentLoaded", () => {
     formatLocalTimes();
     enqueueDownloadableChecks();
@@ -1509,18 +1599,66 @@
     const openKeys = [...scope.querySelectorAll("details[open][data-sse-key]")].map(
       (el) => el.getAttribute("data-sse-key")
     );
+    const lazyBodies = {};
+    const encodeChecked = {};
+    scope.querySelectorAll("details.torrent-files[data-sse-key]").forEach((details) => {
+      const key = details.getAttribute("data-sse-key");
+      if (!key) return;
+      const body = details.querySelector(":scope > .torrent-files-body");
+      if (body && body.querySelector(".torrent-files-loaded, .file-list")) {
+        lazyBodies[key] = body.innerHTML;
+      }
+      const checkedIds = [...details.querySelectorAll(".file-encode-check:checked")]
+        .map((el) => el.getAttribute("data-file-id"))
+        .filter(Boolean);
+      if (checkedIds.length) {
+        encodeChecked[key] = checkedIds;
+      }
+    });
     return {
       scrollY: window.scrollY,
       openKeys,
+      lazyBodies,
+      encodeChecked,
     };
   }
 
   function restoreUiSsePreserve(root, state) {
     if (!state) return;
     const scope = root || document;
+    const lazyBodies = state.lazyBodies || {};
+    const encodeChecked = state.encodeChecked || {};
     (state.openKeys || []).forEach((key) => {
       const el = scope.querySelector(`details[data-sse-key="${cssAttrQuote(key)}"]`);
-      if (el) el.open = true;
+      if (!el) return;
+      const savedHtml = lazyBodies[key];
+      if (savedHtml) {
+        const body = el.querySelector(":scope > .torrent-files-body");
+        if (body) {
+          body.innerHTML = savedHtml;
+          // Сначала снимаем lazy-триггеры, иначе open=true снова дернёт hx-get.
+          body.removeAttribute("hx-get");
+          body.removeAttribute("hx-trigger");
+          if (window.htmx) htmx.process(body);
+          if (typeof enqueueDownloadableChecks === "function") {
+            enqueueDownloadableChecks(el);
+          }
+        }
+      }
+      el.open = true;
+      const checked = encodeChecked[key] || [];
+      if (checked.length) {
+        checked.forEach((fileId) => {
+          const box = el.querySelector(
+            `.file-encode-check[data-file-id="${cssAttrQuote(fileId)}"]`
+          );
+          if (box) box.checked = true;
+        });
+        if (typeof updateEncoderBatchBar === "function") updateEncoderBatchBar();
+        if (typeof syncTorrentEncodeSelectActions === "function") {
+          syncTorrentEncodeSelectActions(el);
+        }
+      }
     });
     window.scrollTo(0, state.scrollY || 0);
   }
@@ -1552,8 +1690,8 @@
         target: targetSel,
         swap: "innerHTML settle:0 show:none",
       });
-      // htmx 1.9 ajax не возвращает Promise
-      setTimeout(() => _uiSseRefreshing.delete(key), 1500);
+      // Не чаще ~3 с на один target (согласовано с ui_events._POLL_INTERVAL_SEC).
+      setTimeout(() => _uiSseRefreshing.delete(key), 3000);
     });
   }
 

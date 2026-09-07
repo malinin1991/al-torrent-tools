@@ -5,7 +5,21 @@
   <summary class="release-summary">
     <div class="release-title">
       <div class="release-name-row">
-        <strong>{{ group.anime_name or group.release_alias or ("Release #" ~ group.release_id) }}</strong>
+        <strong class="release-name">{{ group.anime_name or group.release_alias or ("Release #" ~ group.release_id) }}</strong>
+        <button
+          type="button"
+          class="btn btn-secondary btn-icon release-force-sync"
+          title="Принудительно обновить релиз"
+          aria-label="Принудительно обновить релиз"
+          hx-post="/actions/run/force_release_sync"
+          hx-vals='{"release": "{{ group.release_id }}"}'
+          hx-target="#releases-action-result"
+          hx-swap="innerHTML"
+          hx-disabled-elt="this"
+          onclick="event.preventDefault(); event.stopPropagation();"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>
+        </button>
         {% if group.tracked %}
         <span class="badge badge-ok" title="{% if group.track_source == 'bot' %}добавлено ботом{% else %}отслеживание{% endif %}">Отслеживается</span>
         {% endif %}
@@ -107,11 +121,11 @@
           </td>
           <td><code>{{ t.info_hash[:12] }}…</code></td>
         </tr>
-        {% if t.files %}
+        {% if t.files_summary %}
         <tr class="torrent-files-row">
           <td colspan="8">
-            {% with files=t.files, allow_file_downloads=true, info_hash=t.info_hash %}
-            {% include "partials/torrent_file_list.html" %}
+            {% with archive_id=t.archive_id, files_summary=t.files_summary, allow_file_downloads=true, info_hash=t.info_hash %}
+            {% include "partials/torrent_file_list_lazy.html" %}
             {% endwith %}
           </td>
         </tr>
@@ -170,11 +184,11 @@
             </td>
             <td><code>{{ t.info_hash[:12] }}…</code></td>
           </tr>
-          {% if t.files %}
+          {% if t.files_summary %}
           <tr class="torrent-files-row">
             <td colspan="8">
-              {% with files=t.files, allow_file_downloads=false %}
-              {% include "partials/torrent_file_list.html" %}
+              {% with archive_id=t.archive_id, files_summary=t.files_summary, allow_file_downloads=false, info_hash=t.info_hash %}
+              {% include "partials/torrent_file_list_lazy.html" %}
               {% endwith %}
             </td>
           </tr>

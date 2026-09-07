@@ -62,6 +62,15 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
         manual_hint="Нужны params: release_id и/или torrent_id.",
     ),
     JobTypeDef(
+        type="force_release_sync",
+        title="Force release sync",
+        description=(
+            "Принудительно синхронизировать один релиз по URL, alias или id — "
+            "даже если он не в отслеживании (архив + process_release / meta)."
+        ),
+        manual_hint="При запуске запрашивается URL / alias / id релиза.",
+    ),
+    JobTypeDef(
         type="cleanup_master",
         title="Cleanup Master",
         description="Очистка раздач в master qB по правилам (незарегистрированные и т.п.). По умолчанию dry-run.",

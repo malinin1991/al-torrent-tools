@@ -108,6 +108,8 @@ def test_list_release_groups_exposes_genres() -> None:
     assert group.track_source is None
     assert group.torrents[0].api_present is True
     assert group.torrents[0].hevc_pair_status is None
+    assert group.torrents[0].files == []
+    assert group.torrents[0].files_summary == "0 файлов."
     assert group.archived_torrents == []
     assert result["tracked_only"] is False
     assert result["hevc_filter"] == ""

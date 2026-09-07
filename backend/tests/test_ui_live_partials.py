@@ -96,7 +96,25 @@ def test_releases_live_partial_has_sse_keys() -> None:
         is_blocked_by_copyrights=False,
         genres=[],
         members=[],
-        torrents=[],
+        torrents=[
+            SimpleNamespace(
+                archive_id=7,
+                torrent_id=100,
+                info_hash="ab" * 20,
+                torrent_type="WEBRip",
+                torrent_description="1-12",
+                file_size_label="1.0 GB",
+                created_at=None,
+                api_created_at=None,
+                pipeline_status=None,
+                pipeline_error=None,
+                pipeline_id=None,
+                files_summary="2 файла.",
+                ignore_hevc=False,
+                hevc_pair_status=None,
+                codec_family=None,
+            )
+        ],
         archived_torrents=[],
         category=None,
         last_updated=None,
@@ -121,6 +139,31 @@ def test_releases_live_partial_has_sse_keys() -> None:
     ).body.decode("utf-8")
     assert 'data-sse-key="release-42"' in html
     assert "live" in html
+    assert "Принудительно обновить релиз" in html
+    assert 'hx-post="/actions/run/force_release_sync"' in html
+    assert '"release": "42"' in html or '"release":"42"' in html
+    assert "torrent_file_list_lazy" not in html  # имя файла не в разметке
+    assert 'hx-get="/archive/7/files' in html
+    assert "toggle once from:closest details" in html
+    assert "2 файла." in html
+    assert 'class="file-list"' not in html  # полный список — lazy
+
+
+def test_releases_live_url_uses_urlencode() -> None:
+    text = (_TEMPLATES_DIR / "releases.html").read_text(encoding="utf-8")
+    assert "search|urlencode" in text
+    assert 'id="releases-action-result"' in text
+    base = (_TEMPLATES_DIR / "base.html").read_text(encoding="utf-8")
+    assert "_uiSsePreserveByTarget" in base
+    assert "lazyBodies" in base
+    assert "encodeChecked" in base
+    assert "Вложения" in base
+    assert "Шрифты" not in base
+    assert "visibilitychange" in base
+    assert "setTimeout(() => _uiSseRefreshing.delete(key), 3000)" in base
+    from app.services import ui_events
+
+    assert ui_events._POLL_INTERVAL_SEC == 3.0
 
 
 def test_archive_live_partial_marker() -> None:
@@ -329,8 +372,227 @@ def test_pipeline_live_partial_compact_graph() -> None:
     assert "…" not in html.split("pipeline-list-hash")[1].split("</div>")[0]
 
 
-def test_releases_live_url_uses_urlencode() -> None:
-    text = (_TEMPLATES_DIR / "releases.html").read_text(encoding="utf-8")
-    assert "search|urlencode" in text
-    assert "_uiSsePreserveByTarget" in (_TEMPLATES_DIR / "base.html").read_text(encoding="utf-8")
-    assert "visibilitychange" in (_TEMPLATES_DIR / "base.html").read_text(encoding="utf-8")
+def test_archive_files_partial_renders_list(monkeypatch) -> None:
+    from app.main import archive_files_partial
+    from app.services.releases_view import ArchivePageRow, ReleaseFileRow
+
+    archive = SimpleNamespace(
+        id=7, release_id=1, api_present=True, superseded=False, info_hash="ab" * 20
+    )
+    sibling = SimpleNamespace(
+        id=8, release_id=1, api_present=True, superseded=False, info_hash="cd" * 20
+    )
+    db = MagicMock()
+    db.get.return_value = archive
+    db.scalars.return_value.all.return_value = [archive, sibling]
+    row = ArchivePageRow(
+        id=7,
+        anime_name="Show",
+        release_alias="show",
+        category=None,
+        torrent_type="WEB",
+        torrent_description="1",
+        release_id=1,
+        torrent_id=10,
+        info_hash="ab" * 20,
+        file_size=1,
+        file_size_label="1 B",
+        created_at=None,
+        api_present=True,
+        superseded=False,
+        files=[
+            ReleaseFileRow(
+                relative_path="ep01.mkv",
+                size=1,
+                selected=True,
+                full_path="/media/ep01.mkv",
+                status="ok",
+                file_id=5,
+                downloadable=True,
+            )
+        ],
+    )
+    seen_archives: list = []
+
+    def _build(_db, archives):  # noqa: ANN001
+        seen_archives.extend(archives)
+        return [row]
+
+    monkeypatch.setattr("app.main.build_archive_page_rows", _build)
+    captured: dict = {}
+
+    def _tpl(request, name, ctx):  # noqa: ANN001
+        captured["name"] = name
+        captured["ctx"] = ctx
+        return MagicMock(body=b"ok")
+
+    monkeypatch.setattr("app.main.templates.TemplateResponse", _tpl)
+    archive_files_partial(MagicMock(), archive_id=7, allow_downloads="1", db=db)
+    assert captured["name"] == "partials/torrent_file_list_items.html"
+    assert captured["ctx"]["allow_file_downloads"] is True
+    assert captured["ctx"]["files"][0].relative_path == "ep01.mkv"
+    assert [a.id for a in seen_archives] == [7, 8]
+
+
+def test_archive_files_partial_passes_release_siblings_for_removed_filter(
+    monkeypatch,
+) -> None:
+    """Lazy /archive/{id}/files должен видеть siblings — иначе ложный «удалён»."""
+    from app.main import archive_files_partial
+    from app.services.releases_view import ArchivePageRow, ReleaseFileRow
+
+    target = SimpleNamespace(
+        id=10, release_id=99, api_present=True, superseded=False, info_hash="aa" * 20
+    )
+    sibling = SimpleNamespace(
+        id=11, release_id=99, api_present=True, superseded=False, info_hash="bb" * 20
+    )
+    db = MagicMock()
+    db.get.return_value = target
+    db.scalars.return_value.all.return_value = [target, sibling]
+
+    captured_archives: list = []
+
+    def _build(_db, archives):  # noqa: ANN001
+        captured_archives.extend(list(archives))
+        return [
+            ArchivePageRow(
+                id=10,
+                anime_name="Show",
+                release_alias="show",
+                category=None,
+                torrent_type="WEB",
+                torrent_description="1",
+                release_id=99,
+                torrent_id=1,
+                info_hash="aa" * 20,
+                file_size=1,
+                file_size_label="1 B",
+                created_at=None,
+                api_present=True,
+                superseded=False,
+                files=[
+                    ReleaseFileRow(
+                        relative_path="ep01.mkv",
+                        size=1,
+                        selected=True,
+                        full_path=None,
+                        status="ok",
+                        file_id=1,
+                        downloadable=False,
+                    )
+                ],
+            )
+        ]
+
+    monkeypatch.setattr("app.main.build_archive_page_rows", _build)
+    monkeypatch.setattr(
+        "app.main.templates.TemplateResponse",
+        lambda *a, **k: MagicMock(body=b"ok"),
+    )
+    archive_files_partial(MagicMock(), archive_id=10, allow_downloads="0", db=db)
+    assert {int(a.id) for a in captured_archives} == {10, 11}
+
+
+def test_build_archive_page_rows_filters_sibling_orphans(monkeypatch, tmp_path) -> None:
+    """С siblings в списке orphan чужого торрента не попадает как «удалён»."""
+    from app.services import releases_view as rv
+    from app.services.file_tracker import KIND_ORPHAN, KIND_REMOVED
+
+    media = tmp_path / "media"
+    show = media / "Show"
+    show.mkdir(parents=True)
+    own = show / "ep01.mkv"
+    sib = show / "ep02.mkv"
+    own.write_bytes(b"a")
+    sib.write_bytes(b"b")
+
+    monkeypatch.setattr(rv, "resolve_media_root", lambda: media)
+    monkeypatch.setattr(rv, "resolve_orphan_scan_root", lambda **_k: show.resolve())
+
+    archive_a = SimpleNamespace(
+        id=1,
+        anime_name="Show",
+        release_alias="show",
+        category=None,
+        torrent_type="WEB",
+        torrent_description="1",
+        release_id=5,
+        torrent_id=100,
+        info_hash="aa" * 20,
+        file_size=1,
+        created_at=None,
+        api_present=True,
+        superseded=False,
+    )
+    archive_b = SimpleNamespace(
+        id=2,
+        anime_name="Show",
+        release_alias="show",
+        category=None,
+        torrent_type="HEVC",
+        torrent_description="1",
+        release_id=5,
+        torrent_id=101,
+        info_hash="bb" * 20,
+        file_size=1,
+        created_at=None,
+        api_present=True,
+        superseded=False,
+    )
+    tf_a = SimpleNamespace(
+        relative_path="Show/ep01.mkv",
+        size=1,
+        selected=True,
+        full_path=str(own.resolve()),
+        info_hash="aa" * 20,
+        ui_status="ok",
+        file_index=0,
+        id=1,
+    )
+    tf_b = SimpleNamespace(
+        relative_path="Show/ep02.mkv",
+        size=1,
+        selected=True,
+        full_path=str(sib.resolve()),
+        info_hash="bb" * 20,
+        ui_status="ok",
+        file_index=0,
+        id=2,
+    )
+
+    def _files_by_hash(_db, hashes):  # noqa: ANN001
+        mapping = {
+            "aa" * 20: [tf_a],
+            "bb" * 20: [tf_b],
+        }
+        return {h: mapping[h] for h in hashes if h in mapping}
+
+    def _events(_db, release_ids):  # noqa: ANN001
+        return {
+            "aa" * 20: rv._TorrentEvents(
+                latest_by_path={},
+                removed_candidates=[
+                    ("Show/ep02.mkv", str(sib.resolve()), KIND_ORPHAN),
+                    ("Show/gone.mkv", str(show / "gone.mkv"), KIND_REMOVED),
+                ],
+            )
+        }
+
+    monkeypatch.setattr(rv, "_files_by_hash", _files_by_hash)
+    monkeypatch.setattr(rv, "_recent_events_by_info_hash", _events)
+    monkeypatch.setattr(rv, "_disk_hashes_by_path", lambda *_a, **_k: {})
+    monkeypatch.setattr(rv, "_info_hashes_with_active_hash_job", lambda *_a, **_k: set())
+
+    rows = rv.build_archive_page_rows(MagicMock(), [archive_a, archive_b])
+    row_a = next(r for r in rows if r.id == 1)
+    statuses = {f.relative_path: f.status for f in row_a.files}
+    assert "Show/ep02.mkv" not in statuses  # sibling orphan скрыт
+    assert statuses.get("Show/gone.mkv") == "removed"
+    assert statuses.get("Show/ep01.mkv") == "ok"
+
+    # Без sibling в списке — тот же orphan не отфильтруется (регресс для lazy single-archive).
+    rows_alone = rv.build_archive_page_rows(MagicMock(), [archive_a])
+    alone = next(r for r in rows_alone if r.id == 1)
+    alone_paths = {f.relative_path for f in alone.files}
+    assert "Show/ep02.mkv" in alone_paths

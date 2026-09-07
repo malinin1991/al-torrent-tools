@@ -93,6 +93,256 @@ def format_file_size_human(size_bytes: int | float | str | None) -> str:
     return f"{num:.0f} Б"
 
 
+def _parse_size_bytes(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (ValueError, TypeError):
+        return None
+    if num <= 0:
+        return None
+    return int(num)
+
+
+def _ternary_flag(value: Any) -> bool | None:
+    """Нормализация MediaInfo Yes/No → true/false/null."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if text in {"yes", "true", "1", "y"}:
+        return True
+    if text in {"no", "false", "0", "n"}:
+        return False
+    return None
+
+
+def _service_kind_tokens(track: dict[str, Any]) -> list[str]:
+    """Собирает токены из ServiceKind и ServiceKind/String (оба поля MediaInfo)."""
+    tokens: list[str] = []
+    for key in ("service_kind", "service_kind_string"):
+        raw = track.get(key)
+        if raw is None or raw == "":
+            continue
+        if isinstance(raw, list):
+            parts = [str(x) for x in raw]
+        else:
+            parts = str(raw).replace(",", "/").split("/")
+        for part in parts:
+            cleaned = part.strip().lower()
+            if cleaned:
+                tokens.append(cleaned)
+    return tokens
+
+
+def _track_original(
+    track: dict[str, Any],
+    *,
+    default: bool | None,
+    forced: bool | None,
+) -> bool | None:
+    """Matroska FlagOriginal / ServiceKind, без путаницы с title==«Original».
+
+    MediaInfo для FlagOriginal пишет ServiceKind=``O`` и/или
+    ServiceKind/String=``Original``. Явные Yes/No-поля (``original``,
+    ``flag_original``, …) тоже учитываем; свободный текст вроде
+    Original/Track name через ``_ternary_flag`` даёт None и игнорируется.
+    """
+    for key in ("original", "flag_original", "original_flag", "original_track"):
+        if key not in track:
+            continue
+        flag = _ternary_flag(track.get(key))
+        if flag is not None:
+            return flag
+
+    tokens = _service_kind_tokens(track)
+    # Matroska: ServiceKind "O" + String "Original" (не путать с title).
+    if any(t == "o" or t == "original" or "original" in t for t in tokens):
+        return True
+
+    if default is not None or forced is not None:
+        # Контейнер отдал track flags — Original явно нет → false
+        return False
+    return None
+
+
+def _track_flags(track: dict[str, Any]) -> dict[str, bool | None]:
+    default = _ternary_flag(track.get("default") if "default" in track else track.get("default_track"))
+    if "forced" in track:
+        forced = _ternary_flag(track.get("forced"))
+    else:
+        forced = _ternary_flag(track.get("forced_track") or track.get("forced_display"))
+    original = _track_original(track, default=default, forced=forced)
+    return {"default": default, "forced": forced, "original": original}
+
+
+_ENCODING_LIKE_FORMATS = frozenset(
+    {
+        "utf-8",
+        "utf8",
+        "utf-16",
+        "utf16",
+        "utf-16le",
+        "utf-16be",
+        "utf-32",
+        "ascii",
+    }
+)
+
+_CODEC_ID_FORMAT_MAP = {
+    "s_text/utf8": "Plain Text",
+    "s_text/ass": "ASS",
+    "s_text/ssa": "SSA",
+    "s_hdmv/pgs": "PGS",
+    "s_vobsub": "VobSub",
+    "s_hdmv/textst": "TextST",
+    "s_kates": "Kate",
+}
+
+
+def _looks_like_encoding(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    lower = text.lower().replace("_", "-")
+    if lower in _ENCODING_LIKE_FORMATS:
+        return True
+    if lower.startswith("iso-8859-"):
+        return True
+    if lower.startswith("windows-125") or lower.startswith("cp125"):
+        return True
+    if lower.startswith("utf-"):
+        return True
+    return False
+
+
+def _subtitle_format_from_codec(track: dict[str, Any], encoding: str) -> str:
+    codec_id = str(track.get("codec_id") or "").strip()
+    codec_key = codec_id.lower()
+    if codec_key in _CODEC_ID_FORMAT_MAP:
+        return _CODEC_ID_FORMAT_MAP[codec_key]
+
+    info = str(track.get("codec_id_info") or "").strip()
+    if info:
+        cleaned = info
+        if encoding:
+            # "UTF-8 Plain Text" → "Plain Text"
+            prefix = encoding.strip()
+            if cleaned.lower().startswith(prefix.lower()):
+                cleaned = cleaned[len(prefix) :].strip(" -_")
+        if cleaned and not _looks_like_encoding(cleaned):
+            return cleaned
+    return codec_id or ""
+
+
+def _subtitle_format_and_encoding(track: dict[str, Any]) -> tuple[str, str]:
+    raw_format = str(track.get("format") or "").strip()
+    explicit_encoding = str(
+        track.get("encoding") or track.get("character_set") or ""
+    ).strip()
+
+    if raw_format and _looks_like_encoding(raw_format):
+        encoding = raw_format
+        fmt = _subtitle_format_from_codec(track, encoding)
+        return fmt or "Plain Text", encoding
+
+    return raw_format, explicit_encoding
+
+
+def _is_cover_attachment(track: dict[str, Any]) -> bool:
+    type_val = str(track.get("type") or track.get("attachment_type") or "").strip().lower()
+    title = str(track.get("title") or "").strip().lower()
+    cover_markers = ("cover", "thumbnail", "poster", "artwork", "album art")
+    return any(m in type_val for m in cover_markers) or any(m in title for m in cover_markers)
+
+
+def _is_font_attachment(track: dict[str, Any]) -> bool:
+    ttype = (track.get("track_type") or "").strip().lower()
+    if ttype not in {"image", "other", "attachment"}:
+        return False
+    if _is_cover_attachment(track):
+        return False
+
+    type_val = str(track.get("type") or track.get("muxing_mode") or "").strip().lower()
+    mime = str(track.get("internet_media_type") or track.get("mime") or "").strip().lower()
+    fmt = str(track.get("format") or "").strip().lower()
+    name = " ".join(
+        str(track.get(k) or "")
+        for k in ("title", "complete_name", "file_name", "format")
+    ).lower()
+
+    if "attachment" in type_val:
+        return True
+
+    font_mimes = (
+        "font/",
+        "truetype",
+        "opentype",
+        "application/font",
+        "application/x-font",
+        "application/vnd.ms-opentype",
+    )
+    if any(m in mime for m in font_mimes):
+        return True
+
+    font_exts = (".ttf", ".otf", ".ttc", ".woff", ".woff2")
+    if any(ext in name for ext in font_exts):
+        return True
+    if fmt in {"ttf", "otf", "ttc", "woff", "woff2", "truetype", "opentype"}:
+        return True
+    if "font" in type_val or "font" in mime:
+        return True
+    return False
+
+
+def _collect_fonts(tracks: list[dict[str, Any]], general: dict[str, Any]) -> tuple[list[dict[str, Any]], str, int | None]:
+    fonts: list[dict[str, Any]] = []
+    total_bytes = 0
+    has_any_size = False
+
+    for tr in tracks:
+        if not _is_font_attachment(tr):
+            continue
+        name = (
+            str(tr.get("title") or "").strip()
+            or str(tr.get("complete_name") or "").strip()
+            or str(tr.get("file_name") or "").strip()
+            or str(tr.get("format") or "").strip()
+            or "font"
+        )
+        mime = str(tr.get("internet_media_type") or tr.get("mime") or "").strip()
+        size_bytes = _parse_size_bytes(tr.get("stream_size") or tr.get("file_size"))
+        if size_bytes is not None:
+            has_any_size = True
+            total_bytes += size_bytes
+        fonts.append(
+            {
+                "name": name,
+                "size": format_file_size_human(size_bytes),
+                "size_bytes": size_bytes,
+                "mime": mime,
+            }
+        )
+
+    if not fonts:
+        attachments_raw = general.get("attachments")
+        if attachments_raw:
+            names = [p.strip() for p in str(attachments_raw).split("/") if p.strip()]
+            for name in names:
+                lower = name.lower()
+                if any(x in lower for x in ("cover", "thumbnail", "poster", "artwork")):
+                    continue
+                fonts.append({"name": name, "size": "", "size_bytes": None, "mime": ""})
+
+    fonts_total_bytes: int | None = total_bytes if has_any_size else None
+    fonts_total_size = format_file_size_human(fonts_total_bytes) if fonts_total_bytes is not None else ""
+    return fonts, fonts_total_size, fonts_total_bytes
+
+
 def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
     tracks = data.get("tracks") or []
     general: dict[str, Any] = {}
@@ -137,6 +387,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                 fps_str = f"{float(fps_val):.3f}".rstrip("0").rstrip(".")
             except (ValueError, TypeError):
                 fps_str = str(fps_val)
+        flags = _track_flags(v)
         videos.append(
             {
                 "stream_id": v.get("stream_identifier") or v.get("id"),
@@ -155,6 +406,9 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                 "bit_depth": v.get("bit_depth"),
                 "color_space": v.get("color_space") or "",
                 "hdr_format": v.get("hdr_format") or v.get("hdr_format_commercial") or "",
+                "default": flags["default"],
+                "forced": flags["forced"],
+                "original": flags["original"],
             }
         )
 
@@ -175,6 +429,7 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                     sampling_rate = f"{int(hz)} Гц"
             except (ValueError, TypeError):
                 sampling_rate = str(sr_val)
+        flags = _track_flags(a)
         audios.append(
             {
                 "stream_id": a.get("stream_identifier") or a.get("id"),
@@ -186,20 +441,32 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
                 "bit_rate": format_bitrate_human(br_val),
                 "stream_size": format_file_size_human(a.get("stream_size")),
                 "sampling_rate": sampling_rate,
+                "default": flags["default"],
+                "forced": flags["forced"],
+                "original": flags["original"],
             }
         )
 
     # Subtitles summary
     subs: list[dict[str, Any]] = []
     for s in sub_list:
+        fmt, encoding = _subtitle_format_and_encoding(s)
+        flags = _track_flags(s)
         subs.append(
             {
                 "stream_id": s.get("stream_identifier") or s.get("id"),
                 "language": (s.get("language") or "und").lower(),
                 "title": s.get("title") or "",
-                "format": s.get("format") or "",
+                "format": fmt,
+                "encoding": encoding,
+                "stream_size": format_file_size_human(s.get("stream_size")),
+                "default": flags["default"],
+                "forced": flags["forced"],
+                "original": flags["original"],
             }
         )
+
+    fonts, fonts_total_size, fonts_total_bytes = _collect_fonts(tracks, general)
 
     return {
         "format": general.get("format") or "",
@@ -211,6 +478,9 @@ def _build_summary_from_data(data: dict[str, Any]) -> dict[str, Any]:
         "videos": videos,
         "audios": audios,
         "subtitles": subs,
+        "fonts": fonts,
+        "fonts_total_size": fonts_total_size,
+        "fonts_total_bytes": fonts_total_bytes,
     }
 
 
@@ -268,6 +538,27 @@ def get_canonical_path(path: Path | str) -> str:
         return str(complete_path_for(p).resolve())
     except OSError:
         return str(complete_path_for(p))
+
+
+def _effective_summary(existing: FileMediaInfo) -> dict[str, Any]:
+    """Summary для UI: при наличии raw_json всегда пересобираем (новые ключи).
+
+    Старые кэши могли не содержать fonts/default/encoding — без файла на диске
+    и без force-refresh отдаём актуальный summary из сохранённого raw_json.
+    Если raw нет — graceful degradation на summary_json как есть.
+    """
+    raw = getattr(existing, "raw_json", None)
+    if isinstance(raw, dict) and raw:
+        try:
+            return _build_summary_from_data(raw)
+        except Exception:
+            logger.warning(
+                "Не удалось пересобрать MediaInfo summary из raw_json для %s",
+                getattr(existing, "full_path", "?"),
+                exc_info=True,
+            )
+    summary = getattr(existing, "summary_json", None)
+    return summary if isinstance(summary, dict) else {}
 
 
 def upsert_file_mediainfo(
@@ -380,6 +671,7 @@ def get_or_extract_mediainfo(
     )
 
     if existing is not None and not force:
+        summary = _effective_summary(existing)
         # Проверяем, существует ли файл и не изменился ли он
         if path.is_file():
             try:
@@ -391,7 +683,7 @@ def get_or_extract_mediainfo(
                         "status": "ready",
                         "full_path": canonical,
                         "relative_path": row.relative_path,
-                        "summary": existing.summary_json,
+                        "summary": summary,
                         "raw_text": existing.raw_text,
                     }
             except OSError:
@@ -404,7 +696,7 @@ def get_or_extract_mediainfo(
                 "status": "ready",
                 "full_path": canonical,
                 "relative_path": row.relative_path,
-                "summary": existing.summary_json,
+                "summary": summary,
                 "raw_text": existing.raw_text,
                 "cached_only": True,
             }

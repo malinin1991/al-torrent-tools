@@ -28,6 +28,7 @@
 {% set tracked_qs = '&tracked_only=on' if tracked_only else '' %}
 {% set hevc_qs = ('&hevc_filter=' ~ (hevc_filter|urlencode)) if hevc_filter else '' %}
 {% set hidden_qs = '&show_hidden=on' if show_hidden else '' %}
+<div id="releases-action-result" class="muted" style="margin-bottom:8px;"></div>
 <div
   id="releases-live"
   data-ui-sse-channel="releases"

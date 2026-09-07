@@ -289,6 +289,8 @@ class ReleaseTorrentRow:
     codec_family: str | None = None
     ignore_hevc: bool = False
     files: list[ReleaseFileRow] = field(default_factory=list)
+    # Сводка для UI без вложенного списка путей (список файлов — lazy).
+    files_summary: str = ""
 
 
 @dataclass
@@ -708,7 +710,10 @@ def list_release_groups(
                 hevc_overdue_age_from_api=bool(unpaired.age_from_api) if unpaired else False,
                 codec_family=codec,
                 ignore_hevc=bool(getattr(item, "ignore_hevc", False)),
-                files=file_rows,
+                # В список релизов не кладём полный files — только сводку; HTML тянет
+                # состав по /archive/{id}/files при раскрытии (см. releases_live).
+                files=[],
+                files_summary=format_torrent_files_summary(file_rows),
             )
             if row.api_present:
                 active.append(row)

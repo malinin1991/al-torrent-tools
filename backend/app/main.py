@@ -1334,6 +1334,44 @@ def archive_live(
     return templates.TemplateResponse(request, "partials/archive_live.html", context)
 
 
+@app.get("/archive/{archive_id}/files", response_class=HTMLResponse)
+def archive_files_partial(
+    request: Request,
+    archive_id: int,
+    allow_downloads: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Состав файлов одного архива (lazy для /releases).
+
+    В ``build_archive_page_rows`` передаём все архивы релиза — иначе нет
+    sibling-контекста и чужие orphan-пути ложно показываются как «удалён».
+    """
+    archive = db.get(TorrentArchive, archive_id)
+    if archive is None:
+        raise HTTPException(status_code=404, detail="Архив не найден")
+    release_archives = list(
+        db.scalars(
+            select(TorrentArchive).where(TorrentArchive.release_id == archive.release_id)
+        ).all()
+    )
+    if not any(int(a.id) == int(archive_id) for a in release_archives):
+        release_archives.append(archive)
+    rows = build_archive_page_rows(db, release_archives)
+    row = next((r for r in rows if int(r.id) == int(archive_id)), None)
+    if row is None:
+        return HTMLResponse('<div class="muted">Нет файлов</div>')
+    allow = allow_downloads == "1" and bool(row.api_present) and not bool(row.superseded)
+    return templates.TemplateResponse(
+        request,
+        "partials/torrent_file_list_items.html",
+        {
+            "files": row.files,
+            "allow_file_downloads": allow,
+            "info_hash": row.info_hash,
+        },
+    )
+
+
 def _archive_page_context(
     db: Session,
     *,
@@ -1372,6 +1410,7 @@ async def run_job_action(
     force_qb_load: bool = Form(default=False),
     full_scan: bool = Form(default=False),
     workers: int | None = Form(default=None),
+    release: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     if job_type == "orphan_cleanup":
@@ -1393,6 +1432,17 @@ async def run_job_action(
             params["workers"] = workers_count
         elif full_scan:
             params["workers"] = 4
+    elif job_type == "force_release_sync":
+        from app.utils.release_ref import ReleaseRefParseError, parse_release_ref
+
+        raw_release = (release or "").strip()
+        try:
+            parse_release_ref(raw_release)
+        except ReleaseRefParseError as exc:
+            return templates.TemplateResponse(
+                request, "partials/action_result.html", {"message": str(exc)}
+            )
+        params = {"release": raw_release}
     else:
         params = {}
     try:

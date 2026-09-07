@@ -346,6 +346,10 @@ def test_job_catalog_includes_meta_sync_types() -> None:
     types = {item.type for item in JOB_TYPE_DEFS}
     assert "meta_sync" in types
     assert "full_meta_sync" in types
+    assert "force_release_sync" in types
     meta = next(item for item in JOB_TYPE_DEFS if item.type == "meta_sync")
     assert meta.manual_run is True
     assert meta.interval_default_sec is None
+    force = next(item for item in JOB_TYPE_DEFS if item.type == "force_release_sync")
+    assert force.manual_run is True
+    assert force.interval_default_sec is None

@@ -42,6 +42,22 @@
   </div>
 </div>
 <script>
+function runForceReleaseSync(btn) {
+  if (!btn || btn.disabled) return;
+  const value = window.prompt("URL, alias или id релиза AniLiberty:");
+  if (value === null) return;
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    window.alert("Укажите URL, alias или id релиза");
+    return;
+  }
+  htmx.ajax("POST", "/actions/run/force_release_sync", {
+    target: "#jobs-action-result",
+    swap: "innerHTML",
+    values: { release: trimmed },
+    source: btn,
+  });
+}
 function copyJobLogs() {
   const panel = document.getElementById("job-logs-panel");
   const status = document.getElementById("copy-logs-status");
