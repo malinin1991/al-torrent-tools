@@ -1454,18 +1454,102 @@
     }
   }
 
+  const _FILE_UI_BADGE = {
+    new: { cls: "badge badge-ok file-ui-badge", title: "Добавлен в состав этого торрента", text: "новый" },
+    changed: { cls: "badge badge-warn file-ui-badge", title: "Хеш не совпал с предыдущей версией", text: "изменён" },
+    checking: { cls: "badge badge-warn file-ui-badge", title: "Качается или проверяется на master", text: "проверка" },
+    removed: { cls: "badge badge-danger file-ui-badge", title: "Убран из состава этого торрента", text: "удалён" },
+    ok: { cls: "badge badge-muted file-ui-badge", title: "Без изменений относительно предыдущей версии", text: "ok" },
+  };
+
+  function setFileUiBadge(badge, status) {
+    if (!badge) return;
+    const key = _FILE_UI_BADGE[status] ? status : "ok";
+    const meta = _FILE_UI_BADGE[key];
+    badge.className = meta.cls;
+    badge.title = meta.title;
+    badge.textContent = meta.text;
+    badge.setAttribute("data-ui-status", key);
+  }
+
+  function _ruPluralFiles(n, one, few, many) {
+    const nAbs = Math.abs(n) % 100;
+    const n1 = nAbs % 10;
+    if (nAbs >= 11 && nAbs <= 19) return many;
+    if (n1 === 1) return one;
+    if (n1 >= 2 && n1 <= 4) return few;
+    return many;
+  }
+
+  function formatTorrentFilesSummaryFromStatuses(statuses) {
+    const counts = { new: 0, changed: 0, checking: 0, ok: 0, removed: 0 };
+    (statuses || []).forEach((raw) => {
+      const status = String(raw || "ok").toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
+      else counts.ok += 1;
+    });
+    const active = counts.new + counts.changed + counts.checking + counts.ok;
+    const removed = counts.removed;
+    if (active === 0) {
+      if (removed === 0) return "0 файлов.";
+      return `${removed} ${_ruPluralFiles(removed, "удалён", "удалённых", "удалённых")}.`;
+    }
+    let head = `${active} ${_ruPluralFiles(active, "файл", "файла", "файлов")}`;
+    const order = [
+      ["new", "новый", "новые", "новых"],
+      ["changed", "изменён", "изменённые", "изменённых"],
+      ["checking", "проверка", "проверки", "проверок"],
+      ["ok", "старый", "старые", "старых"],
+    ];
+    const detail = order
+      .filter(([key]) => counts[key])
+      .map(([key, one, few, many]) => `${counts[key]} ${_ruPluralFiles(counts[key], one, few, many)}`);
+    const interesting = counts.new || counts.changed || counts.checking || removed;
+    if (interesting && detail.length) head += ` (${detail.join(", ")})`;
+    if (removed) {
+      head += `, ${removed} ${_ruPluralFiles(removed, "удалён", "удалённых", "удалённых")}`;
+    }
+    return `${head}.`;
+  }
+
+  function refreshTorrentFilesSummary(block) {
+    if (!block) return;
+    const details = block.closest("details.torrent-files") || block.closest("details");
+    const textEl = (details || block).querySelector(".torrent-files-summary-text");
+    if (!textEl) return;
+    const listRoot = block.querySelector("ul.file-list") || block;
+    const statuses = [];
+    listRoot.querySelectorAll("li .file-ui-badge[data-ui-status]").forEach((badge) => {
+      statuses.push(badge.getAttribute("data-ui-status") || "ok");
+    });
+    // Fallback: бейджи без data-ui-status (старый HTML до деплоя).
+    if (!statuses.length) {
+      listRoot.querySelectorAll("li .file-ui-badge").forEach((badge) => {
+        const t = (badge.textContent || "").trim().toLowerCase();
+        if (t === "новый") statuses.push("new");
+        else if (t === "изменён") statuses.push("changed");
+        else if (t === "проверка") statuses.push("checking");
+        else if (t === "удалён") statuses.push("removed");
+        else statuses.push("ok");
+      });
+    }
+    textEl.textContent = formatTorrentFilesSummaryFromStatuses(statuses);
+  }
+
   function applyDownloadableProbe(block, data) {
     if (!block || !data) return;
     const ids = new Set((data.file_ids || []).map(String));
     const checking = new Set((data.checking_ids || []).map(String));
+    // Бейджи ↔ checking_ids: и выставить «проверка», и вернуть sticky после снятия overlay.
     block.querySelectorAll("li[data-file-id]").forEach((li) => {
       const id = li.getAttribute("data-file-id");
-      if (!id || !checking.has(id)) return;
-      const badge = li.querySelector(".file-ui-badge");
-      if (!badge) return;
-      badge.className = "badge badge-warn file-ui-badge";
-      badge.title = "Качается или проверяется на master";
-      badge.textContent = "проверка";
+      if (!id) return;
+      const stickyRaw = (li.getAttribute("data-sticky-status") || "ok").toLowerCase();
+      const sticky = ["new", "ok", "changed", "removed"].includes(stickyRaw)
+        ? stickyRaw
+        : "ok";
+      const display = checking.has(id) ? "checking" : sticky;
+      setFileUiBadge(li.querySelector(".file-ui-badge"), display);
     });
     block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
       const id = slot.getAttribute("data-file-id");
@@ -1490,6 +1574,7 @@
       ensureMediaInfoButton(slot);
       ensureFileEncodeCheckbox(li, id);
     });
+    refreshTorrentFilesSummary(block);
     syncTorrentEncodeSelectActions(block.closest(".torrent-files") || block);
     updateEncoderBatchBar();
     restoreEncodeChecksIfNeeded(block);
@@ -1549,11 +1634,13 @@
     ).forEach((el) => {
       el.setAttribute("data-download-queued", "1");
       const hash = el.getAttribute("data-download-check");
+      const wantRefresh = el.getAttribute("data-download-refresh") === "1";
       const cached = hash ? cachedDownloadableProbe(hash) : null;
-      if (cached) {
+      // Кэш + refresh: не применяем — пустые checking_ids иначе снимут SSR «проверка»
+      // и мелькнут кнопки до ответа сети.
+      if (cached && !wantRefresh) {
         applyDownloadableProbe(el, cached);
-        // checking / refresh — всё равно догрузим свежие флаги.
-        if (el.getAttribute("data-download-refresh") !== "1") return;
+        return;
       }
       _downloadCheckQueue.push(el);
     });

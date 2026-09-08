@@ -5,12 +5,12 @@
   </div>
   <ul class="file-list">
     {% for f in files %}
-    <li{% if f.file_id %} data-file-id="{{ f.file_id }}"{% endif %}>
-      {% if f.status == 'new' %}<span class="badge badge-ok file-ui-badge" title="Добавлен в состав этого торрента">новый</span>
-      {% elif f.status == 'changed' %}<span class="badge badge-warn file-ui-badge" title="Хеш не совпал с предыдущей версией">изменён</span>
-      {% elif f.status == 'checking' %}<span class="badge badge-warn file-ui-badge" title="Качается или проверяется на master">проверка</span>
-      {% elif f.status == 'removed' %}<span class="badge badge-danger file-ui-badge" title="Убран из состава этого торрента">удалён</span>
-      {% else %}<span class="badge badge-muted file-ui-badge" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
+    <li{% if f.file_id %} data-file-id="{{ f.file_id }}"{% endif %} data-sticky-status="{% if f.sticky_status in ['new', 'ok', 'changed', 'removed'] %}{{ f.sticky_status }}{% elif f.status in ['new', 'ok', 'changed', 'removed'] %}{{ f.status }}{% else %}ok{% endif %}">
+      {% if f.status == 'new' %}<span class="badge badge-ok file-ui-badge" data-ui-status="new" title="Добавлен в состав этого торрента">новый</span>
+      {% elif f.status == 'changed' %}<span class="badge badge-warn file-ui-badge" data-ui-status="changed" title="Хеш не совпал с предыдущей версией">изменён</span>
+      {% elif f.status == 'checking' %}<span class="badge badge-warn file-ui-badge" data-ui-status="checking" title="Качается или проверяется на master">проверка</span>
+      {% elif f.status == 'removed' %}<span class="badge badge-danger file-ui-badge" data-ui-status="removed" title="Убран из состава этого торрента">удалён</span>
+      {% else %}<span class="badge badge-muted file-ui-badge" data-ui-status="ok" title="Без изменений относительно предыдущей версии">ok</span>{% endif %}
       <code>{{ f.relative_path }}</code>
       {% if f.file_id %}
       <span

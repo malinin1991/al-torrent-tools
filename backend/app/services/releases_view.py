@@ -72,10 +72,12 @@ class ReleaseFileRow:
     size: int
     selected: bool
     full_path: str | None
-    status: str  # new|changed|removed|checking|ok
+    status: str  # new|changed|removed|checking|ok (display, с overlay)
     in_torrent: bool = True
     file_id: int | None = None
     downloadable: bool = False
+    # Sticky без overlay — для live-probe (вернуть бейдж после «проверка»).
+    sticky_status: str = "ok"
 
 
 _DOWNLOADABLE_STATUSES = frozenset({"ok", "new", "changed"})
@@ -907,6 +909,8 @@ def _build_file_rows(
             is_checking=bool(getattr(item, "is_checking", False)),
         )
         sticky = (getattr(item, "ui_status", None) or "").strip().lower() or "ok"
+        if sticky not in _DOWNLOADABLE_STATUSES:
+            sticky = "ok"
         downloadable = (
             sticky in _DOWNLOADABLE_STATUSES
             and bool(getattr(item, "media_present", False))
@@ -924,6 +928,7 @@ def _build_file_rows(
                 status=status,
                 file_id=getattr(item, "id", None),
                 downloadable=downloadable,
+                sticky_status=sticky,
             )
         )
         seen_keys.add(item.relative_path)
@@ -957,6 +962,7 @@ def _build_file_rows(
                 relative_path=display_path or (Path(full_path).name if full_path else "?"),
                 size=0,
                 selected=False,
+                sticky_status=UI_STATUS_REMOVED,
                 full_path=full_path,
                 in_torrent=False,
                 status=status,

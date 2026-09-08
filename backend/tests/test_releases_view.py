@@ -873,8 +873,11 @@ def test_build_file_rows_checking_from_db_flag() -> None:
     ]
     rows = {r.relative_path: r for r in _build_file_rows(files, {})}
     assert rows["Show/ep01.mkv"].status == "checking"
+    assert rows["Show/ep01.mkv"].sticky_status == "ok"
     assert rows["Show/ep02.mkv"].status == "checking"
+    assert rows["Show/ep02.mkv"].sticky_status == "changed"
     assert rows["Show/ep03.mkv"].status == "new"
+    assert rows["Show/ep03.mkv"].sticky_status == "new"
 
 
 def test_build_file_rows_checking_cleared_shows_sticky() -> None:

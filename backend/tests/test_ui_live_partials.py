@@ -161,6 +161,10 @@ def test_releases_live_url_uses_urlencode() -> None:
     assert "stripTorrentFileActionWidgets" in base
     assert "restoreEncodeChecksIfNeeded" in base
     assert "data-download-queued" in base
+    assert "applyDownloadableProbe" in base
+    assert "refreshTorrentFilesSummary" in base
+    assert "setFileUiBadge" in base
+    assert "data-sticky-status" in base
     # Download-ссылку не снимаем при SSE restore — иначе eager archive без probe.
     assert ".file-copy-path, .file-send-encoder, .file-mediainfo, .file-encode-check" in base
     strip_fn = base.split("function stripTorrentFileActionWidgets", 1)[1].split(
@@ -168,6 +172,19 @@ def test_releases_live_url_uses_urlencode() -> None:
     )[0]
     assert 'querySelectorAll(".file-copy-path, .file-send-encoder, .file-mediainfo, .file-encode-check")' in strip_fn
     assert "removeAttribute(\"data-download-queued\")" in strip_fn
+    probe_fn = base.split("function applyDownloadableProbe", 1)[1].split(
+        "function probeResultIsEmpty", 1
+    )[0]
+    # Overlay «проверка» двусторонний: и выставить, и вернуть sticky.
+    assert 'checking.has(id) ? "checking" : sticky' in probe_fn
+    assert "refreshTorrentFilesSummary(block)" in probe_fn
+    assert "clearDownloadableSlotButtons(slot)" in probe_fn
+    enqueue_fn = base.split("function enqueueDownloadableChecks", 1)[1].split(
+        "function chunkHashes", 1
+    )[0]
+    # Кэш не применяем при refresh — иначе stale checking_ids=[] снесёт SSR «проверка».
+    assert "cached && !wantRefresh" in enqueue_fn
+    assert "пустые checking_ids" in enqueue_fn
     # Пустой MIME — без цвета (данные ещё не получены).
     assert 'if (!m) return "";' in base
     assert "Вложения" in base
@@ -611,6 +628,85 @@ def test_build_archive_page_rows_filters_sibling_orphans(monkeypatch, tmp_path) 
     alone = next(r for r in rows_alone if r.id == 1)
     alone_paths = {f.relative_path for f in alone.files}
     assert "Show/ep02.mkv" in alone_paths
+
+
+def test_torrent_file_list_sticky_never_checking_when_display_checking() -> None:
+    """status=checking без валидного sticky → data-sticky-status=ok, не checking."""
+    from app.services.releases_view import ReleaseFileRow
+
+    templates = _templates()
+    request = MagicMock()
+    # sticky_status намеренно «checking» / мусор — шаблон не должен это сериализовать.
+    files = [
+        ReleaseFileRow(
+            relative_path="ep01.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/ep01.mkv",
+            status="checking",
+            sticky_status="checking",  # type: ignore[arg-type]
+            file_id=1,
+            downloadable=False,
+        )
+    ]
+    html = templates.TemplateResponse(
+        request,
+        "partials/torrent_file_list.html",
+        {
+            "request": request,
+            "files": files,
+            "allow_file_downloads": True,
+            "info_hash": "ab" * 20,
+        },
+    ).body.decode("utf-8")
+    assert 'data-sticky-status="ok"' in html
+    assert 'data-sticky-status="checking"' not in html
+    assert 'data-ui-status="checking"' in html
+
+
+def test_torrent_file_list_sticky_status_attrs_for_probe_restore() -> None:
+    """SSR кладёт sticky + data-ui-status — live-probe может вернуть бейдж и сводку."""
+    from app.services.releases_view import ReleaseFileRow
+
+    templates = _templates()
+    request = MagicMock()
+    files = [
+        ReleaseFileRow(
+            relative_path="ep01.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/ep01.mkv",
+            status="checking",
+            sticky_status="ok",
+            file_id=1,
+            downloadable=False,
+        ),
+        ReleaseFileRow(
+            relative_path="ep10.mkv",
+            size=1,
+            selected=True,
+            full_path="/media/ep10.mkv",
+            status="new",
+            sticky_status="new",
+            file_id=2,
+            downloadable=True,
+        ),
+    ]
+    html = templates.TemplateResponse(
+        request,
+        "partials/torrent_file_list.html",
+        {
+            "request": request,
+            "files": files,
+            "allow_file_downloads": True,
+            "info_hash": "ab" * 20,
+        },
+    ).body.decode("utf-8")
+    assert 'data-sticky-status="ok"' in html
+    assert 'data-sticky-status="new"' in html
+    assert 'data-ui-status="checking"' in html
+    assert 'data-ui-status="new"' in html
+    assert "1 новый, 1 проверка" in html or "1 новый" in html
 
 
 def test_torrent_file_list_select_actions_in_body_not_summary() -> None:
