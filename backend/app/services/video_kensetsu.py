@@ -18,6 +18,9 @@ ENCODE_TIMEOUT_PER_PATH_SEC = 15.0
 ENCODE_TIMEOUT_MAX_SEC = 300.0
 ENCODE_BATCH_MAX_FILES = 100
 
+AUDIO_DOWNMIX_VALUES = frozenset({"none", "stereo"})
+AUDIO_IDS_NO_STEREO = frozenset({"copy", "none"})
+
 
 class VideoKensetsuHttpError(RuntimeError):
     """HTTP-ошибка Video Kensetsu с исходным status_code и текстом тела."""
@@ -44,6 +47,21 @@ def coerce_preset_available(value: Any, *, default: bool = True) -> bool:
             return True
         return True
     return bool(value)
+
+
+def normalize_audio_downmix(value: str | None, *, default: str = "none") -> str:
+    """Нормализует audio_downmix; неизвестное значение → ValueError."""
+    cleaned = (value or default or "none").strip().lower()
+    if cleaned not in AUDIO_DOWNMIX_VALUES:
+        raise ValueError(f"Недопустимый audio_downmix: {value!r} (ожидается none|stereo)")
+    return cleaned
+
+
+def audio_downmix_forbidden_for_audio(audio_id: str, audio_downmix: str) -> bool:
+    """True если stereo запрещён для данного audio_id (copy/none)."""
+    aid = (audio_id or "").strip().lower()
+    downmix = (audio_downmix or "").strip().lower()
+    return downmix == "stereo" and aid in AUDIO_IDS_NO_STEREO
 
 
 def _encoder_error_message(response: httpx.Response) -> str:
@@ -117,12 +135,12 @@ def read_health_cache(db: Session | None) -> tuple[bool | None, float | None]:
 
 
 def health_sync(base_url: str, *, timeout_sec: float = 2.0) -> dict[str, Any]:
-    """Синхронный GET {base_url} — ok при HTTP 200 (для SSR / settings save)."""
+    """Синхронный GET {base_url}/health — ok при HTTP 200 (для SSR / settings save)."""
     root = normalize_video_kensetsu_base_url(base_url)
     if not root:
         raise ValueError("Не задан URL Video Kensetsu")
     with httpx.Client(timeout=timeout_sec) as client:
-        response = client.get(root)
+        response = client.get(f"{root}/health")
     if response.status_code != 200:
         raise RuntimeError(f"HTTP {response.status_code}")
     return {"ok": True, "status_code": response.status_code, "base_url": root}
@@ -182,18 +200,46 @@ def video_kensetsu_ui_context(
 
 
 async def health(base_url: str, *, timeout_sec: float = 10.0) -> dict[str, Any]:
-    """GET {base_url} — ok при HTTP 200."""
+    """GET {base_url}/health — ok при HTTP 200."""
     root = normalize_video_kensetsu_base_url(base_url)
     if not root:
         raise ValueError("Не задан URL Video Kensetsu")
     async with httpx.AsyncClient(timeout=timeout_sec) as client:
-        response = await client.get(root)
+        response = await client.get(f"{root}/health")
     if response.status_code != 200:
         raise RuntimeError(f"HTTP {response.status_code}")
     return {"ok": True, "status_code": response.status_code, "base_url": root}
 
 
-async def list_presets(base_url: str, *, timeout_sec: float = 15.0) -> list[dict[str, Any]]:
+def _layer_items(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _parse_defaults(raw: Any) -> dict[str, str]:
+    defaults: dict[str, str] = {
+        "video_id": "",
+        "audio_id": "",
+        "audio_downmix": "none",
+    }
+    if not isinstance(raw, dict):
+        return defaults
+    for key in ("video_id", "audio_id", "audio_downmix"):
+        val = raw.get(key)
+        if isinstance(val, str) and val.strip():
+            defaults[key] = val.strip()
+    try:
+        defaults["audio_downmix"] = normalize_audio_downmix(
+            defaults.get("audio_downmix"), default="none"
+        )
+    except ValueError:
+        defaults["audio_downmix"] = "none"
+    return defaults
+
+
+async def list_presets(base_url: str, *, timeout_sec: float = 15.0) -> dict[str, Any]:
+    """GET /api/presets → {videos, audios, defaults}."""
     root = normalize_video_kensetsu_base_url(base_url)
     if not root:
         raise ValueError("Не задан URL Video Kensetsu")
@@ -201,24 +247,31 @@ async def list_presets(base_url: str, *, timeout_sec: float = 15.0) -> list[dict
         response = await client.get(f"{root}/api/presets")
         response.raise_for_status()
         payload = response.json()
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        for key in ("presets", "items", "data"):
-            raw = payload.get(key)
-            if isinstance(raw, list):
-                return [item for item in raw if isinstance(item, dict)]
-    raise RuntimeError("Некорректный ответ /api/presets")
+    if not isinstance(payload, dict):
+        raise RuntimeError("Некорректный ответ /api/presets")
+    videos = _layer_items(payload.get("videos"))
+    audios = _layer_items(payload.get("audios"))
+    if not videos or not audios:
+        raise RuntimeError(
+            "Некорректный ответ /api/presets: videos и audios обязательны и непустые"
+        )
+    return {
+        "videos": videos,
+        "audios": audios,
+        "defaults": _parse_defaults(payload.get("defaults")),
+    }
 
 
 async def encode(
     base_url: str,
     *,
     paths: list[str],
-    preset_id: str,
+    video_id: str,
+    audio_id: str,
+    audio_downmix: str = "none",
     timeout_sec: float | None = None,
 ) -> dict[str, Any]:
-    """POST /api/internal/encode JSON: path/paths + preset_id.
+    """POST /api/internal/encode JSON: path/paths + video_id/audio_id/audio_downmix.
 
     HTTP 200 и 207 считаются успешным ответом (207 — частичный batch).
     Прочие коды → ``VideoKensetsuHttpError`` с текстом ``{error}`` из тела.
@@ -227,17 +280,30 @@ async def encode(
     root = normalize_video_kensetsu_base_url(base_url)
     if not root:
         raise ValueError("Не задан URL Video Kensetsu")
-    cleaned_id = (preset_id or "").strip()
-    if not cleaned_id:
-        raise ValueError("Не передан preset_id")
+    cleaned_video = (video_id or "").strip()
+    cleaned_audio = (audio_id or "").strip()
+    if not cleaned_video:
+        raise ValueError("Не передан video_id")
+    if not cleaned_audio:
+        raise ValueError("Не передан audio_id")
+    cleaned_downmix = normalize_audio_downmix(audio_downmix, default="none")
+    if audio_downmix_forbidden_for_audio(cleaned_audio, cleaned_downmix):
+        raise ValueError(
+            "audio_downmix=stereo недоступен для audio_id copy/none"
+        )
     cleaned_paths = [str(p).strip() for p in (paths or []) if str(p).strip()]
     if not cleaned_paths:
         raise ValueError("Не задан путь к файлу")
 
+    layer_fields = {
+        "video_id": cleaned_video,
+        "audio_id": cleaned_audio,
+        "audio_downmix": cleaned_downmix,
+    }
     if len(cleaned_paths) == 1:
-        payload: dict[str, Any] = {"path": cleaned_paths[0], "preset_id": cleaned_id}
+        payload: dict[str, Any] = {"path": cleaned_paths[0], **layer_fields}
     else:
-        payload = {"paths": cleaned_paths, "preset_id": cleaned_id}
+        payload = {"paths": cleaned_paths, **layer_fields}
 
     effective_timeout = (
         float(timeout_sec)
@@ -265,11 +331,12 @@ async def encode(
     return {"status_code": response.status_code, "body": body}
 
 
-def find_preset(presets: list[dict[str, Any]], preset_id: str) -> dict[str, Any] | None:
+def find_layer_preset(items: list[dict[str, Any]], preset_id: str) -> dict[str, Any] | None:
+    """Ищет пресет по id в слое (videos или audios)."""
     wanted = (preset_id or "").strip()
     if not wanted:
         return None
-    for item in presets:
+    for item in items:
         if str(item.get("id") or "") == wanted:
             return item
     return None

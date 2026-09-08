@@ -513,11 +513,17 @@
       background: #1b1b1b;
       color: #eee;
       padding: 16px;
-      min-width: min(360px, 92vw);
+      min-width: min(400px, 92vw);
     }
     #encoder-preset-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
     #encoder-preset-dialog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    #encoder-preset-dialog select.input { min-width: 220px; }
+    #encoder-preset-dialog .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    #encoder-preset-dialog select.input { min-width: 220px; width: 100%; }
     #encoder-batch-bar {
       position: fixed;
       left: 0;
@@ -717,10 +723,18 @@
     dialog.id = "encoder-preset-dialog";
     dialog.innerHTML =
       '<form method="dialog" id="encoder-preset-form">' +
-      "<p style=\"margin:0 0 10px;\">Выберите пресет кодирования</p>" +
-      '<label class="row" style="margin-bottom:12px;">Пресет' +
-      '<select class="input" name="preset_id" id="encoder-preset-select" required></select>' +
+      "<p style=\"margin:0 0 10px;\">Параметры кодирования</p>" +
+      '<label class="field">Видео' +
+      '<select class="input" name="video_id" id="encoder-video-select" required></select>' +
       "</label>" +
+      '<label class="field">Аудио' +
+      '<select class="input" name="audio_id" id="encoder-audio-select" required></select>' +
+      "</label>" +
+      '<label class="field">Downmix' +
+      '<select class="input" name="audio_downmix" id="encoder-downmix-select">' +
+      '<option value="none">Нет (none)</option>' +
+      '<option value="stereo">Stereo</option>' +
+      "</select></label>" +
       '<div class="row" style="justify-content:flex-end;">' +
       '<button class="btn btn-secondary" value="cancel" type="submit" formnovalidate>Отмена</button>' +
       '<button class="btn" value="ok" type="submit">Отправить</button>' +
@@ -729,33 +743,19 @@
     return dialog;
   }
 
-  async function pickEncoderPreset() {
-    const dialog = ensureEncoderPresetDialog();
-    const select = dialog.querySelector("#encoder-preset-select");
-    select.innerHTML = "";
-    const resp = await fetch("/api/video-kensetsu/presets");
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(formatApiErrorDetail(err.detail) || `HTTP ${resp.status}`);
+  function syncEncoderDownmixLock(audioSelect, downmixSelect) {
+    const audioId = (audioSelect.value || "").trim().toLowerCase();
+    const lockStereo = audioId === "copy" || audioId === "none";
+    const stereoOpt = [...downmixSelect.options].find((o) => o.value === "stereo");
+    if (stereoOpt) stereoOpt.disabled = lockStereo;
+    if (lockStereo && downmixSelect.value === "stereo") {
+      downmixSelect.value = "none";
     }
-    const data = await resp.json();
-    const presets = data.presets || [];
-    if (!presets.length) throw new Error("Пресеты не найдены");
+  }
 
-    const groups = new Map();
-    const ungrouped = [];
-    presets.forEach((p) => {
-      const group = (p.group || "").trim();
-      if (!group) {
-        ungrouped.push(p);
-        return;
-      }
-      if (!groups.has(group)) groups.set(group, []);
-      groups.get(group).push(p);
-    });
-
-    const groupLabels = { rip: "WEBRip / HDTV / BDRip", remux: "BD / Remux" };
-    const appendOption = (parent, p) => {
+  function fillEncoderLayerSelect(select, items, preferredId) {
+    select.innerHTML = "";
+    const appendOption = (p) => {
       const opt = document.createElement("option");
       opt.value = p.id;
       const name = p.name || p.id;
@@ -764,31 +764,80 @@
         opt.disabled = true;
         opt.textContent += " — недоступен";
       }
-      parent.appendChild(opt);
+      if (p.default === true) opt.dataset.default = "1";
+      select.appendChild(opt);
     };
-
-    groups.forEach((items, group) => {
-      const og = document.createElement("optgroup");
-      og.label = groupLabels[group] || group;
-      items.forEach((p) => appendOption(og, p));
-      select.appendChild(og);
-    });
-    ungrouped.forEach((p) => appendOption(select, p));
-
-    const firstEnabled = [...select.querySelectorAll("option")].find((o) => !o.disabled);
+    (items || []).forEach(appendOption);
+    const preferred = (preferredId || "").trim();
+    if (preferred) {
+      const match = [...select.options].find((o) => o.value === preferred && !o.disabled);
+      if (match) {
+        select.value = preferred;
+        return;
+      }
+    }
+    const defaultOpt = [...select.options].find((o) => !o.disabled && o.dataset.default === "1");
+    if (defaultOpt) {
+      select.value = defaultOpt.value;
+      return;
+    }
+    const firstEnabled = [...select.options].find((o) => !o.disabled);
     if (firstEnabled) select.value = firstEnabled.value;
+  }
+
+  async function pickEncoderPreset() {
+    const dialog = ensureEncoderPresetDialog();
+    const videoSelect = dialog.querySelector("#encoder-video-select");
+    const audioSelect = dialog.querySelector("#encoder-audio-select");
+    const downmixSelect = dialog.querySelector("#encoder-downmix-select");
+    videoSelect.innerHTML = "";
+    audioSelect.innerHTML = "";
+    downmixSelect.value = "none";
+
+    const resp = await fetch("/api/video-kensetsu/presets");
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(formatApiErrorDetail(err.detail) || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    const videos = data.videos || [];
+    const audios = data.audios || [];
+    if (!videos.length) throw new Error("Видео-пресеты не найдены");
+    if (!audios.length) throw new Error("Аудио-пресеты не найдены");
+
+    const defaults = data.defaults || {};
+    fillEncoderLayerSelect(videoSelect, videos, defaults.video_id);
+    fillEncoderLayerSelect(audioSelect, audios, defaults.audio_id);
+    const preferredDownmix =
+      defaults.audio_downmix === "stereo" ? "stereo" : "none";
+    downmixSelect.value = preferredDownmix;
+    syncEncoderDownmixLock(audioSelect, downmixSelect);
+
+    const onAudioChange = () => syncEncoderDownmixLock(audioSelect, downmixSelect);
+    audioSelect.addEventListener("change", onAudioChange);
 
     dialog.showModal();
     return new Promise((resolve) => {
       const onClose = () => {
         dialog.removeEventListener("close", onClose);
+        audioSelect.removeEventListener("change", onAudioChange);
         if (dialog.returnValue === "ok") {
-          const selected = select.selectedOptions[0];
-          if (!selected || selected.disabled) {
+          const videoOpt = videoSelect.selectedOptions[0];
+          const audioOpt = audioSelect.selectedOptions[0];
+          if (!videoOpt || videoOpt.disabled || !audioOpt || audioOpt.disabled) {
             resolve(null);
             return;
           }
-          resolve(select.value || null);
+          const video_id = videoSelect.value || "";
+          const audio_id = audioSelect.value || "";
+          let audio_downmix = downmixSelect.value === "stereo" ? "stereo" : "none";
+          const audioIdNorm = audio_id.trim().toLowerCase();
+          if (audioIdNorm === "copy" || audioIdNorm === "none") audio_downmix = "none";
+          if (!video_id || !audio_id) {
+            resolve(null);
+            return;
+          }
+          resolve({ video_id, audio_id, audio_downmix });
         } else {
           resolve(null);
         }
@@ -832,9 +881,9 @@
       const statusEl = bar.querySelector("[data-encoder-status]");
       try {
         sendBtn.disabled = true;
-        statusEl.textContent = "Выбор пресета…";
-        const presetId = await pickEncoderPreset();
-        if (!presetId) {
+        statusEl.textContent = "Выбор параметров…";
+        const layers = await pickEncoderPreset();
+        if (!layers) {
           statusEl.textContent = "";
           return;
         }
@@ -842,13 +891,19 @@
         const resp = await fetch("/api/torrent-files/send-to-encoder", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ file_ids: ids, preset_id: presetId }),
+          body: JSON.stringify({ file_ids: ids, ...layers }),
         });
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok && resp.status !== 207) {
           throw new Error(formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`);
         }
-        const created = payload.created;
+        const createdRaw = payload.created;
+        const created =
+          typeof createdRaw === "boolean"
+            ? Number(createdRaw)
+            : typeof createdRaw === "number"
+              ? createdRaw
+              : null;
         const encErrors = Array.isArray(payload.errors) ? payload.errors.length : 0;
         const localErrors = Array.isArray(payload.local_errors) ? payload.local_errors.length : 0;
         const parts = [];
@@ -1015,8 +1070,8 @@
       try {
         btn.disabled = true;
         btn.title = "Загрузка пресетов…";
-        const presetId = await pickEncoderPreset();
-        if (!presetId) {
+        const layers = await pickEncoderPreset();
+        if (!layers) {
           btn.title = prevTitle;
           return;
         }
@@ -1024,7 +1079,7 @@
         const resp = await fetch(`/api/torrent-files/${encodeURIComponent(id)}/send-to-encoder`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ preset_id: presetId }),
+          body: JSON.stringify(layers),
         });
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok && resp.status !== 207) {

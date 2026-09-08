@@ -40,12 +40,14 @@ from app.services.torrent_archive import TorrentArchiveService
 from app.services.video_kensetsu import (
     ENCODE_BATCH_MAX_FILES,
     VideoKensetsuHttpError,
+    audio_downmix_forbidden_for_audio,
     coerce_preset_available,
     encode as video_kensetsu_encode,
     encode_timeout_for_paths,
-    find_preset,
+    find_layer_preset,
     is_video_kensetsu_enabled,
     list_presets as video_kensetsu_list_presets,
+    normalize_audio_downmix,
     resolve_video_kensetsu_base_url,
 )
 from app.utils.datetime_fmt import as_utc_iso
@@ -509,12 +511,16 @@ def download_torrent_media_file(file_id: int, db: Session = Depends(get_db)) -> 
 
 
 class SendToEncoderIn(BaseModel):
-    preset_id: str
+    video_id: str
+    audio_id: str
+    audio_downmix: str = "none"
 
 
 class SendToEncoderBatchIn(BaseModel):
     file_ids: list[int] = Field(default_factory=list, max_length=ENCODE_BATCH_MAX_FILES)
-    preset_id: str
+    video_id: str
+    audio_id: str
+    audio_downmix: str = "none"
 
 
 def _require_video_kensetsu_base_url(db: Session) -> str:
@@ -589,46 +595,116 @@ def _enrich_encoder_errors(
     return enriched, failed
 
 
-async def _resolve_encoder_preset(base_url: str, preset_id: str) -> str:
-    cleaned = (preset_id or "").strip()
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Не передан preset_id")
+def _normalize_created_count(encoder_payload: dict[str, Any], status_code: int) -> int | None:
+    """Нормализует ``created`` в int: True→1, False→0; иначе fallback из jobs/job."""
+    created = encoder_payload.get("created")
+    if isinstance(created, bool):
+        return int(created)
+    if isinstance(created, int) and not isinstance(created, bool):
+        return created
+    if status_code not in (200, 207):
+        return None
+    jobs = encoder_payload.get("jobs")
+    if isinstance(jobs, list) and jobs:
+        return len(jobs)
+    if encoder_payload.get("job") or encoder_payload.get("job_id"):
+        return 1
+    return 0
+
+
+async def _resolve_encoder_layers(
+    base_url: str,
+    *,
+    video_id: str,
+    audio_id: str,
+    audio_downmix: str = "none",
+) -> dict[str, str]:
+    cleaned_video = (video_id or "").strip()
+    cleaned_audio = (audio_id or "").strip()
+    if not cleaned_video:
+        raise HTTPException(status_code=400, detail="Не передан video_id")
+    if not cleaned_audio:
+        raise HTTPException(status_code=400, detail="Не передан audio_id")
     try:
-        presets = await video_kensetsu_list_presets(base_url)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Video Kensetsu недоступен: {exc}") from exc
-    preset = find_preset(presets, cleaned)
-    if preset is None:
-        raise HTTPException(status_code=404, detail=f"Пресет не найден: {cleaned}")
-    if not coerce_preset_available(preset.get("available"), default=True):
+        cleaned_downmix = normalize_audio_downmix(audio_downmix, default="none")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if audio_downmix_forbidden_for_audio(cleaned_audio, cleaned_downmix):
         raise HTTPException(
             status_code=400,
-            detail=f"Пресет недоступен на кодировщике: {cleaned}",
+            detail="audio_downmix=stereo недоступен для audio_id copy/none",
         )
-    return cleaned
+    try:
+        layers = await video_kensetsu_list_presets(base_url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Video Kensetsu недоступен: {exc}") from exc
+    videos = layers.get("videos") if isinstance(layers, dict) else None
+    audios = layers.get("audios") if isinstance(layers, dict) else None
+    if not isinstance(videos, list) or not isinstance(audios, list):
+        raise HTTPException(status_code=502, detail="Некорректный ответ пресетов Video Kensetsu")
+    video = find_layer_preset(videos, cleaned_video)
+    if video is None:
+        raise HTTPException(status_code=400, detail=f"Неизвестный video_id: {cleaned_video}")
+    audio = find_layer_preset(audios, cleaned_audio)
+    if audio is None:
+        raise HTTPException(status_code=400, detail=f"Неизвестный audio_id: {cleaned_audio}")
+    if not coerce_preset_available(audio.get("available"), default=True):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Аудио-пресет недоступен на кодировщике: {cleaned_audio}",
+        )
+    return {
+        "video_id": cleaned_video,
+        "audio_id": cleaned_audio,
+        "audio_downmix": cleaned_downmix,
+    }
 
 
 @router.get("/video-kensetsu/presets")
 async def video_kensetsu_presets(db: Session = Depends(get_db)) -> dict:
-    """Прокси списка пресетов Video Kensetsu (без CORS с браузера)."""
+    """Прокси слоёв пресетов Video Kensetsu (без CORS с браузера)."""
     base_url = _require_video_kensetsu_base_url(db)
     try:
-        presets = await video_kensetsu_list_presets(base_url)
+        layers = await video_kensetsu_list_presets(base_url)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Video Kensetsu недоступен: {exc}") from exc
-    return {
-        "base_url": base_url,
-        "presets": [
+    videos_out: list[dict[str, Any]] = []
+    for item in layers.get("videos") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        videos_out.append(
             {
                 "id": str(item.get("id") or ""),
                 "name": str(item.get("name") or item.get("id") or ""),
-                "description": item.get("description"),
-                "group": item.get("group"),
+                "default": bool(item.get("default")),
+                "video_codec": item.get("video_codec"),
+                "preset": item.get("preset"),
+                "crf": item.get("crf"),
+            }
+        )
+    audios_out: list[dict[str, Any]] = []
+    for item in layers.get("audios") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        audios_out.append(
+            {
+                "id": str(item.get("id") or ""),
+                "name": str(item.get("name") or item.get("id") or ""),
+                "default": bool(item.get("default")),
+                "codec": item.get("codec"),
                 "available": coerce_preset_available(item.get("available"), default=True),
             }
-            for item in presets
-            if item.get("id")
-        ],
+        )
+    defaults = layers.get("defaults") if isinstance(layers.get("defaults"), dict) else {}
+    return {
+        "base_url": base_url,
+        "videos": videos_out,
+        "audios": audios_out,
+        "defaults": {
+            "video_id": str(defaults.get("video_id") or ""),
+            "audio_id": str(defaults.get("audio_id") or ""),
+            "audio_downmix": str(defaults.get("audio_downmix") or "none"),
+        },
     }
 
 
@@ -639,7 +715,12 @@ async def send_torrent_files_to_encoder_batch(
 ) -> JSONResponse:
     """Пакетная отправка media-файлов в Video Kensetsu."""
     base_url = _require_video_kensetsu_base_url(db)
-    preset_id = await _resolve_encoder_preset(base_url, body.preset_id)
+    layers = await _resolve_encoder_layers(
+        base_url,
+        video_id=body.video_id,
+        audio_id=body.audio_id,
+        audio_downmix=body.audio_downmix,
+    )
 
     file_ids = list(dict.fromkeys(int(fid) for fid in (body.file_ids or [])))
     if not file_ids:
@@ -674,7 +755,9 @@ async def send_torrent_files_to_encoder_batch(
         encoded = await video_kensetsu_encode(
             base_url,
             paths=paths,
-            preset_id=preset_id,
+            video_id=layers["video_id"],
+            audio_id=layers["audio_id"],
+            audio_downmix=layers["audio_downmix"],
             timeout_sec=encode_timeout_for_paths(len(paths)),
         )
     except HTTPException:
@@ -685,9 +768,7 @@ async def send_torrent_files_to_encoder_batch(
     status_code = int(encoded.get("status_code") or 200)
     encoder_body = encoded.get("body")
     encoder_payload = encoder_body if isinstance(encoder_body, dict) else {"result": encoder_body}
-    created = encoder_payload.get("created")
-    if created is None and status_code in (200, 207):
-        created = len(encoder_payload.get("jobs") or []) or (1 if encoder_payload.get("job") else 0)
+    created = _normalize_created_count(encoder_payload, status_code)
 
     enriched_errors, failed_ids = _enrich_encoder_errors(
         encoder_payload.get("errors"),
@@ -698,9 +779,11 @@ async def send_torrent_files_to_encoder_batch(
     partial = status_code == 207 or bool(local_errors) or bool(enriched_errors)
 
     response_body: dict[str, Any] = {
-        "ok": True,
+        "ok": not partial,
         "partial": partial,
-        "preset_id": preset_id,
+        "video_id": layers["video_id"],
+        "audio_id": layers["audio_id"],
+        "audio_downmix": layers["audio_downmix"],
         "created": created,
         "file_ids": accepted_file_ids,
         "jobs": encoder_payload.get("jobs"),
@@ -719,20 +802,27 @@ async def send_torrent_file_to_encoder(
     body: SendToEncoderIn,
     db: Session = Depends(get_db),
 ) -> JSONResponse:
-    """Отправить media-файл в Video Kensetsu с выбранным пресетом."""
+    """Отправить media-файл в Video Kensetsu с выбранными слоями пресетов."""
     base_url = _require_video_kensetsu_base_url(db)
 
     encode_path, error = _resolve_encode_path_for_file(db, file_id)
     if error or not encode_path:
         raise HTTPException(status_code=404, detail=error or "Файл недоступен для кодирования")
 
-    preset_id = await _resolve_encoder_preset(base_url, body.preset_id)
+    layers = await _resolve_encoder_layers(
+        base_url,
+        video_id=body.video_id,
+        audio_id=body.audio_id,
+        audio_downmix=body.audio_downmix,
+    )
 
     try:
         encoded = await video_kensetsu_encode(
             base_url,
             paths=[encode_path],
-            preset_id=preset_id,
+            video_id=layers["video_id"],
+            audio_id=layers["audio_id"],
+            audio_downmix=layers["audio_downmix"],
         )
     except HTTPException:
         raise
@@ -746,16 +836,15 @@ async def send_torrent_file_to_encoder(
     if isinstance(errors, list) and not errors:
         errors = None
     partial = status_code == 207 or bool(errors)
-    created = encoder_payload.get("created") if isinstance(encoder_payload, dict) else None
-    if created is None and status_code in (200, 207):
-        created = len(encoder_payload.get("jobs") or []) or (1 if encoder_payload.get("job") else 0)
+    created = _normalize_created_count(encoder_payload, status_code)
 
     result: dict[str, Any] = {
         "ok": not partial,
         "partial": partial,
         "file_id": file_id,
-        "path": encode_path,
-        "preset_id": preset_id,
+        "video_id": layers["video_id"],
+        "audio_id": layers["audio_id"],
+        "audio_downmix": layers["audio_downmix"],
         "created": created,
         "result": encoder_body,
         "errors": errors,
