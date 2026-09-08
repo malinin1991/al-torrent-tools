@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -641,18 +642,110 @@ def test_get_or_extract_mediainfo_not_found() -> None:
     assert res["status"] == "not_found"
 
 
-def test_get_or_extract_mediainfo_checking() -> None:
+@pytest.mark.parametrize("ui_status", ["ok", "changed"])
+def test_get_or_extract_mediainfo_checking(ui_status: str) -> None:
+    """Sticky ok/changed + is_checking — перекачка поверх complete, MediaInfo режем."""
     db = MagicMock()
     tf = TorrentFile(
         id=1,
         full_path="/media/test.mkv",
         relative_path="test.mkv",
+        ui_status=ui_status,
         is_checking=True,
+    )
+    db.get.return_value = tf
+    with patch("app.services.mediainfo.is_partial_only", return_value=False):
+        res = get_or_extract_mediainfo(db, 1)
+    assert res["ok"] is False
+    assert res["status"] == "in_progress"
+
+
+def test_get_or_extract_mediainfo_new_allows_checking_when_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sticky new + is_checking: UI не ставит «проверка», MediaInfo не должен резаться."""
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    sample = media / "ep10.mkv"
+    sample.write_bytes(b"fake-mkv")
+
+    db = MagicMock()
+    tf = TorrentFile(
+        id=1,
+        full_path=str(sample),
+        relative_path="ep10.mkv",
+        ui_status="new",
+        is_checking=True,
+    )
+    db.get.return_value = tf
+    db.scalar.return_value = None
+
+    monkeypatch.setattr("app.services.mediainfo.is_under_media_root", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        "app.services.mediainfo.upsert_file_mediainfo",
+        lambda *_a, **_k: SimpleNamespace(
+            full_path=str(sample.resolve()),
+            summary_json={"format": "Matroska"},
+            raw_text="ok",
+        ),
+    )
+    res = get_or_extract_mediainfo(db, 1)
+    assert res["ok"] is True
+    assert res["status"] == "ready"
+
+
+def test_get_or_extract_mediainfo_partial_only_blocks(tmp_path: Path) -> None:
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    partial = media / "ep10.mkv.!qB"
+    partial.write_bytes(b"partial")
+
+    db = MagicMock()
+    tf = TorrentFile(
+        id=1,
+        full_path=str(media / "ep10.mkv"),
+        relative_path="ep10.mkv",
+        ui_status="new",
+        is_checking=False,
     )
     db.get.return_value = tf
     res = get_or_extract_mediainfo(db, 1)
     assert res["ok"] is False
     assert res["status"] == "in_progress"
+
+
+def test_get_or_extract_mediainfo_neighbor_qb_allows_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Соседний .!qB при уже complete — не блокирует (как download)."""
+    media = tmp_path / "anilibria"
+    media.mkdir()
+    sample = media / "ep10.mkv"
+    sample.write_bytes(b"complete")
+    (media / "ep10.mkv.!qB").write_bytes(b"leftover")
+
+    db = MagicMock()
+    tf = TorrentFile(
+        id=1,
+        full_path=str(sample),
+        relative_path="ep10.mkv",
+        ui_status="new",
+        is_checking=False,
+    )
+    db.get.return_value = tf
+    db.scalar.return_value = None
+    monkeypatch.setattr("app.services.mediainfo.is_under_media_root", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        "app.services.mediainfo.upsert_file_mediainfo",
+        lambda *_a, **_k: SimpleNamespace(
+            full_path=str(sample.resolve()),
+            summary_json={"format": "Matroska"},
+            raw_text="ok",
+        ),
+    )
+    res = get_or_extract_mediainfo(db, 1)
+    assert res["ok"] is True
+    assert res["status"] == "ready"
 
 
 def test_get_or_extract_mediainfo_cached() -> None:

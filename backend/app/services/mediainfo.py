@@ -16,7 +16,7 @@ from app.db.models import FileMediaInfo, TorrentFile
 from app.services.matroska_attachments import read_matroska_attachments
 from app.services.torrent_files_meta import (
     complete_path_for,
-    is_incomplete_path,
+    is_partial_only,
     is_under_media_root,
 )
 from app.utils.datetime_fmt import utcnow
@@ -794,8 +794,11 @@ def upsert_file_mediainfo(
     if not full_path:
         return None
 
-    path = Path(full_path)
-    if is_incomplete_path(path) or not path.is_file():
+    # Как download/UI: соседний .!qB при уже complete не блокирует; парсим канон без суффикса.
+    if is_partial_only(full_path):
+        return None
+    path = complete_path_for(full_path)
+    if not path.is_file():
         return None
     if not is_under_media_root(path):
         logger.warning("MediaInfo upsert отклонён: путь вне media root: %s", path)
@@ -886,11 +889,22 @@ def get_or_extract_mediainfo(
             "error": "Путь к файлу ещё не определен",
         }
 
-    path = Path(full_path_str)
+    path = complete_path_for(full_path_str)
     canonical = get_canonical_path(path)
 
-    # Проверка на продолжающуюся загрузку
-    if is_incomplete_path(path) or bool(getattr(row, "is_checking", False)):
+    # Gate как у UI/download: только реально неполный файл (.!qB без complete),
+    # либо checking-overlay для sticky ok/changed (перекачка поверх старого complete).
+    # Sticky new + is_checking: бейдж остаётся «новый», кнопка MediaInfo есть —
+    # не режем парсинг, если complete уже на диске (иначе «новый» вечно без MI).
+    sticky = (getattr(row, "ui_status", None) or "").strip().lower() or "ok"
+    if is_partial_only(full_path_str):
+        return {
+            "ok": False,
+            "file_id": file_id,
+            "status": "in_progress",
+            "error": "Файл проверяется или ещё загружается на master",
+        }
+    if bool(getattr(row, "is_checking", False)) and sticky in {"ok", "changed"}:
         return {
             "ok": False,
             "file_id": file_id,

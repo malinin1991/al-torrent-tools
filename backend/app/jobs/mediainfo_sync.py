@@ -21,7 +21,11 @@ from app.services.mediainfo import (
     is_media_filename,
     upsert_file_mediainfo,
 )
-from app.services.torrent_files_meta import is_incomplete_path, resolve_media_root
+from app.services.torrent_files_meta import (
+    complete_path_for,
+    is_partial_only,
+    resolve_media_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +74,10 @@ async def run_mediainfo_sync(db: Session, job_id: int, params: dict[str, Any]) -
     for raw in rows:
         if not raw:
             continue
-        p = Path(raw)
-        if is_incomplete_path(p):
+        # Соседний .!qB при complete не отбрасываем; сам incomplete без complete — да.
+        if is_partial_only(raw):
             continue
+        p = complete_path_for(raw)
         if not is_media_filename(p):
             continue
         canon = get_canonical_path(p)
