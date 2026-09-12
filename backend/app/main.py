@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select, text
@@ -149,6 +149,15 @@ templates.env.filters["as_utc_iso"] = as_utc_iso
 templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
 templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
 app.mount("/static", StaticFiles(directory=str(base_path / "static")), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    """Браузеры по умолчанию стучатся в /favicon.ico — без отдельного .ico отдаём SVG."""
+    return FileResponse(
+        base_path / "static" / "favicon.svg",
+        media_type="image/svg+xml",
+    )
 
 
 def _parse_port(raw: str, default: int = 8080) -> int:
