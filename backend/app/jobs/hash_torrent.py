@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import JobLog, TorrentFile
 from app.services.file_tracker import FileTrackerService
+from app.services.hevc_notifications import enqueue_new_release_notification
 from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.pipeline import TorrentPipelineService, record_pipeline_event
 
@@ -181,4 +182,15 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
                 "ui_transitions": transitions,
                 "ui_transitions_total": len(getattr(result, "hash_ui_transitions", None) or []),
             },
+        )
+    # Success джоба может означать пустой/частичный проход. Новый релиз объявляем
+    # только после реальной проверки файлов; gate-cache тоже подтверждает хеш.
+    if result.errors == 0 and result.hashed + result.gated > 0:
+        if is_stop_requested(db, job_id):
+            raise JobStopRequested()
+        enqueue_new_release_notification(
+            db,
+            release_id=release_id,
+            info_hash=info_hash,
+            hashed_files=result.hashed + result.gated,
         )

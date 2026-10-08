@@ -17,6 +17,8 @@
 - `backend/app/services/torrent_processor.py`: обработка релизов и торрентов; `torrent_archive.py`: архивирование; `qbittorrent.py` и `torrent_qb_meta.py`: взаимодействие с qB и его метаданные.
 - `backend/app/services/pipeline.py`: переходы master → slave и аудит; `qb_inventory.py`, `file_tracker.py`, `file_hasher.py`, `torrent_files_meta.py`: состав, наличие и хеши файлов.
 - `backend/app/services/hevc_pairing.py`: правила соответствия AVC/HEVC и SLA; `releases_view.py`: данные страницы релизов. Перед изменениями pairing читай docstring модуля и `test_hevc*`.
+- `worker._sync_hevc_overdue` проверяет SLA каждые 60 с независимо от checkpoints. `jobs/hash_torrent.py` ставит в HEVC-outbox уведомление о первом AVC релиза после проверки всех выбранных файлов; дедупликация — по релизу/одобренному чату, с учётом истории архива.
+- Pure `missing` после 24 ч имеет отдельное HEVC-уведомление (не смену UI-статуса), только если самое раннее `torrent_archive.created_at` релиза >= 2026-09-30 17:00 UTC (1 октября по Новосибирску); дедупликация по релизу/чату. Старые релизы с новыми версиями не включать.
 - `backend/app/services/mediainfo.py`, `matroska_attachments.py`, `video_kensetsu.py`: метаданные медиа, вложения Matroska и клиент внешнего энкодера.
 - `backend/app/telegram_bot/`: два профиля бота, основной и `hevc`; `services/telegram_access.py`, `telegram_notify.py`, `telegram_outbox.py`, `hevc_notifications.py`: доступ, подписки и уведомления. Корневой `telegram-bot/` содержит только пояснение.
 - `backend/app/db/models.py`: модели; `backend/alembic/versions/`: миграции. Архив, pipeline, файлы, disk hashes, checkpoints, job logs, pipeline events и Telegram outbox — разные сущности, не взаимозаменяемые состояния.

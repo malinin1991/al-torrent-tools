@@ -181,6 +181,19 @@ async def _reclaim_stale_jobs() -> None:
             logger.warning("Reclaim: отменены зависшие джобы: %s", cancelled)
 
 
+async def _sync_hevc_overdue() -> None:
+    """SLA меняется даже при неизменном API; sync не зависит от ongoing/full_sync."""
+    from app.services.hevc_notifications import sync_overdue_notifications
+
+    def check() -> int:
+        with SessionLocal() as db:
+            return sync_overdue_notifications(db)
+
+    emitted = await asyncio.to_thread(check)
+    if emitted:
+        logger.info("HEVC: события просрочки и уведомления без пары: %s", emitted)
+
+
 async def main() -> None:
     from app.logging_filters import setup_redacted_logging
 
@@ -292,6 +305,14 @@ async def main() -> None:
         CronTrigger(hour=FULL_SYNC_DAILY_HOUR, minute=FULL_SYNC_DAILY_MINUTE),
         args=["full_sync"],
         id="full_sync_daily",
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _sync_hevc_overdue,
+        "interval",
+        seconds=60,
+        id="hevc_overdue",
         max_instances=1,
         coalesce=True,
     )
