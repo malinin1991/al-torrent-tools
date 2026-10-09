@@ -7,6 +7,7 @@ from app.db.models import (
     FileChangeEvent,
     Job,
     JobLog,
+    OngoingWatch,
     ReleaseCheckpoint,
     SeenTorrent,
     TelegramOutbox,
@@ -24,6 +25,7 @@ def reset_operational_state(db: Session) -> dict[str, int]:
     seen = db.scalar(select(func.count()).select_from(SeenTorrent)) or 0
     pipeline = db.scalar(select(func.count()).select_from(TorrentPipeline)) or 0
     checkpoints = db.scalar(select(func.count()).select_from(ReleaseCheckpoint)) or 0
+    watches = db.scalar(select(func.count()).select_from(OngoingWatch)) or 0
     outbox = db.scalar(select(func.count()).select_from(TelegramOutbox)) or 0
 
     db.execute(delete(JobLog))
@@ -32,6 +34,7 @@ def reset_operational_state(db: Session) -> dict[str, int]:
     db.execute(delete(TelegramOutbox))
     db.execute(delete(TorrentPipeline))
     db.execute(delete(ReleaseCheckpoint))
+    db.execute(delete(OngoingWatch))
     db.commit()
 
     return {
@@ -41,6 +44,7 @@ def reset_operational_state(db: Session) -> dict[str, int]:
         "pipeline_removed": pipeline,
         "checkpoints_removed": checkpoints,
         "outbox_removed": outbox,
+        "ongoing_watches_removed": watches,
         "archive_kept": db.scalar(select(func.count()).select_from(TorrentArchive)) or 0,
     }
 

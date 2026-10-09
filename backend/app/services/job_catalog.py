@@ -37,7 +37,7 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
     JobTypeDef(
         type="ongoing",
         title="Ongoing sync",
-        description="Периодическая проверка обновлений релизов AniLiberty и постановка новых торрентов в pipeline.",
+        description="Проверка онгоингов и донаблюдение 14 дней после исчезновения из расписания; новые торренты продлевают срок.",
         interval_setting_key="ongoing_interval_sec",
         interval_default_sec=settings.ongoing_interval_sec,
     ),

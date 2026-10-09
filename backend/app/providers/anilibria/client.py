@@ -5,6 +5,10 @@ from typing import Any
 import httpx
 
 
+class AniLibriaNotFoundError(RuntimeError):
+    """Все попытки JSON-запроса на primary/fallback завершились HTTP 404."""
+
+
 class AniLibriaClient:
     def __init__(
         self,
@@ -53,6 +57,7 @@ class AniLibriaClient:
             base_urls.append(self.fallback_base_url)
 
         last_error: Exception | None = None
+        errors: list[Exception] = []
         for root in base_urls:
             for attempt in range(1, self._request_retries + 1):
                 try:
@@ -62,12 +67,19 @@ class AniLibriaClient:
                         return response.json()
                 except ValueError as exc:
                     last_error = exc
+                    errors.append(exc)
                     break
                 except httpx.HTTPError as exc:
                     last_error = exc
+                    errors.append(exc)
                     if not self._should_retry_http_error(exc) or attempt >= self._request_retries:
                         break
                     await asyncio.sleep(self._retry_delay_sec)
+        if errors and all(
+            isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
+            for exc in errors
+        ):
+            raise AniLibriaNotFoundError("AniLibria API: ресурс не найден") from last_error
         raise RuntimeError("AniLibria API недоступен на основном и fallback URL") from last_error
 
     async def _request_bytes(self, path: str, params: dict[str, Any] | None = None) -> bytes:

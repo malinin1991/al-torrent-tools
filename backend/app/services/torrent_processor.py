@@ -1026,12 +1026,16 @@ class TorrentProcessor:
         list_fresh_at: str | None = None,
         refresh_qb_meta: bool = False,
         force_qb_load: bool = False,
+        prefetched_torrents: list[dict[str, Any]] | None = None,
     ) -> dict[str, int]:
-        torrents_payload = await self._al_client.get_torrents_for_release(
-            release_id,
-            include=list(self.RELEASE_TORRENTS_INCLUDE),
-        )
-        torrents = self._iter_torrents(torrents_payload)
+        if prefetched_torrents is None:
+            torrents_payload = await self._al_client.get_torrents_for_release(
+                release_id,
+                include=list(self.RELEASE_TORRENTS_INCLUDE),
+            )
+            torrents = self._iter_torrents(torrents_payload)
+        else:
+            torrents = prefetched_torrents
         if not torrents:
             self._add_log(f"Релиз {release_id}: торренты не найдены", "debug")
             update_api_present_for_release(self._db, release_id, set())

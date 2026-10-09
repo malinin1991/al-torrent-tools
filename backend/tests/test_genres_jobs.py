@@ -1,6 +1,8 @@
 """Проверка, что genre tags проходят через ongoing и full_sync."""
 
 import asyncio
+
+import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,7 +11,8 @@ from app.jobs import ongoing as ongoing_mod
 from app.services.torrent_processor import TorrentProcessor
 
 
-def test_ongoing_passes_tags_on_new_torrent(monkeypatch) -> None:
+@pytest.mark.parametrize("prefetched", [False, True])
+def test_ongoing_passes_tags_on_new_torrent(monkeypatch, prefetched) -> None:
     """Ongoing → process_release без refresh: qb_add_torrent получает genres."""
     db = MagicMock()
     al = MagicMock()
@@ -82,7 +85,9 @@ def test_ongoing_passes_tags_on_new_torrent(monkeypatch) -> None:
     qb_add = MagicMock(return_value=(True, True, True))
     monkeypatch.setattr("app.services.torrent_processor.qb_add_torrent", qb_add)
 
-    stats = asyncio.run(processor.process_release(10, "test-show"))
+    kwargs = {"prefetched_torrents": [{"id": 1, "info_hash": "a" * 40}]} if prefetched else {}
+    stats = asyncio.run(processor.process_release(10, "test-show", **kwargs))
+    assert al.get_torrents_for_release.await_count == (0 if prefetched else 1)
 
     assert stats["added"] == 1
     assert qb_add.call_args.kwargs["tags"] == ["Комедия", "Романтика"]
@@ -161,6 +166,7 @@ def test_ongoing_job_calls_process_with_refresh(monkeypatch) -> None:
     called: dict = {}
 
     class FakeProcessor:
+        RELEASE_TORRENTS_INCLUDE = TorrentProcessor.RELEASE_TORRENTS_INCLUDE
         empty_release_stats = staticmethod(TorrentProcessor.empty_release_stats)
         merge_release_stats = classmethod(lambda cls, acc, part: TorrentProcessor.merge_release_stats(acc, part))
         format_batch_summary = staticmethod(TorrentProcessor.format_batch_summary)
@@ -186,8 +192,10 @@ def test_ongoing_job_calls_process_with_refresh(monkeypatch) -> None:
 
     db = MagicMock()
     db.scalars.return_value.all.return_value = []
+    db.get.return_value = None
     al = MagicMock()
     al.get_schedule_week = AsyncMock(return_value=[])
+    al.get_torrents_for_release = AsyncMock(return_value=[{"id": 1}])
     monkeypatch.setattr(ongoing_mod, "build_anilibria_client", lambda _db: al)
 
     asyncio.run(ongoing_mod.run_ongoing(db, job_id=1, params={}))

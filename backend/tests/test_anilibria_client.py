@@ -65,3 +65,24 @@ def test_anilibria_client_retries_on_5xx(monkeypatch) -> None:
 
     assert result == {"list": []}
     assert attempts["count"] == 3
+
+
+def test_not_found_requires_all_hosts_to_return_404(monkeypatch):
+    import pytest
+    from app.providers.anilibria.client import AniLibriaNotFoundError
+
+    original = httpx.AsyncClient
+    for primary_status, expected in [(404, AniLibriaNotFoundError), (503, RuntimeError), (401, RuntimeError)]:
+        def handler(request):
+            status = primary_status if request.url.host == "primary.test" else 404
+            return httpx.Response(status, request=request)
+
+        transport = httpx.MockTransport(handler)
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport, **kw))
+        client = AniLibriaClient(
+            base_url="https://primary.test", fallback_base_url="https://fallback.test",
+            request_retries=1, retry_delay_ms=0,
+        )
+        with pytest.raises(expected) as exc:
+            asyncio.run(client.get_release(1))
+        assert type(exc.value) is expected

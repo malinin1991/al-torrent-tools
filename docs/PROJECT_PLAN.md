@@ -40,7 +40,7 @@ Compose запускает пять сервисов: `postgres`, `api`, `worker
 
 ## Синхронизация и архив
 
-`ongoing` / `full_sync` получают данные API и передают релизы в `TorrentProcessor`. `release_checkpoints` содержит маркеры `updated_at` / `fresh_at` и fingerprint торрентов, позволяющие пропускать неизменившиеся данные.
+`ongoing` / `full_sync` получают данные API и передают релизы в `TorrentProcessor`. `release_checkpoints` содержит маркеры `updated_at` / `fresh_at` и fingerprint торрентов. `ongoing` всегда проверяет список торрентов, даже при прежних markers; они управляют только обновлением метаданных qB. `ongoing_watch` сохраняет релизы после исчезновения из расписания на 14 дней, продлевая срок при любом новом ID торрента. Кэш проверяется в каждом запуске `ongoing`; подтверждённый 404 релиза и истечение срока удаляют только запись кэша. Сбой расписания не запускает сроки исчезновения.
 
 `seen_torrents` хранит текущий обработанный hash для `torrent_id`: `torrent_id` — primary key, `info_hash` имеет отдельное ограничение уникальности. Новая версия с изменившимся hash должна обрабатываться и при прежнем `torrent_id`.
 
@@ -77,7 +77,7 @@ Webhook, polling и reconcile могут обрабатывать один pipel
 
 - настройки и источники: `settings`, `extra_urls`, `qb_clients`, `cleanup_rules`;
 - джобы: `jobs`, `job_logs`;
-- релизы и дедупликация: `releases`, `release_members`, `release_checkpoints`, `seen_torrents`;
+- релизы и дедупликация: `releases`, `release_members`, `release_checkpoints`, `ongoing_watch`, `seen_torrents`;
 - архив и pipeline: `torrent_archive`, `torrent_pipeline`, `pipeline_events`;
 - файлы: `torrent_files`, `disk_file_hashes`, `file_change_events`, `file_mediainfo`;
 - Telegram: `tracked_releases`, `telegram_outbox`, `telegram_bot_access`.
