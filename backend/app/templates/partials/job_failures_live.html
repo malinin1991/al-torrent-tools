@@ -1,0 +1,25 @@
+<div data-sync-failures-job="{{ selected_job.id }}" data-failure-after-id="{{ failure_after_id|default(0) }}">
+  {% if failure_page and failure_page.total %}
+  <p>Проблем: {{ failure_page.total }}. Показано: {{ failure_page['items']|length }}. Выбрано для повтора: <strong data-sync-selected-count>0</strong>.</p>
+  <table><thead><tr><th>Выбор</th><th>Объект</th><th>Операция</th><th>Причина</th></tr></thead><tbody>
+    {% for item in failure_page['items'] %}
+    <tr data-sse-key="sync-failure-{{ item.id }}">
+      <td>{% if item.retryable and selected_job.status not in ['pending','running','stopping'] %}<input type="checkbox" class="sync-failure-select" data-failure-id="{{ item.id }}" aria-label="Повторить ошибку {{ item.id }}">{% else %}<span class="muted">{% if selected_job.status in ['pending','running','stopping'] %}Запуск ещё выполняется{% else %}Нужен новый обход{% endif %}</span>{% endif %}</td>
+      <td>{% if item.release_id %}<a href="/releases?search={{ item.release_id }}">Релиз {{ item.release_id }}</a>{% else %}Обнаружение каталога{% endif %}{% if item.torrent_id %}<div>Торрент {{ item.torrent_id }}</div>{% endif %}{% if item.info_hash %}<code title="{{ item.info_hash }}">{{ item.info_hash[:12] }}</code>{% endif %}</td>
+      <td>{{ item.operation }}{% if item.qb_role %} · {{ item.qb_role }}{% endif %}{% if item.scope == 'release' %}<div class="muted">Повтор всего релиза</div>{% endif %}</td>
+      <td>{{ item.message }}<div class="muted">{{ item.code }} · {{ item.source }} · попыток {{ item.attempts }}</div></td>
+    </tr>
+    {% endfor %}
+  </tbody></table>
+  <div class="row" style="margin-top:10px;flex-wrap:wrap;">
+    {% if selected_job.status not in ['pending','running','stopping'] %}
+    <button type="button" class="btn" data-sync-retry-selected>Повторить выбранные</button>
+    <button type="button" class="btn btn-secondary" data-sync-retry-all>Повторить все доступные (до 100)</button>
+    {% endif %}
+    {% if failure_after_id %}<button class="btn btn-secondary" hx-get="/jobs/{{ selected_job.id }}/failures/live" hx-target="#job-failures-live" hx-swap="innerHTML">К первым ошибкам</button>{% endif %}
+    {% if failure_page.has_more %}<button class="btn btn-secondary" hx-get="/jobs/{{ selected_job.id }}/failures/live?after_id={{ failure_page.next_after_id }}" hx-target="#job-failures-live" hx-swap="innerHTML">Следующие ошибки</button>{% endif %}
+    <span class="muted" data-sync-retry-result role="status"></span>
+  </div>
+  <p class="muted">Повтор создаёт новый запуск и сохраняет исходную историю. Выбор сохраняется между страницами ошибок; максимум 100 за запуск.</p>
+  {% endif %}
+</div>

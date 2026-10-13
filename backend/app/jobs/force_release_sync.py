@@ -12,6 +12,7 @@ from app.jobs.meta_sync import _process_release_or_meta
 from app.services.release_checkpoint import normalize_api_datetime
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
+from app.services.sync_outcomes import current_outcome, sync_job
 from app.utils.release_ref import ReleaseRef, ReleaseRefParseError, parse_release_ref
 
 
@@ -98,6 +99,7 @@ async def _resolve_release_from_api(
     return release_id, api_alias, updated_at, fresh_at
 
 
+@sync_job
 async def run_force_release_sync(db: Session, job_id: int, params: dict[str, Any]) -> None:
     """Принудительный process_release по URL/alias/id — tracking не требуется."""
     raw = _raw_release_input(params or {})
@@ -134,6 +136,7 @@ async def run_force_release_sync(db: Session, job_id: int, params: dict[str, Any
         list_fresh_at=fresh_at,
         torrent_id_filter=None,
     )
+    current_outcome(db, job_id).release(release_id, part)
     _add_log(
         db,
         job_id,

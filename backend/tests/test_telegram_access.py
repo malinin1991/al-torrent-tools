@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
 
-from app.db.models import Setting, TelegramBotAccess, TelegramOutbox
+from app.db.models import Setting, TelegramBotAccess, TelegramOutbox, TorrentArchive
 from app.services.telegram_access import (
     HEVC_BOT_KEY,
     STATUS_APPROVED,
@@ -36,6 +36,7 @@ def _session() -> Session:
     Setting.__table__.create(engine)
     TelegramBotAccess.__table__.create(engine)
     TelegramOutbox.__table__.create(engine)
+    TorrentArchive.__table__.create(engine)
     return Session(engine)
 
 
@@ -353,7 +354,7 @@ def test_cancel_pending_hevc_outbox_is_scoped_to_hevc_and_chat() -> None:
 
 
 def _hevc_settings():
-    return SimpleNamespace(token="hevc-token", api_base_url="", bot_key=HEVC_BOT_KEY)
+    return SimpleNamespace(token="hevc-token", api_base_url="", bot_key=HEVC_BOT_KEY, enabled=True)
 
 
 def test_hevc_drain_skips_rejected_recipient_and_sends_approved(
@@ -435,7 +436,7 @@ def test_primary_drain_does_not_use_hevc_acl(monkeypatch: pytest.MonkeyPatch) ->
         telegram_outbox,
         "resolve_telegram_bot_settings",
         lambda db, bot_key: SimpleNamespace(
-            token="primary-token", api_base_url="", bot_key="primary"
+            token="primary-token", api_base_url="", bot_key="primary", enabled=True
         ),
     )
 
@@ -461,7 +462,7 @@ def test_hevc_user_welcome_dead_letters_forbidden_dm(
     from app.services import telegram_outbox
 
     async def fake_send(*, token, base_url, chat_id, payload):  # noqa: ANN001
-        raise RuntimeError("Forbidden: bot can't initiate conversation with a user")
+        raise telegram_outbox.TelegramDeliveryError("Forbidden: bot can't initiate conversation with a user", kind="permanent", api_code=403)
 
     monkeypatch.setattr(telegram_outbox, "send_outbox_message", fake_send)
     monkeypatch.setattr(
@@ -490,13 +491,13 @@ def test_hevc_user_welcome_dead_letters_forbidden_dm(
         assert "initiate conversation" in (welcome.last_error or "")
 
 
-def test_hevc_group_welcome_retries_forbidden_error(
+def test_hevc_group_welcome_dead_letters_forbidden_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.services import telegram_outbox
 
     async def fake_send(*, token, base_url, chat_id, payload):  # noqa: ANN001
-        raise RuntimeError("Forbidden: bot was kicked from the group chat")
+        raise telegram_outbox.TelegramDeliveryError("Forbidden: bot was kicked from the group chat", kind="permanent", api_code=403)
 
     monkeypatch.setattr(telegram_outbox, "send_outbox_message", fake_send)
     monkeypatch.setattr(
@@ -518,7 +519,7 @@ def test_hevc_group_welcome_retries_forbidden_error(
         stats = asyncio.run(telegram_outbox.drain_outbox(db, bot_key=HEVC_BOT_KEY))
         db.refresh(welcome)
         assert stats["failed"] == 1
-        assert welcome.status == "pending"
+        assert welcome.status == "failed"
         assert welcome.attempts == 1
 
 

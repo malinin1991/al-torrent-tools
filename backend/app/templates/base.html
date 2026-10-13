@@ -116,6 +116,9 @@
     .badge-muted { background: #2a2a2a; color: #9b9b9b; }
     .job-status-running, .job-status-discovered, .job-status-waiting_master, .job-status-waiting_slave, .job-status-master_added, .job-status-master_complete, .job-status-slave_added { color: #ffcc80; }
     .job-status-stopping { color: #ffcc80; opacity: 0.85; }
+    .job-status-partial, .job-status-sending { color: #ffcc80; }
+    .tg-status-failed { color: #ff8a80; }
+    .tg-status-cancelled { color: #9b9b9b; }
     .job-status-success, .job-status-done { color: #8dffb0; }
     .job-status-failed, .job-status-error { color: #ff8a80; }
     .job-status-cancelled, .job-status-pending { color: #9b9b9b; }
@@ -391,7 +394,10 @@
     .member-tag--translating { background: #1a2e4a; color: #8bb8f0; border-color: #2a4a6e; }
     .member-tag--decorating { background: #3d2420; color: #f0a090; border-color: #5c3830; }
     .member-tag--poster { background: #2a2e36; color: #c0c8d4; border-color: #3d4450; }
+    .member-tag--hevc { background: #34234a; color: #d0a5ff; border-color: #51346e; }
     .member-tag--unknown { background: #2a2a2a; color: #9b9b9b; border-color: #3a3a3a; }
+    .source-tag--site { background: #1f3d2a; color: #8dffb0; border-color: #2f5c3d; }
+    .source-tag--backoffice { background: #3d1f1f; color: #ff8a80; border-color: #5c2f2f; }
     .info-table { width: 100%; table-layout: auto; }
     .info-table th {
       width: 140px;
@@ -609,9 +615,12 @@
       <a href="/settings">Настройки</a>
       <a href="/jobs">Джобы</a>
       <a href="/releases">Релизы</a>
+      <a href="/hevc-workbench">Рабочий список HEVC</a>
       <a href="/archive">Архив</a>
       <a href="/pipeline">Пайплайн</a>
       <a href="/telegram-access">Доступ Telegram</a>
+      <a href="/telegram-outbox">Доставка Telegram</a>
+      <a href="/encoder-history">Отправки в Kensetsu</a>
       {% if video_kensetsu_ok and video_kensetsu_base_url %}
       <a href="{{ video_kensetsu_base_url }}" target="_blank" rel="noopener">Кодировщик</a>
       {% endif %}
@@ -848,6 +857,129 @@
     });
   }
 
+  const _encoderRequestKeys = new Map();
+  function encoderRequestId(signature, fresh) {
+    const storageKey = "altt.encoder.request." + signature;
+    let id = !fresh && _encoderRequestKeys.get(signature);
+    try { if (!id && !fresh) id = sessionStorage.getItem(storageKey); } catch (_) {}
+    if (!id) {
+      id = globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() :
+        "request-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      _encoderRequestKeys.set(signature, id);
+      try { sessionStorage.setItem(storageKey, id); } catch (_) {}
+    }
+    return id;
+  }
+
+  async function submitEncoderFiles(fileIds, layers, options = {}) {
+    const signature = JSON.stringify({ids:[...fileIds].sort((a,b)=>a-b), ...layers, retry_of:options.retry_of || null});
+    const body = {file_ids:fileIds, ...layers, ...options, request_id:encoderRequestId(signature, !!options.fresh)};
+    delete body.fresh;
+    delete body.noRepeatPrompt;
+    const send = () => fetch("/api/torrent-files/send-to-encoder", {
+      method:"POST", headers:{"Content-Type":"application/json", Accept:"application/json"}, body:JSON.stringify(body)
+    });
+    let resp = await send();
+    let payload = await resp.json().catch(()=>({}));
+    const previous = payload.detail && payload.detail.previous;
+    if (resp.status === 409 && Array.isArray(previous) && previous.length && !options.noRepeatPrompt) {
+      const active = previous.some(x=>x.status==="sending");
+      const unknown = previous.some(x=>x.status==="unknown");
+      const acceptedCount = previous.filter(x=>x.status==="accepted").length;
+      const unknownCount = previous.filter(x=>x.status==="unknown").length;
+      const repeatMessage = [
+        acceptedCount ? `Уже приняты Kensetsu с этими пресетами: ${acceptedCount}.` : "",
+        unknownCount ? `Приём не подтверждён: ${unknownCount}. Сначала проверьте Kensetsu: повтор может создать ещё одно задание.` : "",
+        "Отправить все выбранные файлы ещё раз?"
+      ].filter(Boolean).join("\n");
+      if (!active && confirm(repeatMessage)) {
+        body.allow_repeat = true;
+        body.acknowledge_unknown = unknown;
+        resp = await send();
+        payload = await resp.json().catch(()=>({}));
+      }
+    }
+    if (!resp.ok) {
+      const priorId = Array.isArray(previous) && previous.find(item => Number.isInteger(item.submission_id))?.submission_id;
+      const id = resp.headers.get("X-Encoder-Submission-Id") || priorId;
+      const message = formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`;
+      const error = new Error(message + (id ? ` · история отправки #${id}` : ""));
+      error.historyUrl = id ? `/encoder-history?submission_id=${encodeURIComponent(id)}` : null;
+      await refreshEncoderReceipts();
+      throw error;
+    }
+    if (!(payload.counts && (payload.counts.sending || payload.counts.unknown))) {
+      _encoderRequestKeys.delete(signature);
+      try { sessionStorage.removeItem("altt.encoder.request." + signature); } catch (_) {}
+    }
+    await refreshEncoderReceipts();
+    return payload;
+  }
+
+  function showEncoderReceipt(target, payload) {
+    const names = {accepted:"Приняты",not_sent:"Не отправлены",rejected:"Отклонены",unknown:"Приём не подтверждён",sending:"Отправляются"};
+    target.replaceChildren();
+    target.append(document.createTextNode(Object.entries(payload.counts || {}).map(([k,n])=>`${names[k]||k}: ${n}`).join("; ")));
+    if (payload.history_url) {
+      const link = document.createElement("a");
+      link.href = payload.history_url;
+      link.textContent = ` История #${payload.submission_id}`;
+      target.append(link);
+    }
+  }
+
+  let _encoderReceiptBusy = false;
+  let _encoderReceiptAgain = false;
+  async function refreshEncoderReceipts() {
+    if (_encoderReceiptBusy) { _encoderReceiptAgain = true; return; }
+    _encoderReceiptBusy = true;
+    try {
+      const slots = [...document.querySelectorAll(".file-download-slot[data-file-id]")];
+      const ids = [...new Set(slots.map(el=>Number(el.dataset.fileId)).filter(Number.isFinite))];
+      for (let offset=0; offset<ids.length; offset+=100) {
+        const chunk = ids.slice(offset,offset+100);
+        const resp = await fetch("/api/encoder-submissions/receipts", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({file_ids:chunk})});
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        slots.filter(slot=>chunk.includes(Number(slot.dataset.fileId))).forEach(slot=>{
+          let link = slot.parentElement.querySelector(`.file-encoder-history[data-file-id="${slot.dataset.fileId}"]`);
+          const receipt = (data.receipts || {})[slot.dataset.fileId];
+          if (!receipt) { if (link) link.remove(); return; }
+          if (!link) {
+            link = document.createElement("a");
+            link.className = "file-encoder-history muted";
+            link.dataset.fileId = slot.dataset.fileId;
+            link.style.marginLeft = "8px";
+            slot.after(link);
+          }
+          link.href = receipt.history_url;
+          link.textContent = "Kensetsu: " + receipt.label;
+        });
+      }
+    } catch (_) { /* The durable journal remains available if a badge refresh fails. */ }
+    finally {
+      _encoderReceiptBusy = false;
+      if (_encoderReceiptAgain) { _encoderReceiptAgain=false; setTimeout(refreshEncoderReceipts,0); }
+    }
+  }
+
+  document.addEventListener("click", async event=>{
+    const button = event.target.closest(".encoder-history-retry");
+    if (!button || button.disabled) return;
+    const result = button.closest(".encoder-submission").querySelector(".encoder-history-action-result");
+    try {
+      button.disabled=true;
+      if (button.dataset.hasUnknown==="1" && !confirm("Приём не подтверждён. Проверьте Kensetsu перед повтором. Повтор может создать ещё одно задание. Продолжить?")) return;
+      const layers = await pickEncoderPreset();
+      if (!layers) return;
+      result.textContent="Отправка…";
+      const payload = await submitEncoderFiles(JSON.parse(button.dataset.fileIds), layers, {retry_of:Number(button.dataset.submissionId),fresh:true,acknowledge_unknown:button.dataset.hasUnknown==="1"});
+      showEncoderReceipt(result,payload);
+      refreshUiSseTargets("encoder");
+    } catch(error) { result.textContent=error.message || "Ошибка отправки"; }
+    finally { button.disabled=false; }
+  });
+
   function selectedEncodeFileIds(root) {
     const scope = root || document;
     return [...scope.querySelectorAll(".file-encode-check:checked")]
@@ -890,29 +1022,8 @@
           return;
         }
         statusEl.textContent = "Отправка…";
-        const resp = await fetch("/api/torrent-files/send-to-encoder", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ file_ids: ids, ...layers }),
-        });
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok && resp.status !== 207) {
-          throw new Error(formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`);
-        }
-        const createdRaw = payload.created;
-        const created =
-          typeof createdRaw === "boolean"
-            ? Number(createdRaw)
-            : typeof createdRaw === "number"
-              ? createdRaw
-              : null;
-        const encErrors = Array.isArray(payload.errors) ? payload.errors.length : 0;
-        const localErrors = Array.isArray(payload.local_errors) ? payload.local_errors.length : 0;
-        const parts = [];
-        if (created != null) parts.push(`отправлено: ${created}`);
-        if (encErrors) parts.push(`ошибок энкодера: ${encErrors}`);
-        if (localErrors) parts.push(`локальных: ${localErrors}`);
-        statusEl.textContent = parts.join("; ") || "Готово";
+        const payload = await submitEncoderFiles(ids, layers);
+        showEncoderReceipt(statusEl, payload);
         // Снимаем только успешно принятые file_ids — local/encoder errors остаются выбранными.
         const accepted = new Set(
           (Array.isArray(payload.file_ids) ? payload.file_ids : []).map(String)
@@ -1078,18 +1189,10 @@
           return;
         }
         btn.title = "Отправка…";
-        const resp = await fetch(`/api/torrent-files/${encodeURIComponent(id)}/send-to-encoder`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify(layers),
-        });
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok && resp.status !== 207) {
-          throw new Error(formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`);
-        }
+        const payload = await submitEncoderFiles([Number(id)], layers);
         const encErrors = Array.isArray(payload.errors) ? payload.errors.length : 0;
         const isPartial =
-          resp.status === 207 || payload.partial === true || encErrors > 0 || payload.ok === false;
+          payload.partial === true || encErrors > 0 || payload.ok === false;
         if (isPartial) {
           const errHint =
             encErrors > 0
@@ -1805,6 +1908,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     formatLocalTimes();
     enqueueDownloadableChecks();
+    refreshEncoderReceipts();
     initUiSse();
   });
   document.body.addEventListener("htmx:afterSwap", (event) => {
@@ -1825,6 +1929,7 @@
       restoreUiSsePreserve(target, _uiSsePreserveByTarget.get(sel));
       _uiSsePreserveByTarget.delete(sel);
     }
+    refreshEncoderReceipts();
   });
 
   let _uiSseSource = null;
@@ -1958,6 +2063,7 @@
     const nodes = [...document.querySelectorAll("[data-ui-sse-channel]")];
     if (!nodes.length || typeof EventSource === "undefined") return;
     const channels = [...new Set(nodes.map((n) => n.getAttribute("data-ui-sse-channel")).filter(Boolean))];
+    if (document.querySelector("[data-encoder-enabled]") && !channels.includes("encoder")) channels.push("encoder");
     if (!channels.length) return;
     _uiSseChannels = channels;
     const url = `/ui/events?channels=${encodeURIComponent(channels.join(","))}`;
@@ -1968,7 +2074,10 @@
     const es = new EventSource(url);
     _uiSseSource = es;
     channels.forEach((ch) => {
-      es.addEventListener(ch, () => refreshUiSseTargets(ch));
+      es.addEventListener(ch, () => {
+        refreshUiSseTargets(ch);
+        if (ch === "encoder") refreshEncoderReceipts();
+      });
     });
     es.onerror = () => {
       /* браузер сам переподключится */
@@ -1979,7 +2088,9 @@
     if (document.visibilityState !== "visible" || !_uiSseChannels.length) return;
     // Пока вкладка была скрыта, события могли пройти мимо — один refresh при возврате.
     _uiSseChannels.forEach((ch) => refreshUiSseTargets(ch));
+    if (_uiSseChannels.includes("encoder")) refreshEncoderReceipts();
   });
   </script>
+  <script src="/static/operations.js" defer></script>
 </body>
 </html>

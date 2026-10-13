@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Доставка Telegram</h1>
+<p class="muted">Состояние отправки уведомлений для основного и HEVC-бота. Повтор выполняется процессом бота после исправления причины.</p>
+<form method="get" action="/telegram-outbox" class="row" style="margin-bottom:16px;flex-wrap:wrap;">
+  <label>Профиль <select class="input" name="bot_key">{% for value,label in [('', 'Все'),('primary','Основной'),('hevc','HEVC')] %}<option value="{{ value }}" {% if (bot_key or '') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label>Состояние <select class="input" name="status">{% for value,label in [('', 'Все'),('pending','Ожидает отправки'),('sending','Отправляется'),('failed','Требует внимания'),('sent','Отправлено'),('cancelled','Отменено')] %}<option value="{{ value }}" {% if (status or '') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <button class="btn" type="submit">Показать</button>
+</form>
+<div id="telegram-outbox-action" role="status"></div>
+<div id="telegram-outbox-live" data-ui-sse-channel="telegram-outbox" data-ui-sse-url="/telegram-outbox/live?bot_key={{ (bot_key or '')|urlencode }}&amp;status={{ (status or '')|urlencode }}&amp;page={{ page }}" data-ui-sse-target="#telegram-outbox-live">
+  {% include 'partials/telegram_outbox_live.html' %}
+</div>
+{% endblock %}

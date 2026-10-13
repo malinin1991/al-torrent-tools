@@ -1677,7 +1677,8 @@ class FileTrackerService:
         if not path.exists():
             return None
         passkey = get_setting_value(self._db, "anilibria_passkey", "")
-        return ensure_announce_passkey(path.read_bytes(), passkey)
+        from app.services.torrent_policy import prepare_archive_bytes
+        return prepare_archive_bytes(archive, path.read_bytes(), passkey)
 
     def _qb_paths_and_priorities(
         self, info_hash: str
@@ -1827,7 +1828,7 @@ def update_api_present_for_release(
     return {"true": marked_true, "false": marked_false, "total": len(rows)}
 
 
-def mark_missing_api_present_false(db: Session, seen_torrent_ids: set[int]) -> int:
+def mark_missing_api_present_false(db: Session, seen_torrent_ids: set[int], *, preserve_release_ids: set[int] | None = None) -> int:
     """full_sync: торренты, ни разу не встретившиеся в API за проход → api_present=False."""
     if not seen_torrent_ids:
         return 0
@@ -1837,6 +1838,7 @@ def mark_missing_api_present_false(db: Session, seen_torrent_ids: set[int]) -> i
             TorrentArchive.api_present.is_(True),
             TorrentArchive.superseded.is_(False),
             TorrentArchive.torrent_id.notin_(seen_torrent_ids),
+            TorrentArchive.release_id.notin_(preserve_release_ids or set()),
         )
         .values(api_present=False)
     )

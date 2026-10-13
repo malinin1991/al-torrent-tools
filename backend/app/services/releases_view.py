@@ -35,13 +35,14 @@ from app.services.hevc_pairing import (
     HevcFilter,
     classify_archive_codec,
     file_keys_by_archive_id,
+    find_unpaired_avc,
     load_file_keys_by_archive_id,
-    max_overdue_hours_by_release_id,
+    max_overdue_hours_from_unpaired,
     overdue_hours_past_sla,
+    release_ids_from_unpaired,
     unpaired_by_archive_id,
-    release_ids_matching_hevc_filter,
 )
-from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING
+from app.services.job_runner import STATUS_PENDING, STATUS_RUNNING, STATUS_STOPPING
 from app.services.release_meta import load_release_meta_by_ids
 from app.services.runtime_settings import get_setting_value
 from app.services.torrent_files_meta import (
@@ -313,6 +314,9 @@ class ReleaseGroup:
     members: list[dict[str, str]] = field(default_factory=list)
     is_blocked_by_geo: bool = False
     is_blocked_by_copyrights: bool = False
+    source: str | None = None
+    is_hidden: bool = False
+    is_abandoned: bool = False
 
 
 def format_bytes(size: int | None) -> str:
@@ -457,6 +461,9 @@ def list_release_groups(
     tracked_only: bool = False,
     hevc_filter: str | None = None,
     show_hidden: bool = False,
+    source_filter: str | None = None,
+    block_filter: str | None = None,
+    abandoned_filter: str | None = None,
     page: int = 1,
     per_page: int = 30,
 ) -> dict[str, Any]:
@@ -469,6 +476,9 @@ def list_release_groups(
     per_page = max(1, min(per_page, 100))
     search_text = (search or "").strip()
     only_tracked = bool(tracked_only)
+    source_filter = source_filter if source_filter in {"site", "backoffice", "unknown"} else ""
+    block_filter = block_filter if block_filter in {"hidden", "copyright", "geo", "none"} else ""
+    abandoned_filter = abandoned_filter if abandoned_filter in {"yes", "no"} else ""
     hevc = _normalize_hevc_filter(hevc_filter)
     # Чекбокс «Отображать скрытое» — только для HEVC-фильтров.
     include_ignored = bool(show_hidden) and bool(hevc)
@@ -478,6 +488,9 @@ def list_release_groups(
         "tracked_only": only_tracked,
         "hevc_filter": hevc,
         "show_hidden": bool(show_hidden),
+        "source_filter": source_filter,
+        "block_filter": block_filter,
+        "abandoned_filter": abandoned_filter,
         "page": page,
         "per_page": per_page,
         "total": 0,
@@ -508,26 +521,47 @@ def list_release_groups(
         tracked_ids = select(TrackedRelease.release_id).where(TrackedRelease.enabled.is_(True))
         stats_query = stats_query.where(TorrentArchive.release_id.in_(tracked_ids))
 
+    if source_filter or block_filter or abandoned_filter:
+        from app.db.models import Release
+        release_ids_query = select(Release.release_id)
+        if source_filter == "unknown":
+            known = select(Release.release_id).where(Release.source.isnot(None))
+            stats_query = stats_query.where(TorrentArchive.release_id.notin_(known))
+        elif source_filter:
+            release_ids_query = release_ids_query.where(Release.source == source_filter)
+        if block_filter:
+            flags = {"hidden": Release.is_hidden, "copyright": Release.is_blocked_by_copyrights, "geo": Release.is_blocked_by_geo}
+            if block_filter == "none":
+                for flag in flags.values():
+                    release_ids_query = release_ids_query.where(func.coalesce(flag, False).is_(False))
+            else:
+                release_ids_query = release_ids_query.where(flags[block_filter].is_(True))
+        if abandoned_filter == "yes":
+            release_ids_query = release_ids_query.where(Release.is_abandoned.is_(True))
+        elif abandoned_filter == "no":
+            abandoned = select(Release.release_id).where(Release.is_abandoned.is_(True))
+            stats_query = stats_query.where(TorrentArchive.release_id.notin_(abandoned))
+        if source_filter in {"site", "backoffice"} or block_filter or abandoned_filter == "yes":
+            stats_query = stats_query.where(TorrentArchive.release_id.in_(release_ids_query))
+
     hevc_archives: list[Any] | None = None
     overdue_hours_map: dict[int, float] = {}
     if hevc:
         hevc_archives = _active_archives_for_hevc_pairing(db)
         hevc_file_keys = load_file_keys_by_archive_id(db, hevc_archives)
-        hevc_release_ids = release_ids_matching_hevc_filter(
+        # Filter and overdue ordering must use one evaluation of the same rows,
+        # file keys and SLA clock, rather than pairing the full archive twice.
+        filter_unpaired = find_unpaired_avc(
             hevc_archives,
-            hevc_filter=hevc,
             include_ignored=include_ignored,
             file_keys_by_archive_id=hevc_file_keys,
         )
+        hevc_release_ids = release_ids_from_unpaired(filter_unpaired, hevc_filter=hevc)
         if not hevc_release_ids:
             return empty
         stats_query = stats_query.where(TorrentArchive.release_id.in_(hevc_release_ids))
         if hevc == "overdue":
-            overdue_hours_map = max_overdue_hours_by_release_id(
-                hevc_archives,
-                include_ignored=include_ignored,
-                file_keys_by_archive_id=hevc_file_keys,
-            )
+            overdue_hours_map = max_overdue_hours_from_unpaired(filter_unpaired)
 
     if hevc == "overdue":
         # Полный набор stats → сортировка по overdue hours ASC → пагинация.
@@ -574,6 +608,9 @@ def list_release_groups(
             "tracked_only": only_tracked,
             "hevc_filter": hevc,
             "show_hidden": bool(show_hidden),
+            "source_filter": source_filter,
+            "block_filter": block_filter,
+            "abandoned_filter": abandoned_filter,
             "page": page,
             "per_page": per_page,
             "total": total,
@@ -730,7 +767,7 @@ def list_release_groups(
                 category=head.category if head else None,
                 last_updated=stats.last_updated,
                 torrent_count=int(stats.torrent_count),
-                release_url=build_release_torrents_url(
+                release_url=None if meta and meta.source == "backoffice" else build_release_torrents_url(
                     head.release_alias if head else None,
                     site_url=site_url,
                 ),
@@ -739,6 +776,9 @@ def list_release_groups(
                 members=members,
                 is_blocked_by_geo=blocked_geo,
                 is_blocked_by_copyrights=blocked_copy,
+                source=meta.source if meta else None,
+                is_hidden=bool(meta and meta.is_hidden),
+                is_abandoned=bool(meta and meta.is_abandoned),
                 torrents=active,
                 archived_torrents=archived,
                 tracked=bool(tracked_row and tracked_row.enabled),
@@ -752,6 +792,9 @@ def list_release_groups(
         "tracked_only": only_tracked,
         "hevc_filter": hevc,
         "show_hidden": bool(show_hidden),
+        "source_filter": source_filter,
+        "block_filter": block_filter,
+        "abandoned_filter": abandoned_filter,
         "page": page,
         "per_page": per_page,
         "total": total,
@@ -1349,14 +1392,14 @@ def _recent_events_by_info_hash(
 _recent_events_by_torrent = _recent_events_by_info_hash
 
 def _info_hashes_with_active_hash_job(db: Session, info_hashes: list[str]) -> set[str]:
-    """info_hash с pending/running job hash_torrent (для бейджа «проверка»)."""
+    """info_hash с pending/running/stopping hash job (для проверки исходников)."""
     wanted = {(h or "").strip().lower() for h in info_hashes if h}
     if not wanted:
         return set()
     rows = db.scalars(
         select(Job).where(
             Job.type == "hash_torrent",
-            Job.status.in_((STATUS_PENDING, STATUS_RUNNING)),
+            Job.status.in_((STATUS_PENDING, STATUS_RUNNING, STATUS_STOPPING)),
         )
     ).all()
     active: set[str] = set()

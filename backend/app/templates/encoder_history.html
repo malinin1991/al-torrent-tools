@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Отправки в Kensetsu</h1>
+<p class="muted">Приём исходников кодировщиком. Состояние кодирования и появление HEVC проверяются отдельно.</p>
+<div class="card" style="margin-bottom:12px;">
+  <form method="get" action="/encoder-history" class="row">
+    <input class="input" name="search" value="{{ search }}" placeholder="Релиз, файл или ID задания" style="max-width:320px;" />
+    <select class="input" name="status" aria-label="Статус приёма">
+      <option value="">Все результаты</option>
+      <option value="attention" {% if status_filter == 'attention' %}selected{% endif %}>Требуют внимания</option>
+      {% for value, label in encoder_labels.items() %}
+      <option value="{{ value }}" {% if status_filter == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {% if release_id %}<input type="hidden" name="release_id" value="{{ release_id }}" />{% endif %}
+    <button class="btn" type="submit">Найти</button>
+    <a href="/encoder-history">Сбросить фильтры</a>
+  </form>
+</div>
+<div id="encoder-history-live" data-ui-sse-channel="encoder"
+  data-ui-sse-url="/encoder-history/live?page={{ page }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}{% if submission_id %}&amp;submission_id={{ submission_id }}{% endif %}"
+  data-ui-sse-target="#encoder-history-live">
+  {% include "partials/encoder_history_live.html" %}
+</div>
+{% endblock %}

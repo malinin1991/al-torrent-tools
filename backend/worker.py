@@ -222,6 +222,10 @@ async def main() -> None:
     )
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
+        _run_by_type, "interval", seconds=max(60, _setting_int("backoffice_interval_sec", settings.backoffice_interval_sec)),
+        args=["backoffice_sync"], id="backoffice_sync", max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
         _run_by_type,
         "interval",
         seconds=ongoing_interval,
@@ -346,6 +350,7 @@ async def main() -> None:
             if stop.is_set():
                 break
             # Перечитываем интервалы из settings и при необходимости reschedule.
+            _reschedule_if_needed(scheduler, "backoffice_sync", max(60, _setting_int("backoffice_interval_sec", settings.backoffice_interval_sec)))
             _reschedule_if_needed(
                 scheduler, "ongoing", _setting_int("ongoing_interval_sec", settings.ongoing_interval_sec)
             )

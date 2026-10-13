@@ -439,7 +439,7 @@ def test_hash_torrent_hard_fail_writes_hash_fail(monkeypatch: pytest.MonkeyPatch
     assert events[1].details_json.get("reason") == "нет .torrent в архиве"
 
 
-def test_tg_queued_and_sent_events() -> None:
+def test_tg_queued_and_unclaimed_message_cannot_acknowledge_delivery() -> None:
     from app.db.models import Setting, TrackedRelease
     from app.services.telegram_notify import enqueue_pipeline_telegram_notification
 
@@ -468,6 +468,9 @@ def test_tg_queued_and_sent_events() -> None:
 
     db = MagicMock()
     db.get.side_effect = _get
+    db.scalar.return_value = None
+    db.get_bind.return_value.dialect.name = "postgresql"
+    db.execute.return_value.scalar_one_or_none.return_value = 1
     pipeline = _pipeline(status="done", pipeline_id=7)
     enqueue_pipeline_telegram_notification(db, pipeline)
     queued = _added_of_type(db, PipelineEvent)
@@ -487,14 +490,10 @@ def test_tg_queued_and_sent_events() -> None:
     pipe = _pipeline(status="done", pipeline_id=7)
     pipe.tg_status = "queued"
     db2.get.return_value = pipe
-    mark_outbox_sent(db2, outbox)
-    assert outbox.status == OUTBOX_SENT
-    assert pipe.tg_status == TG_STATUS_SENT
-    sent = _added_of_type(db2, PipelineEvent)
-    assert len(sent) == 1
-    assert sent[0].event_type == "tg_sent"
-    assert sent[0].details_json.get("actor") == "job"
-    assert sent[0].details_json.get("outbox_id") == 3
+    assert mark_outbox_sent(db2, outbox) is False
+    assert outbox.status == "pending"
+    assert pipe.tg_status == "queued"
+    assert _added_of_type(db2, PipelineEvent) == []
 
 
 def test_pipeline_detail_page_timeline_and_job_links(monkeypatch: pytest.MonkeyPatch) -> None:

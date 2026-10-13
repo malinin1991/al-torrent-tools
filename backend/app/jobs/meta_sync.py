@@ -14,6 +14,7 @@ from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.release_checkpoint import normalize_api_datetime
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
+from app.services.sync_outcomes import CatalogScan, current_outcome, sync_job
 
 
 def _setting_int(db: Session, key: str, default: int) -> int:
@@ -32,14 +33,8 @@ def _add_log(db: Session, job_id: int, message: str, level: str = "info") -> Non
 
 
 def _extract_list(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        for key in ("list", "items", "data", "results"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
-    return []
+    from app.jobs.ongoing import _validated_items
+    return _validated_items(payload)
 
 
 def _extract_total_pages(payload: Any) -> int:
@@ -183,6 +178,7 @@ async def _process_release_or_meta(
     )
 
 
+@sync_job
 async def run_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -> None:
     """Scoped meta refresh: обязателен release_id и/или torrent_id."""
     release_id, torrent_id = _resolve_scope(db, params or {})
@@ -213,6 +209,7 @@ async def run_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
         release_alias=alias,
         torrent_id_filter=torrent_id,
     )
+    current_outcome(db, job_id).release(release_id, part)
     _add_log(
         db,
         job_id,
@@ -220,6 +217,7 @@ async def run_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     )
 
 
+@sync_job
 async def run_full_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -> None:
     """Каталог API: только meta-helper (+ handoff unseen через process_release). Без backfill."""
     _ = params
@@ -236,6 +234,7 @@ async def run_full_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -
         f"пауза каждые {pause_every} релизов по {pause_sec} сек",
     )
 
+    scan = CatalogScan(current_outcome(db, job_id))
     page = 1
     total_pages = 1
     total_releases: int | None = None
@@ -253,7 +252,7 @@ async def run_full_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -
             limit=catalog_limit,
             include=["id", "alias", "names", "season", "updated_at", "fresh_at"],
         )
-        total_pages = _extract_total_pages(payload)
+        releases, total_pages = scan.accept(payload, page)
         if total_releases is None:
             total_releases = _extract_total_releases(payload)
             if total_releases is not None:
@@ -263,7 +262,6 @@ async def run_full_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -
                     f"full_meta_sync: всего релизов в каталоге={total_releases}, "
                     f"страниц={total_pages}",
                 )
-        releases = _extract_list(payload)
         _add_log(
             db,
             job_id,
@@ -288,15 +286,24 @@ async def run_full_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -
                 f"(#{processed_releases})",
                 level="debug",
             )
-            part = await processor.process_release(
-                release_id=release_id,
-                release_alias=release_alias,
-                list_updated_at=updated_at,
-                list_fresh_at=fresh_at,
-                refresh_qb_meta=True,
-            )
-            TorrentProcessor.merge_release_stats(batch_stats, part)
-            TorrentProcessor.merge_release_stats(total_stats, part)
+            try:
+                part = await processor.process_release(
+                    release_id=release_id,
+                    release_alias=release_alias,
+                    list_updated_at=updated_at,
+                    list_fresh_at=fresh_at,
+                    refresh_qb_meta=True,
+                )
+                TorrentProcessor.merge_release_stats(batch_stats, part)
+                TorrentProcessor.merge_release_stats(total_stats, part)
+
+                current_outcome(db, job_id).release(release_id, part)
+            except JobStopRequested:
+                raise
+            except Exception as exc:
+                db.rollback()
+                current_outcome(db, job_id).failure(release_id=release_id, source="site", message=exc)
+                _add_log(db, job_id, f"Релиз {release_id}: {type(exc).__name__}; подробности в результате", "warning")
 
             if pause_every > 0 and pause_sec > 0 and processed_releases % pause_every == 0:
                 batch_stats = _flush_batch_summary(
@@ -326,6 +333,10 @@ async def run_full_meta_sync(db: Session, job_id: int, params: dict[str, Any]) -
             releases=batch_releases,
         )
 
+    from app.providers.anilibria.sources import ReleaseSourceClient
+    if isinstance(al_client, ReleaseSourceClient):
+        from app.jobs.backoffice_sync import run_backoffice_sync
+        await run_backoffice_sync(db, job_id, {})
     _add_log(
         db,
         job_id,

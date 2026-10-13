@@ -39,7 +39,7 @@ def test_full_sync_job_passes_force_qb_load(monkeypatch) -> None:
     monkeypatch.setattr(full_sync_mod, "normalize_api_datetime", lambda v: v)
 
     al = MagicMock()
-    al.catalog_releases = AsyncMock(return_value={"list": [{"id": 7, "alias": "y"}]})
+    al.catalog_releases = AsyncMock(return_value={"data": [{"id": 7, "alias": "y"}], "meta": {"pagination": {"total": 1, "total_pages": 1}}})
     monkeypatch.setattr(full_sync_mod, "build_anilibria_client", lambda _db: al)
 
     asyncio.run(full_sync_mod.run_full_sync(MagicMock(), job_id=1, params={"force_qb_load": True}))

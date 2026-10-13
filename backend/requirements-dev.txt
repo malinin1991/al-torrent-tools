@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest
+# Used by the local Compose API's --reload; absent from the production image.
+watchfiles

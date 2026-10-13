@@ -24,6 +24,39 @@ from app.services.video_kensetsu import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _persistent_encoder_db(monkeypatch, request):
+    """Endpoint transport tests keep their mocked file lookup but use real receipts."""
+    if not request.node.name.startswith("test_send_to_encoder"):
+        yield
+        return
+    from sqlalchemy import create_engine
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.ext.compiler import compiles
+    from sqlalchemy.orm import Session
+    from app.db.base import Base
+
+    @compiles(JSONB, "sqlite")
+    def _jsonb_sqlite(*args, **kwargs):
+        return "JSON"
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    sessions = []
+    original = MagicMock
+
+    def mock_with_receipts(*args, **kwargs):
+        session = Session(engine)
+        sessions.append(session)
+        return original(wraps=session)
+
+    monkeypatch.setattr(__import__(__name__, fromlist=["MagicMock"]), "MagicMock", mock_with_receipts)
+    yield
+    for session in sessions:
+        session.close()
+    engine.dispose()
+
+
 SAMPLE_VIDEO = {
     "id": "hevc_rip",
     "name": "HEVC rip",

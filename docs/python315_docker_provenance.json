@@ -1,0 +1,624 @@
+{
+  "base_images": {
+    "baseline": "FROM docker.io/library/python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6",
+    "stock_candidate": "FROM docker.io/library/python:3.15-slim@sha256:ea4f1f290e071bf7d28199cfb3e09f5dbad31b50e9c32fd58f2f2d7be915f3ae"
+  },
+  "build_inputs": {
+    "runtime-eval/Dockerfile.altt314": {
+      "sha256": "873af94cb03ca762601a04b9137c3312ba03552e6ec0e96ff698bbf66ef6f157",
+      "size_bytes": 3113
+    },
+    "runtime-eval/Dockerfile.altt315-native": {
+      "sha256": "f58981a2fc20c58109a6ee7f0868950776b3315f97d0ea39ee6baf7568278f52",
+      "size_bytes": 3566
+    },
+    "runtime-eval/Dockerfile.altt315-stock": {
+      "sha256": "4597e230eca18768b71b531f81625a7a1c761bc09143b020fc1b14a904733cd6",
+      "size_bytes": 3113
+    },
+    "runtime-eval/Dockerfile.dual": {
+      "sha256": "f14a10d85903cce0c4ea4232fdcf4ad8fde3781303409959e8ede15d5735e9ec",
+      "size_bytes": 554
+    },
+    "runtime-eval/Dockerfile.python315-native": {
+      "sha256": "524a731c6df37f51ab41ee45c58737e8e716e74c6858ef9cabbfc89ab4b9b3b9",
+      "size_bytes": 4401
+    },
+    "runtime-eval/Dockerfile.python315-upstream": {
+      "sha256": "3bebda5eec0e52f74fa060de1a13e9f662f27388b4907f20227422f4734560ad",
+      "size_bytes": 4366
+    },
+    "runtime-eval/README.md": {
+      "sha256": "600bfde95fd0b09bc581481a1c3577d5546fbf195034c3478dffb864aa33e228",
+      "size_bytes": 6756
+    },
+    "runtime-eval/check_migration.py": {
+      "sha256": "6db7da82fa873288c1027a5e594f5a4be5e4c8b9bee3ca316bddfcd025561fa3",
+      "size_bytes": 3289
+    },
+    "runtime-eval/constraints-shared.txt": {
+      "sha256": "0e12313f064d5bfc06ab9f3f2cc347e1c522f965278be188d31542ff98d306c8",
+      "size_bytes": 835
+    },
+    "runtime-eval/run314.sh": {
+      "sha256": "9cc645285fa74a14775fe02c3767003462fd9624f070d98a89fb5a9918393b11",
+      "size_bytes": 85
+    },
+    "runtime-eval/runtime_provenance.py": {
+      "sha256": "7dac80b95134e7785f25b24a560984a586a90d4e624677b0dc059cc2e745e2db",
+      "size_bytes": 2095
+    }
+  },
+  "cleanup": {
+    "disposable_network_removed": true,
+    "disposable_postgresql_container_removed": true,
+    "disposable_postgresql_volume_removed": true,
+    "evaluation_images_retained": true,
+    "existing_stack_untouched": true,
+    "redaction_revalidation_disposable_resources_removed": true
+  },
+  "date": "2026-10-13",
+  "final_redaction_revalidation": {
+    "app_changed_files": [
+      "app/services/encoder_history.py"
+    ],
+    "benchmark_app_manifest_sha256": "e443f1ad9d45a4920deed466228450a094a3596e4d0cbc2cde8e506b88086ef3",
+    "benchmark_snapshot": "/private/tmp/altt-python-runtime-eval/final-backend",
+    "benchmark_snapshot_sha256": "0a0da27625435a1840ce6607684ca26f592f8f1b6c92fcad7189059f3ca7d869",
+    "changed_files": {
+      "app/services/encoder_history.py": {
+        "after_sha256": "e55cb3ee1c9d2d80a0ba1dfa671fd0bed9580940a9bd99801f292ca874eebde2",
+        "before_sha256": "590dc9df54f344db273c366c3897a7a0d72d640384b9d8dfd19f294f77f8ecc4"
+      },
+      "tests/test_encoder_history.py": {
+        "after_sha256": "b6bbe462b836656054139301192a12a3c689bd4b5b17feba035cb16d1d7abf23",
+        "before_sha256": "6d7a8d42579ceefc575209fc0768f52071941a6a41333b32338dfb4a72283328"
+      }
+    },
+    "difference_scope": "Only safe_json api_key/X-Api-Key redaction regex and two assertions in existing redaction test; benchmark snapshot preserved",
+    "final_docker314": "949 passed,0 skipped",
+    "final_docker315_fixed": "949 passed,0 skipped",
+    "final_host314": "946 passed,3 skipped",
+    "final_host315": "946 passed,3 skipped",
+    "hash_method": "SHA256 over sorted relative paths + NUL + file bytes + NUL; excludes hidden/cache/bytecode files",
+    "test_app_manifest_sha256": "401a3366d447adee68e5d0c6c0a8ecf55e64eb772cb3ccfc82a48aeb6d5462ed",
+    "test_snapshot": "/private/tmp/altt-python-runtime-eval/final-redaction-backend",
+    "test_snapshot_sha256": "e41d4b3b65c0347424998595a8d0f4988af02f9bd90d1748444f1d822215189e"
+  },
+  "images": [
+    {
+      "Architecture": "arm64",
+      "Created": "2026-10-13T07:58:23.897182929Z",
+      "Id": "sha256:cf9d5e1ede8fd4236bc82b7f0462f2454bd49df4ed894e9faf7068ac74743ee5",
+      "Os": "linux",
+      "RepoDigests": [
+        "altt-python-eval@sha256:cf9d5e1ede8fd4236bc82b7f0462f2454bd49df4ed894e9faf7068ac74743ee5"
+      ],
+      "RepoTags": [
+        "altt-python-eval:314-20261013"
+      ],
+      "Size": 98919631
+    },
+    {
+      "Architecture": "arm64",
+      "Created": "2026-10-13T07:59:58.312493125Z",
+      "Id": "sha256:0e389f5fb2b4fba9bb603c78331054976231c340eec2ad617cf3fa81f8691bee",
+      "Os": "linux",
+      "RepoDigests": [
+        "altt-python-eval@sha256:0e389f5fb2b4fba9bb603c78331054976231c340eec2ad617cf3fa81f8691bee"
+      ],
+      "RepoTags": [
+        "altt-python-eval:315-20261013"
+      ],
+      "Size": 100725173
+    },
+    {
+      "Architecture": "arm64",
+      "Created": "2026-10-13T08:14:45.995581383Z",
+      "Id": "sha256:cdd4b6c42aa7d8b55d22d2fe110c8c8360831b25c7ca0a4a4baac591905222ef",
+      "Os": "linux",
+      "RepoDigests": [
+        "altt-python-eval@sha256:cdd4b6c42aa7d8b55d22d2fe110c8c8360831b25c7ca0a4a4baac591905222ef"
+      ],
+      "RepoTags": [
+        "altt-python-eval:315-nativebase-20261013"
+      ],
+      "Size": 80282752
+    },
+    {
+      "Architecture": "arm64",
+      "Created": "2026-10-13T08:16:14.141992716Z",
+      "Id": "sha256:13afb7ceccf2d072039b1163ccf5031f9c117327800cdf7adaf7635ddc2769e4",
+      "Os": "linux",
+      "RepoDigests": [
+        "altt-python-eval@sha256:13afb7ceccf2d072039b1163ccf5031f9c117327800cdf7adaf7635ddc2769e4"
+      ],
+      "RepoTags": [
+        "altt-python-eval:315-native-20261013"
+      ],
+      "Size": 137233990
+    },
+    {
+      "Architecture": "arm64",
+      "Created": "2026-10-13T08:16:57.8175495Z",
+      "Id": "sha256:e26ecddc297fef70cdb782a84f775ee7060abe81da361aff8384a55040ea7643",
+      "Os": "linux",
+      "RepoDigests": [
+        "altt-python-eval@sha256:e26ecddc297fef70cdb782a84f775ee7060abe81da361aff8384a55040ea7643"
+      ],
+      "RepoTags": [
+        "altt-python-eval:dual-native-20261013"
+      ],
+      "Size": 190551807
+    }
+  ],
+  "native_fixed_candidate": {
+    "app_fix": "Compile PyYAML with LibYAML0.2.5, assert native accelerators, remove compiler, retain strict systemMediaInfo>=26",
+    "base_fix": "Explicit --without-system-libmpdec; verified official source tarball; PGO+LTO original build flags, 4 build threads",
+    "production_migration_approved": false,
+    "upstream_dockerfile": "https://raw.githubusercontent.com/docker-library/python/master/3.15/slim-trixie/Dockerfile"
+  },
+  "not_validated": [
+    "Linux amd64 on Unraid hardware",
+    "real AniLiberty/Nova/qBittorrent/Telegram/Kensetsu services"
+  ],
+  "production_decision": {
+    "benchmark_report": "runtime_benchmark_docker_3147_3150_linux_arm64.json",
+    "migrate": false,
+    "reason": "Native Linux arm64 32-pair performance gate is inconclusive; user-required non-regression is not established",
+    "reproducibility_artifacts": "runtime-eval/",
+    "retained_runtime": "python:3.14-slim"
+  },
+  "runtimes": {
+    "dual314": {
+      "config_args": "'--build=aarch64-linux-gnu' '--enable-loadable-sqlite-extensions' '--enable-optimizations' '--enable-option-checking=fatal' '--enable-shared' '--with-lto' '--with-ensurepip' 'build_alias=aarch64-linux-gnu'",
+      "distributions": {
+        "APScheduler": "3.11.3",
+        "Jinja2": "3.1.6",
+        "Mako": "1.4.3",
+        "MarkupSafe": "3.0.4",
+        "PyYAML": "6.0.3",
+        "Pygments": "2.21.0",
+        "SQLAlchemy": "2.1.4",
+        "alembic": "1.20.0",
+        "annotated-doc": "0.0.5",
+        "annotated-types": "0.8.0",
+        "anyio": "4.15.1",
+        "blake3": "1.0.11",
+        "certifi": "2026.7.22",
+        "charset-normalizer": "3.5.2",
+        "click": "8.5.0",
+        "fastapi": "0.143.0",
+        "h11": "0.16.0",
+        "httpcore": "1.0.9",
+        "httptools": "0.9.0",
+        "httpx": "0.28.1",
+        "idna": "3.20",
+        "iniconfig": "2.3.1",
+        "opentelemetry-api": "1.45.1",
+        "packaging": "26.3",
+        "pip": "26.2.1",
+        "pluggy": "1.6.0",
+        "psycopg": "3.3.6",
+        "psycopg-binary": "3.3.6",
+        "pydantic": "2.14.1",
+        "pydantic-settings": "2.15.0",
+        "pydantic_core": "2.50.1",
+        "pymediainfo": "7.0.1",
+        "pytest": "9.1.1",
+        "python-dotenv": "1.2.4",
+        "python-multipart": "0.0.32",
+        "python-telegram-bot": "22.8",
+        "qbittorrent-api": "2026.10.0",
+        "requests": "2.34.2",
+        "starlette": "1.7.0",
+        "typing-inspection": "0.4.4",
+        "typing_extensions": "4.16.0",
+        "tzlocal": "5.4.4",
+        "urllib3": "2.8.0",
+        "uvicorn": "0.54.0",
+        "uvloop": "0.23.0",
+        "watchfiles": "1.3.0",
+        "websockets": "17.2"
+      },
+      "executable": "/opt/python314/bin/python3.14",
+      "gil_disabled_build": 0,
+      "gil_enabled": true,
+      "jit_available": false,
+      "jit_enabled": false,
+      "libpq": 180006,
+      "machine": "aarch64",
+      "mediainfo": {
+        "available": true,
+        "meets_production_minimum_26": true,
+        "path": "libmediainfo.so.0",
+        "version": "26.10"
+      },
+      "openssl": "OpenSSL 3.5.7 9 Jun 2026",
+      "platform": "Linux-6.12.76-linuxkit-aarch64-with-glibc2.41",
+      "pyyaml_libyaml": true,
+      "stdlib": {
+        "_bz2": {
+          "available": true,
+          "version": null
+        },
+        "_ctypes": {
+          "available": true,
+          "version": null
+        },
+        "_decimal": {
+          "available": true,
+          "version": "2.5.1"
+        },
+        "_gdbm": {
+          "available": true,
+          "version": null
+        },
+        "_lzma": {
+          "available": true,
+          "version": null
+        },
+        "_sqlite3": {
+          "available": true,
+          "version": null
+        },
+        "_ssl": {
+          "available": true,
+          "version": null
+        },
+        "_tkinter": {
+          "available": false,
+          "error": "libtk8.6.so: cannot open shared object file: No such file or directory"
+        },
+        "_zstd": {
+          "available": true,
+          "version": null
+        }
+      },
+      "utf8_mode": 1,
+      "version": "3.14.7 (main, Aug 31 2026, 23:42:40) [GCC 14.2.0]"
+    },
+    "dual315_fixed": {
+      "config_args": "'--build=aarch64-linux-gnu' '--enable-loadable-sqlite-extensions' '--enable-optimizations' '--enable-option-checking=fatal' '--enable-shared' '--with-lto' '--without-system-libmpdec' '--with-ensurepip' 'build_alias=aarch64-linux-gnu'",
+      "distributions": {
+        "APScheduler": "3.11.3",
+        "Jinja2": "3.1.6",
+        "Mako": "1.4.3",
+        "MarkupSafe": "3.0.4",
+        "PyYAML": "6.0.3",
+        "Pygments": "2.21.0",
+        "SQLAlchemy": "2.1.4",
+        "alembic": "1.20.0",
+        "annotated-doc": "0.0.5",
+        "annotated-types": "0.8.0",
+        "anyio": "4.15.1",
+        "blake3": "1.0.11",
+        "certifi": "2026.7.22",
+        "charset-normalizer": "3.5.2",
+        "click": "8.5.0",
+        "fastapi": "0.143.0",
+        "h11": "0.16.0",
+        "httpcore": "1.0.9",
+        "httptools": "0.9.0",
+        "httpx": "0.28.1",
+        "idna": "3.20",
+        "iniconfig": "2.3.1",
+        "opentelemetry-api": "1.45.1",
+        "packaging": "26.3",
+        "pip": "26.2.1",
+        "pluggy": "1.6.0",
+        "psycopg": "3.3.6",
+        "psycopg-binary": "3.3.6",
+        "pydantic": "2.14.1",
+        "pydantic-settings": "2.15.0",
+        "pydantic_core": "2.50.1",
+        "pymediainfo": "7.0.1",
+        "pytest": "9.1.1",
+        "python-dotenv": "1.2.4",
+        "python-multipart": "0.0.32",
+        "python-telegram-bot": "22.8",
+        "qbittorrent-api": "2026.10.0",
+        "requests": "2.34.2",
+        "starlette": "1.7.0",
+        "typing-inspection": "0.4.4",
+        "typing_extensions": "4.16.0",
+        "tzlocal": "5.4.4",
+        "urllib3": "2.8.0",
+        "uvicorn": "0.54.0",
+        "uvloop": "0.23.0",
+        "watchfiles": "1.3.0",
+        "websockets": "17.2"
+      },
+      "executable": "/usr/local/bin/python",
+      "gil_disabled_build": 0,
+      "gil_enabled": true,
+      "jit_available": false,
+      "jit_enabled": false,
+      "libpq": 180006,
+      "machine": "aarch64",
+      "mediainfo": {
+        "available": true,
+        "meets_production_minimum_26": true,
+        "path": "libmediainfo.so.0",
+        "version": "26.10"
+      },
+      "openssl": "OpenSSL 3.5.7 9 Jun 2026",
+      "platform": "Linux-6.12.76-linuxkit-aarch64-with-glibc2.41",
+      "pyyaml_libyaml": true,
+      "stdlib": {
+        "_bz2": {
+          "available": true,
+          "version": null
+        },
+        "_ctypes": {
+          "available": true,
+          "version": null
+        },
+        "_decimal": {
+          "available": true,
+          "version": "2.5.1"
+        },
+        "_gdbm": {
+          "available": true,
+          "version": null
+        },
+        "_lzma": {
+          "available": true,
+          "version": null
+        },
+        "_sqlite3": {
+          "available": true,
+          "version": null
+        },
+        "_ssl": {
+          "available": true,
+          "version": null
+        },
+        "_tkinter": {
+          "available": false,
+          "error": "libtk8.6.so: cannot open shared object file: No such file or directory"
+        },
+        "_zstd": {
+          "available": true,
+          "version": null
+        }
+      },
+      "utf8_mode": 1,
+      "version": "3.15.0 (main, Oct 13 2026, 08:13:54) [GCC 14.2.0]"
+    },
+    "stock314": {
+      "config_args": "'--build=aarch64-linux-gnu' '--enable-loadable-sqlite-extensions' '--enable-optimizations' '--enable-option-checking=fatal' '--enable-shared' '--with-lto' '--with-ensurepip' 'build_alias=aarch64-linux-gnu'",
+      "distributions": {
+        "APScheduler": "3.11.3",
+        "Jinja2": "3.1.6",
+        "Mako": "1.4.3",
+        "MarkupSafe": "3.0.4",
+        "PyYAML": "6.0.3",
+        "Pygments": "2.21.0",
+        "SQLAlchemy": "2.1.4",
+        "alembic": "1.20.0",
+        "annotated-doc": "0.0.5",
+        "annotated-types": "0.8.0",
+        "anyio": "4.15.1",
+        "blake3": "1.0.11",
+        "certifi": "2026.7.22",
+        "charset-normalizer": "3.5.2",
+        "click": "8.5.0",
+        "fastapi": "0.143.0",
+        "h11": "0.16.0",
+        "httpcore": "1.0.9",
+        "httptools": "0.9.0",
+        "httpx": "0.28.1",
+        "idna": "3.20",
+        "iniconfig": "2.3.1",
+        "opentelemetry-api": "1.45.1",
+        "packaging": "26.3",
+        "pip": "26.2.1",
+        "pluggy": "1.6.0",
+        "psycopg": "3.3.6",
+        "psycopg-binary": "3.3.6",
+        "pydantic": "2.14.1",
+        "pydantic-settings": "2.15.0",
+        "pydantic_core": "2.50.1",
+        "pymediainfo": "7.0.1",
+        "pytest": "9.1.1",
+        "python-dotenv": "1.2.4",
+        "python-multipart": "0.0.32",
+        "python-telegram-bot": "22.8",
+        "qbittorrent-api": "2026.10.0",
+        "requests": "2.34.2",
+        "starlette": "1.7.0",
+        "typing-inspection": "0.4.4",
+        "typing_extensions": "4.16.0",
+        "tzlocal": "5.4.4",
+        "urllib3": "2.8.0",
+        "uvicorn": "0.54.0",
+        "uvloop": "0.23.0",
+        "watchfiles": "1.3.0",
+        "websockets": "17.2"
+      },
+      "executable": "/usr/local/bin/python",
+      "gil_disabled_build": 0,
+      "gil_enabled": true,
+      "jit_available": false,
+      "jit_enabled": false,
+      "libpq": 180006,
+      "machine": "aarch64",
+      "mediainfo": {
+        "available": true,
+        "meets_production_minimum_26": true,
+        "path": "libmediainfo.so.0",
+        "version": "26.10"
+      },
+      "openssl": "OpenSSL 3.5.7 9 Jun 2026",
+      "platform": "Linux-6.12.76-linuxkit-aarch64-with-glibc2.41",
+      "pyyaml_libyaml": true,
+      "stdlib": {
+        "_bz2": {
+          "available": true,
+          "version": null
+        },
+        "_ctypes": {
+          "available": true,
+          "version": null
+        },
+        "_decimal": {
+          "available": true,
+          "version": "2.5.1"
+        },
+        "_gdbm": {
+          "available": true,
+          "version": null
+        },
+        "_lzma": {
+          "available": true,
+          "version": null
+        },
+        "_sqlite3": {
+          "available": true,
+          "version": null
+        },
+        "_ssl": {
+          "available": true,
+          "version": null
+        },
+        "_tkinter": {
+          "available": false,
+          "error": "libtk8.6.so: cannot open shared object file: No such file or directory"
+        },
+        "_zstd": {
+          "available": true,
+          "version": null
+        }
+      },
+      "utf8_mode": 1,
+      "version": "3.14.7 (main, Aug 31 2026, 23:42:40) [GCC 14.2.0]"
+    },
+    "stock315": {
+      "config_args": "'--build=aarch64-linux-gnu' '--enable-loadable-sqlite-extensions' '--enable-optimizations' '--enable-option-checking=fatal' '--enable-shared' '--with-lto' '--with-ensurepip' 'build_alias=aarch64-linux-gnu'",
+      "distributions": {
+        "APScheduler": "3.11.3",
+        "Jinja2": "3.1.6",
+        "Mako": "1.4.3",
+        "MarkupSafe": "3.0.4",
+        "PyYAML": "6.0.3",
+        "Pygments": "2.21.0",
+        "SQLAlchemy": "2.1.4",
+        "alembic": "1.20.0",
+        "annotated-doc": "0.0.5",
+        "annotated-types": "0.8.0",
+        "anyio": "4.15.1",
+        "blake3": "1.0.11",
+        "certifi": "2026.7.22",
+        "charset-normalizer": "3.5.2",
+        "click": "8.5.0",
+        "fastapi": "0.143.0",
+        "h11": "0.16.0",
+        "httpcore": "1.0.9",
+        "httptools": "0.9.0",
+        "httpx": "0.28.1",
+        "idna": "3.20",
+        "iniconfig": "2.3.1",
+        "opentelemetry-api": "1.45.1",
+        "packaging": "26.3",
+        "pip": "26.2.1",
+        "pluggy": "1.6.0",
+        "psycopg": "3.3.6",
+        "psycopg-binary": "3.3.6",
+        "pydantic": "2.14.1",
+        "pydantic-settings": "2.15.0",
+        "pydantic_core": "2.50.1",
+        "pymediainfo": "7.0.1",
+        "pytest": "9.1.1",
+        "python-dotenv": "1.2.4",
+        "python-multipart": "0.0.32",
+        "python-telegram-bot": "22.8",
+        "qbittorrent-api": "2026.10.0",
+        "requests": "2.34.2",
+        "starlette": "1.7.0",
+        "typing-inspection": "0.4.4",
+        "typing_extensions": "4.16.0",
+        "tzlocal": "5.4.4",
+        "urllib3": "2.8.0",
+        "uvicorn": "0.54.0",
+        "uvloop": "0.23.0",
+        "watchfiles": "1.3.0",
+        "websockets": "17.2"
+      },
+      "executable": "/usr/local/bin/python",
+      "gil_disabled_build": 0,
+      "gil_enabled": true,
+      "jit_available": false,
+      "jit_enabled": false,
+      "libpq": 180006,
+      "machine": "aarch64",
+      "mediainfo": {
+        "available": true,
+        "meets_production_minimum_26": true,
+        "path": "libmediainfo.so.0",
+        "version": "26.10"
+      },
+      "openssl": "OpenSSL 3.5.7 9 Jun 2026",
+      "platform": "Linux-6.12.76-linuxkit-aarch64-with-glibc2.41",
+      "pyyaml_libyaml": false,
+      "stdlib": {
+        "_bz2": {
+          "available": true,
+          "version": null
+        },
+        "_ctypes": {
+          "available": true,
+          "version": null
+        },
+        "_decimal": {
+          "available": false,
+          "error": "No module named '_decimal'"
+        },
+        "_gdbm": {
+          "available": true,
+          "version": null
+        },
+        "_lzma": {
+          "available": true,
+          "version": null
+        },
+        "_sqlite3": {
+          "available": true,
+          "version": null
+        },
+        "_ssl": {
+          "available": true,
+          "version": null
+        },
+        "_tkinter": {
+          "available": false,
+          "error": "libtk8.6.so: cannot open shared object file: No such file or directory"
+        },
+        "_zstd": {
+          "available": true,
+          "version": null
+        }
+      },
+      "utf8_mode": 1,
+      "version": "3.15.0 (main, Oct 12 2026, 22:32:55) [GCC 14.2.0]"
+    }
+  },
+  "scope": "Disposable native Linux arm64 validation; production files and running stack unchanged",
+  "stock_native_regressions": [
+    "Python3.15-slim missing native _decimal",
+    "PyYAML6.0.3 source fallback without LibYAML"
+  ],
+  "tests": {
+    "baseline_docker314": "906 passed,0 skipped",
+    "baseline_docker315_stock": "906 passed,0 skipped",
+    "baseline_host314": "905 passed,1 skipped",
+    "baseline_host315": "905 passed,1 skipped",
+    "final_compileall_both": "passed",
+    "final_docker314": "949 passed,0 skipped",
+    "final_docker315_fixed": "949 passed,0 skipped",
+    "final_host314": "946 passed,3 skipped",
+    "final_host315": "946 passed,3 skipped",
+    "final_postgresql_races": "both same-key and overlapping-source different-key claims passed on PostgreSQL16 for both Docker runtimes",
+    "migration": "0024_backoffice_source ->0025_encoder_history through existing entrypoint/advisorylock; exact snapshot preservation of release/archive/file/pipeline/audit/setting entities in separate disposable databases"
+  }
+}

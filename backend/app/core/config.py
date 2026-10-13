@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     anilibria_base_url: str = "https://anilibria.top/api/v1"
     anilibria_fallback_base_url: str = "https://anilibria.top/api/v1"
     anilibria_site_url: str = "https://aniliberty.top"
+    # Единственный URL Nova; пусто = второй источник отключён.
+    anilibria_admin_base_url: str = ""
     # Шаблон ссылки на релиз в админке; {release_id} → ID. Пусто = не показывать ссылку.
     anilibria_admin_url_template: str = ""
     anilibria_bearer_token: str = ""
@@ -40,6 +42,7 @@ class Settings(BaseSettings):
     scrape_pause_every: int = 10
     scrape_pause_sec: int = 2
     ongoing_interval_sec: int = 120
+    backoffice_interval_sec: int = 900
     cleanup_interval_sec: int = 3600
     # False = только отчёт; True = можно удалять при dry_run=false (кнопка / API).
     cleanup_allow_delete: bool = True

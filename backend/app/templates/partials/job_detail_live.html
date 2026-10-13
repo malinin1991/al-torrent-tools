@@ -19,7 +19,7 @@
   {% if selected_job %}
   <p class="muted" style="margin-top:0;">
     Тип: {{ selected_job.type }}
-    | Статус: <span class="job-status job-status-{{ selected_job.status }}">{{ selected_job.status }}</span>
+    | Статус: <span class="job-status job-status-{{ selected_job.status }}">{{ 'Завершено с ошибками' if selected_job.status == 'partial' else selected_job.status }}</span>
     | Старт:
     {% if selected_job.started_at %}
     <time class="local-time" datetime="{{ selected_job.started_at|as_utc_iso }}">{{ selected_job.started_at }}</time>
@@ -31,6 +31,7 @@
     | Ошибка: {{ selected_job.error or "-" }}
   </p>
   {% endif %}
+  {% include 'partials/job_outcome.html' %}
   <div class="log-panel" id="job-logs-panel">
     {% for line in logs %}
     <div class="log-line">

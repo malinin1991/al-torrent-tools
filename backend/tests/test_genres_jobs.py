@@ -139,6 +139,7 @@ def test_full_sync_refresh_applies_tags_for_seen(monkeypatch) -> None:
     refresh_comments = MagicMock(return_value=1)
     refresh_tags = MagicMock(return_value=2)
     refresh_renames = MagicMock(return_value=0)
+    monkeypatch.setattr(processor, "_qb_clients_for_meta", lambda: [])
     monkeypatch.setattr(processor, "_refresh_qb_comments", refresh_comments)
     monkeypatch.setattr(processor, "_refresh_qb_tags", refresh_tags)
     monkeypatch.setattr(processor, "_refresh_qb_renames", refresh_renames)
@@ -192,7 +193,9 @@ def test_ongoing_job_calls_process_with_refresh(monkeypatch) -> None:
 
     db = MagicMock()
     db.scalars.return_value.all.return_value = []
-    db.get.return_value = None
+    from app.db.models import Job
+    parent = Job(id=1, type="ongoing", status="running", params_json={})
+    db.get.side_effect = lambda model, ident, **kwargs: parent if model is Job else None
     al = MagicMock()
     al.get_schedule_week = AsyncMock(return_value=[])
     al.get_torrents_for_release = AsyncMock(return_value=[{"id": 1}])
@@ -230,7 +233,7 @@ def test_full_sync_job_calls_process_with_refresh(monkeypatch) -> None:
     monkeypatch.setattr(full_sync_mod, "normalize_api_datetime", lambda v: v)
 
     al = MagicMock()
-    al.catalog_releases = AsyncMock(return_value={"list": [{"id": 7, "alias": "y"}]})
+    al.catalog_releases = AsyncMock(return_value={"data": [{"id": 7, "alias": "y"}], "meta": {"pagination": {"total": 1, "total_pages": 1}}})
     monkeypatch.setattr(full_sync_mod, "build_anilibria_client", lambda _db: al)
 
     asyncio.run(full_sync_mod.run_full_sync(MagicMock(), job_id=1, params={}))

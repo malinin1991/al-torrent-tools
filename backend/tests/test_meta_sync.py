@@ -192,6 +192,7 @@ def test_full_sync_refresh_renames_and_updates_archive(monkeypatch) -> None:
     refresh_comments = MagicMock(return_value=1)
     refresh_tags = MagicMock(return_value=1)
     refresh_renames = MagicMock(return_value=2)
+    monkeypatch.setattr(processor, "_qb_clients_for_meta", lambda: [])
     monkeypatch.setattr(processor, "_refresh_qb_comments", refresh_comments)
     monkeypatch.setattr(processor, "_refresh_qb_tags", refresh_tags)
     monkeypatch.setattr(processor, "_refresh_qb_renames", refresh_renames)
@@ -331,7 +332,7 @@ def test_full_meta_sync_job_uses_refresh_no_backfill(monkeypatch) -> None:
     monkeypatch.setattr(meta_sync_mod, "_extract_total_pages", lambda *_: 1)
     monkeypatch.setattr(meta_sync_mod, "normalize_api_datetime", lambda v: v)
     al = MagicMock()
-    al.catalog_releases = AsyncMock(return_value={"list": [{"id": 7}]})
+    al.catalog_releases = AsyncMock(return_value={"data": [{"id": 7}], "meta": {"pagination": {"total": 1, "total_pages": 1}}})
     monkeypatch.setattr(meta_sync_mod, "build_anilibria_client", lambda _db: al)
 
     asyncio.run(meta_sync_mod.run_full_meta_sync(MagicMock(), job_id=1, params={}))

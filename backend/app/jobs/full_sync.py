@@ -11,6 +11,7 @@ from app.services.job_runner import JobStopRequested, is_stop_requested
 from app.services.release_checkpoint import normalize_api_datetime
 from app.services.runtime_settings import build_anilibria_client
 from app.services.torrent_processor import TorrentProcessor
+from app.services.sync_outcomes import CatalogScan, current_outcome, sync_job
 
 
 def _setting_int(db: Session, key: str, default: int) -> int:
@@ -29,14 +30,8 @@ def _add_log(db: Session, job_id: int, message: str, level: str = "info") -> Non
 
 
 def _extract_list(payload: Any) -> list[dict[str, Any]]:
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        for key in ("list", "items", "data", "results"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
-    return []
+    from app.jobs.ongoing import _validated_items
+    return _validated_items(payload)
 
 
 def _extract_total_pages(payload: Any) -> int:
@@ -87,6 +82,7 @@ def _flush_batch_summary(
     return TorrentProcessor.empty_release_stats()
 
 
+@sync_job
 async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> None:
     force_qb_load = bool(params.get("force_qb_load", False))
     _add_log(db, job_id, "Full sync: инициализация клиента AniLibria и TorrentProcessor")
@@ -110,6 +106,7 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
         + (", force_qb_load=on" if force_qb_load else ""),
     )
 
+    scan = CatalogScan(current_outcome(db, job_id))
     page = 1
     total_pages = 1
     total_releases: int | None = None
@@ -128,7 +125,7 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
             limit=catalog_limit,
             include=["id", "alias", "names", "season", "updated_at", "fresh_at"],
         )
-        total_pages = _extract_total_pages(payload)
+        releases, total_pages = scan.accept(payload, page)
         if total_releases is None:
             total_releases = _extract_total_releases(payload)
             if total_releases is not None:
@@ -138,7 +135,6 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                     f"Full sync: всего релизов в каталоге={total_releases}, "
                     f"страниц={total_pages}",
                 )
-        releases = _extract_list(payload)
         _add_log(
             db,
             job_id,
@@ -163,25 +159,34 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 f"Full sync: обработка релиза id={release_id}, alias={release_alias or '-'} (#{processed_releases})",
                 level="debug",
             )
-            part = await processor.process_release(
-                release_id=release_id,
-                release_alias=release_alias,
-                list_updated_at=updated_at,
-                list_fresh_at=fresh_at,
-                refresh_qb_meta=True,
-                force_qb_load=force_qb_load,
-            )
-            # present torrent_ids уже выставлены в process_release; собираем для финального sweep
-            present = db.scalars(
-                select(TorrentArchive.torrent_id).where(
-                    TorrentArchive.release_id == release_id,
-                    TorrentArchive.api_present.is_(True),
+            try:
+                part = await processor.process_release(
+                    release_id=release_id,
+                    release_alias=release_alias,
+                    list_updated_at=updated_at,
+                    list_fresh_at=fresh_at,
+                    refresh_qb_meta=True,
+                    force_qb_load=force_qb_load,
                 )
-            ).all()
-            seen_torrent_ids.update(int(x) for x in present)
+                # present torrent_ids уже выставлены в process_release; собираем для финального sweep
+                present = db.scalars(
+                    select(TorrentArchive.torrent_id).where(
+                        TorrentArchive.release_id == release_id,
+                        TorrentArchive.api_present.is_(True),
+                    )
+                ).all()
+                seen_torrent_ids.update(int(x) for x in present)
 
-            TorrentProcessor.merge_release_stats(batch_stats, part)
-            TorrentProcessor.merge_release_stats(total_stats, part)
+                TorrentProcessor.merge_release_stats(batch_stats, part)
+                TorrentProcessor.merge_release_stats(total_stats, part)
+
+                current_outcome(db, job_id).release(release_id, part)
+            except JobStopRequested:
+                raise
+            except Exception as exc:
+                db.rollback()
+                current_outcome(db, job_id).failure(release_id=release_id, source="site", message=exc)
+                _add_log(db, job_id, f"Релиз {release_id}: {type(exc).__name__}; подробности в результате", "warning")
 
             if pause_every > 0 and pause_sec > 0 and processed_releases % pause_every == 0:
                 batch_stats = _flush_batch_summary(
@@ -202,8 +207,20 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
                 await asyncio.sleep(pause_sec)
         page += 1
 
-    if seen_torrent_ids:
-        archived = mark_missing_api_present_false(db, seen_torrent_ids)
+    from app.providers.anilibria.sources import ReleaseSourceClient
+    preserve_release_ids = set()
+    if isinstance(al_client, ReleaseSourceClient):
+        from app.jobs.backoffice_sync import run_backoffice_sync
+        from app.db.models import Release
+        await run_backoffice_sync(db, job_id, {})
+        preserve_release_ids = set(db.scalars(select(Release.release_id).where(Release.source == "backoffice")).all())
+    if not scan.complete or current_outcome(db, job_id).failures:
+        _add_log(db, job_id, "Full sync: пропуск глобального api_present sweep — есть ошибки обхода", "warning")
+    elif seen_torrent_ids:
+        if preserve_release_ids:
+            archived = mark_missing_api_present_false(db, seen_torrent_ids, preserve_release_ids=preserve_release_ids)
+        else:
+            archived = mark_missing_api_present_false(db, seen_torrent_ids)
         _add_log(db, job_id, f"Full sync: api_present=false для отсутствующих в API: {archived}")
     else:
         _add_log(

@@ -985,10 +985,9 @@ def test_run_mediainfo_sync() -> None:
     st.st_mtime = 200.0
 
     with patch("app.jobs.mediainfo_sync.is_stop_requested", return_value=False), \
-         patch("app.jobs.mediainfo_sync.is_media_filename", return_value=True), \
          patch.object(Path, "is_file", return_value=True), \
          patch.object(Path, "stat", return_value=st), \
-         patch("app.jobs.mediainfo_sync.upsert_file_mediainfo", return_value=MagicMock()):
+         patch("app.jobs.mediainfo_sync.mediainfo_paths_parallel", return_value={"total":1,"updated":1,"skipped":0,"missing":0,"errors":0,"stopped":0}):
         asyncio.run(run_mediainfo_sync(db, 10, {"mode": "incremental"}))
         assert db.add.called
         assert db.commit.called

@@ -223,6 +223,9 @@ async def _add_pipeline_to_master(
         torrent_bytes = ensure_announce_passkey(torrent_bytes, al_client.passkey)
 
     rename, comment, category, tags = pipeline_service._resolve_qb_meta(pipeline)
+    from app.services.torrent_policy import SOURCE_TAGS, reconcile_source_tags, reconcile_trackers
+    source_tags = [tag for tag in tags if tag in SOURCE_TAGS]
+    extra = {"managed_tags": tags} if source_tags else {}
     try:
         qb_add_torrent(
             qb,
@@ -231,7 +234,13 @@ async def _add_pipeline_to_master(
             comment=comment,
             category=category,
             tags=tags,
+            **extra,
         )
+        if source_tags:
+            reconcile_source_tags(qb, pipeline.info_hash, source_tags)
+            from app.services.release_source import release_is_offsite
+            if release_is_offsite(pipeline_service._db, pipeline.release_id):
+                reconcile_trackers(qb, pipeline.info_hash, al_client.passkey)
     except Exception as add_exc:
         if should_wait_for_qb(add_exc):
             pipeline_service.mark_waiting_master(
@@ -244,6 +253,9 @@ async def _add_pipeline_to_master(
 
 async def torrent_still_in_api(client: AniLibriaClient, pipeline: TorrentPipeline) -> bool:
     """Проверка существования торрента в API: сначала по hash, затем по torrent_id."""
+    from app.providers.anilibria.sources import ReleaseSourceClient
+    if isinstance(client, ReleaseSourceClient):
+        return await client.pipeline_torrent_exists(pipeline)
     if await client.torrent_exists(pipeline.info_hash):
         return True
     if pipeline.torrent_id:

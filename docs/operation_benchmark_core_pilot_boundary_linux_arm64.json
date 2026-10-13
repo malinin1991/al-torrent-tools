@@ -1,0 +1,2150 @@
+{
+  "protocol_version": 1,
+  "rounds": 12,
+  "noise_margin_pct": 3,
+  "note": "Whole real DB operations; warm host file cache, no OS cache eviction",
+  "cpu_constraints": {
+    "/sys/fs/cgroup/cpu.max": "max 100000",
+    "/sys/fs/cgroup/cpu.stat": "usage_usec 118089\nuser_usec 74961\nsystem_usec 43128\nnice_usec 0\nnr_periods 0\nnr_throttled 0\nthrottled_usec 0\nnr_bursts 0\nburst_usec 0",
+    "/sys/fs/cgroup/cpuset.cpus.effective": "0-9",
+    "/sys/fs/cgroup/cpuset.cpus": "",
+    "/sys/fs/cgroup/memory.max": "max",
+    "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": null,
+    "/sys/fs/cgroup/cpu/cpu.cfs_period_us": null,
+    "/sys/fs/cgroup/cpuset/cpuset.cpus": null,
+    "/proc/self/cgroup": "0::/",
+    "sched_affinity_cpus": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "quota_cores": null
+  },
+  "samples": [
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.946382223658542,
+        "cpu_sec": 0.7015880800000001,
+        "elapsed_sec": 0.7413369170099031,
+        "linux_rss_after_work_bytes": 137277440,
+        "linux_vm_hwm_bytes": 152932352,
+        "peak_rss_bytes": 152932352,
+        "rss_before_work_bytes": 111337472
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9642593600336443,
+        "cpu_sec": 0.6413294229999997,
+        "elapsed_sec": 0.6651005420135334,
+        "linux_rss_after_work_bytes": 140693504,
+        "linux_vm_hwm_bytes": 156782592,
+        "peak_rss_bytes": 156782592,
+        "rss_before_work_bytes": 137084928
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 3.6131447100196965,
+      "stderr": "/opt/python315regular/lib/python3.15/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 53
+        },
+        "cpu_average_cores": 1.1215766757744627,
+        "cpu_sec": 0.35910852299999996,
+        "elapsed_sec": 0.32018187499488704,
+        "linux_rss_after_work_bytes": 103026688,
+        "linux_vm_hwm_bytes": 103026688,
+        "peak_rss_bytes": 102215680,
+        "rss_before_work_bytes": 89161728
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 0.748611126007745,
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.4716337593997369,
+        "cpu_sec": 0.18796096899999992,
+        "elapsed_sec": 0.39853162597864866,
+        "linux_rss_after_work_bytes": 99622912,
+        "linux_vm_hwm_bytes": 99622912,
+        "peak_rss_bytes": 99262464,
+        "rss_before_work_bytes": 99319808
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.272559334000107,
+      "round": 0
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9674562816873036,
+        "cpu_sec": 0.836642084,
+        "elapsed_sec": 0.8647854170121718,
+        "linux_rss_after_work_bytes": 177446912,
+        "linux_vm_hwm_bytes": 184815616,
+        "peak_rss_bytes": 184815616,
+        "rss_before_work_bytes": 137535488
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9751910132152103,
+        "cpu_sec": 0.8197825830000003,
+        "elapsed_sec": 0.8406379590160213,
+        "linux_rss_after_work_bytes": 184573952,
+        "linux_vm_hwm_bytes": 201822208,
+        "peak_rss_bytes": 201822208,
+        "rss_before_work_bytes": 183861248
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 4.170697752007982,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 0.8777089802603668,
+        "cpu_sec": 0.5303879800000001,
+        "elapsed_sec": 0.6042868330259807,
+        "linux_rss_after_work_bytes": 133386240,
+        "linux_vm_hwm_bytes": 134725632,
+        "peak_rss_bytes": 134725632,
+        "rss_before_work_bytes": 113205248
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.7889844169840217,
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.4935726211501597,
+        "cpu_sec": 0.2017993669999999,
+        "elapsed_sec": 0.4088544590049423,
+        "linux_rss_after_work_bytes": 122990592,
+        "linux_vm_hwm_bytes": 122990592,
+        "peak_rss_bytes": 122875904,
+        "rss_before_work_bytes": 122834944
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.8292571259953547,
+      "round": 0
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9591377329031122,
+        "cpu_sec": 0.8154761649999999,
+        "elapsed_sec": 0.850218000006862,
+        "linux_rss_after_work_bytes": 176832512,
+        "linux_vm_hwm_bytes": 184881152,
+        "peak_rss_bytes": 184881152,
+        "rss_before_work_bytes": 137527296
+      },
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9738857187523289,
+        "cpu_sec": 0.7233999579999999,
+        "elapsed_sec": 0.7427975829923525,
+        "linux_rss_after_work_bytes": 195534848,
+        "linux_vm_hwm_bytes": 208769024,
+        "peak_rss_bytes": 208769024,
+        "rss_before_work_bytes": 182726656
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 3.992259169026511,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 1.1816589049044866,
+        "cpu_sec": 0.38059406599999995,
+        "elapsed_sec": 0.32208454099600203,
+        "linux_rss_after_work_bytes": 133844992,
+        "linux_vm_hwm_bytes": 134782976,
+        "peak_rss_bytes": 134782976,
+        "rss_before_work_bytes": 113172480
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 0.8376970820245333,
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.4975995651513302,
+        "cpu_sec": 0.187669054,
+        "elapsed_sec": 0.3771487500052899,
+        "linux_rss_after_work_bytes": 124051456,
+        "linux_vm_hwm_bytes": 124325888,
+        "peak_rss_bytes": 124325888,
+        "rss_before_work_bytes": 123895808
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.3139015010092407,
+      "round": 0
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9576955683624128,
+        "cpu_sec": 0.645159082,
+        "elapsed_sec": 0.6736577920091804,
+        "linux_rss_after_work_bytes": 133652480,
+        "linux_vm_hwm_bytes": 151724032,
+        "peak_rss_bytes": 151724032,
+        "rss_before_work_bytes": 110018560
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9697597958617056,
+        "cpu_sec": 0.581285619,
+        "elapsed_sec": 0.5994119590031914,
+        "linux_rss_after_work_bytes": 140763136,
+        "linux_vm_hwm_bytes": 156360704,
+        "peak_rss_bytes": 156360704,
+        "rss_before_work_bytes": 135688192
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.3547016679949593,
+      "stderr": "/opt/python315regular/lib/python3.15/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 1.0780396469544735,
+        "cpu_sec": 0.354434282,
+        "elapsed_sec": 0.3287766669818666,
+        "linux_rss_after_work_bytes": 103292928,
+        "linux_vm_hwm_bytes": 103292928,
+        "peak_rss_bytes": 102715392,
+        "rss_before_work_bytes": 89751552
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.7638235000194982,
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.46500311981770553,
+        "cpu_sec": 0.164861005,
+        "elapsed_sec": 0.3545374170062132,
+        "linux_rss_after_work_bytes": 102207488,
+        "linux_vm_hwm_bytes": 102207488,
+        "peak_rss_bytes": 101949440,
+        "rss_before_work_bytes": 101724160
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.2119575839897152,
+      "round": 0
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.962544488705073,
+        "cpu_sec": 0.730371178,
+        "elapsed_sec": 0.7587921250087675,
+        "linux_rss_after_work_bytes": 178933760,
+        "linux_vm_hwm_bytes": 186138624,
+        "peak_rss_bytes": 186138624,
+        "rss_before_work_bytes": 138948608
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9723570273959219,
+        "cpu_sec": 0.6558054279999999,
+        "elapsed_sec": 0.6744492090074345,
+        "linux_rss_after_work_bytes": 184705024,
+        "linux_vm_hwm_bytes": 205254656,
+        "peak_rss_bytes": 205254656,
+        "rss_before_work_bytes": 185221120
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.6799357520067133,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 1.0121662926713066,
+        "cpu_sec": 0.36919811499999994,
+        "elapsed_sec": 0.36476033402141184,
+        "linux_rss_after_work_bytes": 133763072,
+        "linux_vm_hwm_bytes": 133820416,
+        "peak_rss_bytes": 133820416,
+        "rss_before_work_bytes": 113463296
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.8701796670211479,
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.46952702193572904,
+        "cpu_sec": 0.199581793,
+        "elapsed_sec": 0.4250698760151863,
+        "linux_rss_after_work_bytes": 125452288,
+        "linux_vm_hwm_bytes": 125452288,
+        "peak_rss_bytes": 125419520,
+        "rss_before_work_bytes": 125075456
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.4011738339904696,
+      "round": 0
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9544718350383161,
+        "cpu_sec": 0.72672205,
+        "elapsed_sec": 0.7613865839957725,
+        "linux_rss_after_work_bytes": 178724864,
+        "linux_vm_hwm_bytes": 186134528,
+        "peak_rss_bytes": 186134528,
+        "rss_before_work_bytes": 139030528
+      },
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9713114445724569,
+        "cpu_sec": 0.633470505,
+        "elapsed_sec": 0.6521806250093505,
+        "linux_rss_after_work_bytes": 187654144,
+        "linux_vm_hwm_bytes": 215744512,
+        "peak_rss_bytes": 215744512,
+        "rss_before_work_bytes": 189300736
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.653060459997505,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 1.038839331610979,
+        "cpu_sec": 0.344605038,
+        "elapsed_sec": 0.33172120800009,
+        "linux_rss_after_work_bytes": 131944448,
+        "linux_vm_hwm_bytes": 131944448,
+        "peak_rss_bytes": 131620864,
+        "rss_before_work_bytes": 113590272
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.8353390429983847,
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.4711784617598701,
+        "cpu_sec": 0.16489102300000003,
+        "elapsed_sec": 0.3499545000086073,
+        "linux_rss_after_work_bytes": 128409600,
+        "linux_vm_hwm_bytes": 128540672,
+        "peak_rss_bytes": 128540672,
+        "rss_before_work_bytes": 128073728
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.2686252919957042,
+      "round": 0
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.47851570645225805,
+        "cpu_sec": 0.17858640800000003,
+        "elapsed_sec": 0.3732090829871595,
+        "linux_rss_after_work_bytes": 123813888,
+        "linux_vm_hwm_bytes": 123871232,
+        "peak_rss_bytes": 123871232,
+        "rss_before_work_bytes": 123658240
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.2445517090091016,
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 1.1732588530493184,
+        "cpu_sec": 0.36443121199999995,
+        "elapsed_sec": 0.31061449999106117,
+        "linux_rss_after_work_bytes": 134111232,
+        "linux_vm_hwm_bytes": 134692864,
+        "peak_rss_bytes": 134692864,
+        "rss_before_work_bytes": 113704960
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 0.8368474169983529,
+      "round": 1
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9577725957131439,
+        "cpu_sec": 0.8325261110000001,
+        "elapsed_sec": 0.8692315010121092,
+        "linux_rss_after_work_bytes": 177676288,
+        "linux_vm_hwm_bytes": 185704448,
+        "peak_rss_bytes": 185704448,
+        "rss_before_work_bytes": 138440704
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9765298620555287,
+        "cpu_sec": 0.7298844189999998,
+        "elapsed_sec": 0.747426624991931,
+        "linux_rss_after_work_bytes": 193298432,
+        "linux_vm_hwm_bytes": 203169792,
+        "peak_rss_bytes": 203169792,
+        "rss_before_work_bytes": 185024512
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 3.9717100020207,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.47349933486055407,
+        "cpu_sec": 0.17222620900000007,
+        "elapsed_sec": 0.36373062498751096,
+        "linux_rss_after_work_bytes": 123781120,
+        "linux_vm_hwm_bytes": 123867136,
+        "peak_rss_bytes": 123867136,
+        "rss_before_work_bytes": 123625472
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.346946499979822,
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 1.218761602120827,
+        "cpu_sec": 0.33604624200000005,
+        "elapsed_sec": 0.2757276250049472,
+        "linux_rss_after_work_bytes": 134205440,
+        "linux_vm_hwm_bytes": 135196672,
+        "peak_rss_bytes": 135196672,
+        "rss_before_work_bytes": 113229824
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 0.7685485419933684,
+      "round": 1
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.964189840226768,
+        "cpu_sec": 0.834210743,
+        "elapsed_sec": 0.8651934590016026,
+        "linux_rss_after_work_bytes": 177483776,
+        "linux_vm_hwm_bytes": 185331712,
+        "peak_rss_bytes": 185331712,
+        "rss_before_work_bytes": 138039296
+      },
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9772458213228514,
+        "cpu_sec": 0.7490949580000001,
+        "elapsed_sec": 0.7665368750167545,
+        "linux_rss_after_work_bytes": 184303616,
+        "linux_vm_hwm_bytes": 212570112,
+        "peak_rss_bytes": 212570112,
+        "rss_before_work_bytes": 186331136
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 3.9653035849914886,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.44674490164910713,
+        "cpu_sec": 0.17981473000000003,
+        "elapsed_sec": 0.4024997920205351,
+        "linux_rss_after_work_bytes": 100282368,
+        "linux_vm_hwm_bytes": 100282368,
+        "peak_rss_bytes": 100024320,
+        "rss_before_work_bytes": 99819520
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.2816179170040414,
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 1.158306399253315,
+        "cpu_sec": 0.32892537899999996,
+        "elapsed_sec": 0.28397095898981206,
+        "linux_rss_after_work_bytes": 105197568,
+        "linux_vm_hwm_bytes": 105197568,
+        "peak_rss_bytes": 104427520,
+        "rss_before_work_bytes": 91635712
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.7345971250033472,
+      "round": 1
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9493591161446279,
+        "cpu_sec": 0.584235995,
+        "elapsed_sec": 0.6154004159907345,
+        "linux_rss_after_work_bytes": 133271552,
+        "linux_vm_hwm_bytes": 151678976,
+        "peak_rss_bytes": 151678976,
+        "rss_before_work_bytes": 110043136
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9637091765423774,
+        "cpu_sec": 0.5167141580000001,
+        "elapsed_sec": 0.5361722919915337,
+        "linux_rss_after_work_bytes": 139112448,
+        "linux_vm_hwm_bytes": 157020160,
+        "peak_rss_bytes": 157020160,
+        "rss_before_work_bytes": 135684096
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.0439455849991646,
+      "stderr": "/opt/python315regular/lib/python3.15/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.4291328061096054,
+        "cpu_sec": 0.17120973900000003,
+        "elapsed_sec": 0.39896679201046936,
+        "linux_rss_after_work_bytes": 126914560,
+        "linux_vm_hwm_bytes": 126951424,
+        "peak_rss_bytes": 126951424,
+        "rss_before_work_bytes": 126529536
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.3646384589956142,
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 1.0155574103604992,
+        "cpu_sec": 0.35524380200000005,
+        "elapsed_sec": 0.34980179197737016,
+        "linux_rss_after_work_bytes": 132284416,
+        "linux_vm_hwm_bytes": 132284416,
+        "peak_rss_bytes": 131428352,
+        "rss_before_work_bytes": 113602560
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.9305506249947939,
+      "round": 1
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.961260004465581,
+        "cpu_sec": 0.6767025320000001,
+        "elapsed_sec": 0.7039745010260958,
+        "linux_rss_after_work_bytes": 178995200,
+        "linux_vm_hwm_bytes": 186486784,
+        "peak_rss_bytes": 186486784,
+        "rss_before_work_bytes": 139206656
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9709354305242426,
+        "cpu_sec": 0.641015253,
+        "elapsed_sec": 0.660203791980166,
+        "linux_rss_after_work_bytes": 185044992,
+        "linux_vm_hwm_bytes": 204779520,
+        "peak_rss_bytes": 204779520,
+        "rss_before_work_bytes": 186044416
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.5353560440125875,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.47184618075138224,
+        "cpu_sec": 0.16838735299999996,
+        "elapsed_sec": 0.3568691659893375,
+        "linux_rss_after_work_bytes": 125079552,
+        "linux_vm_hwm_bytes": 125079552,
+        "peak_rss_bytes": 125071360,
+        "rss_before_work_bytes": 124690432
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.223372709006071,
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 1.1479603232977378,
+        "cpu_sec": 0.306413139,
+        "elapsed_sec": 0.26691962499171495,
+        "linux_rss_after_work_bytes": 131457024,
+        "linux_vm_hwm_bytes": 131457024,
+        "peak_rss_bytes": 131325952,
+        "rss_before_work_bytes": 113016832
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.7585750000143889,
+      "round": 1
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9643672002412014,
+        "cpu_sec": 0.683528926,
+        "elapsed_sec": 0.7087849170202389,
+        "linux_rss_after_work_bytes": 177803264,
+        "linux_vm_hwm_bytes": 184930304,
+        "peak_rss_bytes": 184930304,
+        "rss_before_work_bytes": 137916416
+      },
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9720254950875392,
+        "cpu_sec": 0.6082362859999999,
+        "elapsed_sec": 0.6257410830003209,
+        "linux_rss_after_work_bytes": 187146240,
+        "linux_vm_hwm_bytes": 211460096,
+        "peak_rss_bytes": 211460096,
+        "rss_before_work_bytes": 184086528
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.4161652509937994,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.4585153795186802,
+        "cpu_sec": 0.16345870799999995,
+        "elapsed_sec": 0.3564955840120092,
+        "linux_rss_after_work_bytes": 99627008,
+        "linux_vm_hwm_bytes": 99627008,
+        "peak_rss_bytes": 99250176,
+        "rss_before_work_bytes": 99319808
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.238871667010244,
+      "round": 1
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 1.135179406372957,
+        "cpu_sec": 0.321657957,
+        "elapsed_sec": 0.28335429201251827,
+        "linux_rss_after_work_bytes": 103026688,
+        "linux_vm_hwm_bytes": 103026688,
+        "peak_rss_bytes": 102334464,
+        "rss_before_work_bytes": 89165824
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 0.7514514999929816,
+      "round": 1
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9575456116296811,
+        "cpu_sec": 0.743512863,
+        "elapsed_sec": 0.7764777510019485,
+        "linux_rss_after_work_bytes": 135503872,
+        "linux_vm_hwm_bytes": 151134208,
+        "peak_rss_bytes": 151134208,
+        "rss_before_work_bytes": 109420544
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9686909859361187,
+        "cpu_sec": 0.6292549649999999,
+        "elapsed_sec": 0.649593084002845,
+        "linux_rss_after_work_bytes": 140075008,
+        "linux_vm_hwm_bytes": 155222016,
+        "peak_rss_bytes": 155222016,
+        "rss_before_work_bytes": 136208384
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 3.5640560010215268,
+      "stderr": "/opt/python315regular/lib/python3.15/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 1
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9698600674450791,
+        "cpu_sec": 0.766390578,
+        "elapsed_sec": 0.790207374986494,
+        "linux_rss_after_work_bytes": 175017984,
+        "linux_vm_hwm_bytes": 182661120,
+        "peak_rss_bytes": 182661120,
+        "rss_before_work_bytes": 135606272
+      },
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9777162412362268,
+        "cpu_sec": 0.7223264939999998,
+        "elapsed_sec": 0.7387895010178909,
+        "linux_rss_after_work_bytes": 183197696,
+        "linux_vm_hwm_bytes": 213512192,
+        "peak_rss_bytes": 213512192,
+        "rss_before_work_bytes": 192348160
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 3.913052461022744,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 2
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 1.0648524945009754,
+        "cpu_sec": 0.40056658300000003,
+        "elapsed_sec": 0.37617095801397227,
+        "linux_rss_after_work_bytes": 133124096,
+        "linux_vm_hwm_bytes": 133767168,
+        "peak_rss_bytes": 133767168,
+        "rss_before_work_bytes": 112783360
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.0602889999863692,
+      "round": 2
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.5137643615065618,
+        "cpu_sec": 0.198586602,
+        "elapsed_sec": 0.3865324590005912,
+        "linux_rss_after_work_bytes": 124284928,
+        "linux_vm_hwm_bytes": 124592128,
+        "peak_rss_bytes": 124592128,
+        "rss_before_work_bytes": 124133376
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.3784349169873167,
+      "round": 2
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9427121271190072,
+        "cpu_sec": 0.659026402,
+        "elapsed_sec": 0.6990749169781338,
+        "linux_rss_after_work_bytes": 133685248,
+        "linux_vm_hwm_bytes": 151830528,
+        "peak_rss_bytes": 151830528,
+        "rss_before_work_bytes": 109981696
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9616672742281795,
+        "cpu_sec": 0.5265722560000001,
+        "elapsed_sec": 0.547561792016495,
+        "linux_rss_after_work_bytes": 139382784,
+        "linux_vm_hwm_bytes": 155693056,
+        "peak_rss_bytes": 155693056,
+        "rss_before_work_bytes": 135561216
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.32251625097706,
+      "stderr": "/opt/python315regular/lib/python3.15/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n",
+      "round": 2
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 0.9856946887162696,
+        "cpu_sec": 0.413029197,
+        "elapsed_sec": 0.4190234580019023,
+        "linux_rss_after_work_bytes": 103243776,
+        "linux_vm_hwm_bytes": 103243776,
+        "peak_rss_bytes": 102461440,
+        "rss_before_work_bytes": 89686016
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.9220365830115043,
+      "round": 2
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.43111474065947364,
+        "cpu_sec": 0.16012858899999993,
+        "elapsed_sec": 0.371429166989401,
+        "linux_rss_after_work_bytes": 100257792,
+        "linux_vm_hwm_bytes": 100257792,
+        "peak_rss_bytes": 100007936,
+        "rss_before_work_bytes": 99794944
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.274764083995251,
+      "round": 2
+    }
+  ],
+  "warmups": [
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9277797511324847,
+        "cpu_sec": 0.7961421470000001,
+        "elapsed_sec": 0.8581154590065125,
+        "linux_rss_after_work_bytes": 135516160,
+        "linux_vm_hwm_bytes": 151117824,
+        "peak_rss_bytes": 151117824,
+        "rss_before_work_bytes": 109428736
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.971016566870927,
+        "cpu_sec": 0.641210386,
+        "elapsed_sec": 0.660349584009964,
+        "linux_rss_after_work_bytes": 140087296,
+        "linux_vm_hwm_bytes": 155189248,
+        "peak_rss_bytes": 155189248,
+        "rss_before_work_bytes": 136216576
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 3.9648827939818148,
+      "stderr": "/opt/python315regular/lib/python3.15/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n"
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 57
+        },
+        "cpu_average_cores": 0.8150697594348608,
+        "cpu_sec": 0.485458809,
+        "elapsed_sec": 0.5956040000019129,
+        "linux_rss_after_work_bytes": 103075840,
+        "linux_vm_hwm_bytes": 103075840,
+        "peak_rss_bytes": 102236160,
+        "rss_before_work_bytes": 89157632
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.0911789590027183
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.4698122525995561,
+        "cpu_sec": 0.18194875199999994,
+        "elapsed_sec": 0.38727970799664035,
+        "linux_rss_after_work_bytes": 99635200,
+        "linux_vm_hwm_bytes": 99635200,
+        "peak_rss_bytes": 99389440,
+        "rss_before_work_bytes": 99336192
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.3122984590008855
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9652329350271104,
+        "cpu_sec": 0.830923829,
+        "elapsed_sec": 0.860853166988818,
+        "linux_rss_after_work_bytes": 177176576,
+        "linux_vm_hwm_bytes": 185389056,
+        "peak_rss_bytes": 185389056,
+        "rss_before_work_bytes": 137953280
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9761400171923382,
+        "cpu_sec": 0.7353406319999998,
+        "elapsed_sec": 0.7533147079811897,
+        "linux_rss_after_work_bytes": 182833152,
+        "linux_vm_hwm_bytes": 202629120,
+        "peak_rss_bytes": 202629120,
+        "rss_before_work_bytes": 183721984
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 4.0147670849983115,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n"
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 1.144511752074159,
+        "cpu_sec": 0.34190071099999997,
+        "elapsed_sec": 0.29873062498518266,
+        "linux_rss_after_work_bytes": 134287360,
+        "linux_vm_hwm_bytes": 136183808,
+        "peak_rss_bytes": 136183808,
+        "rss_before_work_bytes": 112488448
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 0.8113525009830482
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.4850233981276693,
+        "cpu_sec": 0.17788221000000004,
+        "elapsed_sec": 0.3667497499845922,
+        "linux_rss_after_work_bytes": 121298944,
+        "linux_vm_hwm_bytes": 121397248,
+        "peak_rss_bytes": 121397248,
+        "rss_before_work_bytes": 121147392
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.2404808339779265
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9537060884117752,
+        "cpu_sec": 0.805962869,
+        "elapsed_sec": 0.845085167005891,
+        "linux_rss_after_work_bytes": 175017984,
+        "linux_vm_hwm_bytes": 183185408,
+        "peak_rss_bytes": 183185408,
+        "rss_before_work_bytes": 135716864
+      },
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.976981025927196,
+        "cpu_sec": 0.739660652,
+        "elapsed_sec": 0.7570880420098547,
+        "linux_rss_after_work_bytes": 188116992,
+        "linux_vm_hwm_bytes": 204500992,
+        "peak_rss_bytes": 204500992,
+        "rss_before_work_bytes": 184524800
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 4.08830229297746,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n"
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 55
+        },
+        "cpu_average_cores": 1.0394506365136742,
+        "cpu_sec": 0.49890014199999994,
+        "elapsed_sec": 0.4799652090005111,
+        "linux_rss_after_work_bytes": 141389824,
+        "linux_vm_hwm_bytes": 143183872,
+        "peak_rss_bytes": 143183872,
+        "rss_before_work_bytes": 112173056
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.0285772499919403
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 12,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 43
+        },
+        "cpu_average_cores": 0.4727799975731415,
+        "cpu_sec": 0.202997922,
+        "elapsed_sec": 0.4293707920005545,
+        "linux_rss_after_work_bytes": 124456960,
+        "linux_vm_hwm_bytes": 124456960,
+        "peak_rss_bytes": 124416000,
+        "rss_before_work_bytes": 124301312
+      },
+      "version": "baseline",
+      "process_elapsed_sec": 1.642026084009558
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9413928765917589,
+        "cpu_sec": 0.610441582,
+        "elapsed_sec": 0.6484450830030255,
+        "linux_rss_after_work_bytes": 133648384,
+        "linux_vm_hwm_bytes": 151801856,
+        "peak_rss_bytes": 151801856,
+        "rss_before_work_bytes": 110018560
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9637143714881407,
+        "cpu_sec": 0.5290587109999998,
+        "elapsed_sec": 0.5489787499827798,
+        "linux_rss_after_work_bytes": 139247616,
+        "linux_vm_hwm_bytes": 155561984,
+        "peak_rss_bytes": 155561984,
+        "rss_before_work_bytes": 135684096
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.1929830009758007,
+      "stderr": "/opt/python315regular/lib/python3.15/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n"
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 0.8322109400572545,
+        "cpu_sec": 0.333815412,
+        "elapsed_sec": 0.40111874998547137,
+        "linux_rss_after_work_bytes": 103260160,
+        "linux_vm_hwm_bytes": 103260160,
+        "peak_rss_bytes": 102309888,
+        "rss_before_work_bytes": 89690112
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.8513637509895489
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "regular",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.4648978962823109,
+        "cpu_sec": 0.167116963,
+        "elapsed_sec": 0.35947024999768473,
+        "linux_rss_after_work_bytes": 102191104,
+        "linux_vm_hwm_bytes": 102191104,
+        "peak_rss_bytes": 101949440,
+        "rss_before_work_bytes": 101720064
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.2214962499856483
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9540200866356291,
+        "cpu_sec": 0.705601246,
+        "elapsed_sec": 0.7396083750063553,
+        "linux_rss_after_work_bytes": 178016256,
+        "linux_vm_hwm_bytes": 185483264,
+        "peak_rss_bytes": 185483264,
+        "rss_before_work_bytes": 138305536
+      },
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9710658440754616,
+        "cpu_sec": 0.6117552979999998,
+        "elapsed_sec": 0.6299833340162877,
+        "linux_rss_after_work_bytes": 184082432,
+        "linux_vm_hwm_bytes": 204578816,
+        "peak_rss_bytes": 204578816,
+        "rss_before_work_bytes": 184893440
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.502552210004069,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n"
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 1.1181453056102495,
+        "cpu_sec": 0.310207751,
+        "elapsed_sec": 0.27743062502122484,
+        "linux_rss_after_work_bytes": 131612672,
+        "linux_vm_hwm_bytes": 131612672,
+        "peak_rss_bytes": 131031040,
+        "rss_before_work_bytes": 113123328
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.7912740420142654
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": true,
+      "gil_initial": true,
+      "mode": "ft_on",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.45440659444611925,
+        "cpu_sec": 0.16948502600000004,
+        "elapsed_sec": 0.37298099999316037,
+        "linux_rss_after_work_bytes": 124289024,
+        "linux_vm_hwm_bytes": 124289024,
+        "peak_rss_bytes": 124182528,
+        "rss_before_work_bytes": 123899904
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.2296169589972124
+    },
+    {
+      "case": "hevc_http",
+      "checksum": "0a5ff52115f3b2a6849db55ad3e61a84b11aa270e93f71420b6aac032b0b9543",
+      "cold_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9684919729792899,
+        "cpu_sec": 0.7008802080000001,
+        "elapsed_sec": 0.72368200001074,
+        "linux_rss_after_work_bytes": 179830784,
+        "linux_vm_hwm_bytes": 185589760,
+        "peak_rss_bytes": 185589760,
+        "rss_before_work_bytes": 138407936
+      },
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "warm_request": {
+        "counts": {
+          "commits": 0,
+          "hash_files": 0,
+          "native_parses": 0,
+          "sql_statements": 16
+        },
+        "cpu_average_cores": 0.9724165779737429,
+        "cpu_sec": 0.6847114940000001,
+        "elapsed_sec": 0.7041339169954881,
+        "linux_rss_after_work_bytes": 184971264,
+        "linux_vm_hwm_bytes": 204988416,
+        "peak_rss_bytes": 204988416,
+        "rss_before_work_bytes": 186437632
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 3.62392225099029,
+      "stderr": "/usr/local/lib/python3.15t/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n  from starlette.testclient import TestClient as TestClient  # noqa\n"
+    },
+    {
+      "case": "mediainfo_real_full",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 41
+        },
+        "cpu_average_cores": 0.9744458749465474,
+        "cpu_sec": 0.38060585100000005,
+        "elapsed_sec": 0.39058695899439044,
+        "linux_rss_after_work_bytes": 134217728,
+        "linux_vm_hwm_bytes": 134217728,
+        "peak_rss_bytes": 134066176,
+        "rss_before_work_bytes": 113770496
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 0.9652000839996617
+    },
+    {
+      "case": "mediainfo_real_changed",
+      "checksum": "85d9f38f9cf68d932c33fc3fe0627932c3c66242548e5e8d52faf328e8b4711f",
+      "gil_after_work": false,
+      "gil_initial": false,
+      "mode": "ft_off",
+      "operation": {
+        "counts": {
+          "commits": 3,
+          "hash_files": 0,
+          "native_parses": 4,
+          "sql_statements": 25
+        },
+        "cpu_average_cores": 0.47223567528803617,
+        "cpu_sec": 0.1747819399999999,
+        "elapsed_sec": 0.37011591700138524,
+        "linux_rss_after_work_bytes": 123904000,
+        "linux_vm_hwm_bytes": 123904000,
+        "peak_rss_bytes": 123764736,
+        "rss_before_work_bytes": 123465728
+      },
+      "version": "optimized",
+      "process_elapsed_sec": 1.3102970420150086
+    }
+  ],
+  "orders": [
+    [
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ]
+    ],
+    [
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "regular"
+      ]
+    ],
+    [
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ]
+    ],
+    [
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ]
+    ],
+    [
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "regular"
+      ]
+    ],
+    [
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ]
+    ],
+    [
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "regular"
+      ]
+    ],
+    [
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ]
+    ],
+    [
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ]
+    ],
+    [
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "regular"
+      ]
+    ],
+    [
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ],
+      [
+        "optimized",
+        "ft_on"
+      ]
+    ],
+    [
+      [
+        "optimized",
+        "ft_on"
+      ],
+      [
+        "optimized",
+        "regular"
+      ],
+      [
+        "baseline",
+        "ft_off"
+      ],
+      [
+        "baseline",
+        "ft_on"
+      ],
+      [
+        "baseline",
+        "regular"
+      ],
+      [
+        "optimized",
+        "ft_off"
+      ]
+    ]
+  ]
+}

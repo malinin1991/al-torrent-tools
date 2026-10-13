@@ -5,11 +5,16 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+from collections.abc import Callable, Iterable
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.db.models import FileMediaInfo, TorrentFile
@@ -19,12 +24,17 @@ from app.services.torrent_files_meta import (
     is_partial_only,
     is_under_media_root,
 )
+from app.services.file_hasher import clamp_hash_workers
 from app.utils.datetime_fmt import utcnow
 
 logger = logging.getLogger(__name__)
 
 # Ключ в raw_json: вложения Matroska (FileName + FileMimeType + size) из EBML walk.
 MKV_ATTACHMENTS_KEY = "mkv_attachments"
+DEFAULT_MEDIAINFO_WORKERS = 4
+MEDIAINFO_COMMIT_BATCH = 25
+MEDIAINFO_QUERY_BATCH = 500
+ParsedMediaInfo = tuple[dict[str, Any], dict[str, Any], str]
 
 
 def resolve_mediainfo_version() -> str:
@@ -693,7 +703,7 @@ def _format_raw_text_report(data: dict[str, Any], path: Path) -> str:
     return "\n".join(lines).strip()
 
 
-def parse_media_file(path: Path) -> tuple[dict[str, Any], dict[str, Any], str] | None:
+def parse_media_file(path: Path) -> ParsedMediaInfo | None:
     """Извлечение MediaInfo через pymediainfo.
 
     Возвращает (summary_json, raw_json, raw_text) или None при ошибке.
@@ -708,11 +718,10 @@ def parse_media_file(path: Path) -> tuple[dict[str, Any], dict[str, Any], str] |
         return None
 
     try:
-        # Проверяем возможность парсинга
-        if hasattr(MediaInfo, "can_parse") and not MediaInfo.can_parse():
-            logger.warning("Библиотека libmediainfo не найдена в системе")
-
         # Стандартный вывод pymediainfo (snake_case), без Language=raw.
+        # Все call sites используют одинаковые параметры. pymediainfo допускает
+        # параллельный parse, но разные параметры/mediainfo_options меняют общие
+        # native options: https://pymediainfo.readthedocs.io/en/stable/pymediainfo.html
         mi = MediaInfo.parse(str(path), full=True)
         raw_dict = mi.to_data()
         # Matroska FileMimeType для вложений MediaInfo не отдаёт — читаем EBML Attachments.
@@ -782,6 +791,206 @@ def _attachments_columns_from_summary(summary: dict[str, Any]) -> tuple[list[dic
             has_size = True
         rows.append({"name": name, "mime": mime, "size_bytes": size_bytes})
     return rows, len(rows), (total if has_size else None)
+
+
+def _parsed_values(parsed: ParsedMediaInfo) -> dict[str, Any]:
+    summary, raw_json, raw_text = parsed
+    attachments, count, total = _attachments_columns_from_summary(summary)
+    return dict(summary_json=summary, raw_json=raw_json, raw_text=raw_text,
+                attachments_json=attachments, attachments_count=count,
+                attachments_total_bytes=total, updated_at=utcnow())
+
+
+@dataclass(frozen=True)
+class _MediaInfoWork:
+    path: Path
+    canonical: str
+
+
+def _file_identity(stat: os.stat_result) -> tuple[int, int, int, int, int]:
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _parse_work(item: _MediaInfoWork) -> tuple[int, float, ParsedMediaInfo] | None:
+    """Only filesystem/native work; no SQLAlchemy objects cross thread boundaries."""
+    if is_partial_only(item.path) or not is_under_media_root(item.path):
+        return None
+    if get_canonical_path(item.path) != item.canonical:
+        return None
+    before = item.path.stat()
+    parsed = parse_media_file(item.path)
+    if parsed is None:
+        return None
+    after = item.path.stat()
+    # Do not associate a report with size/mtime of a different file revision.
+    if (
+        _file_identity(before) != _file_identity(after)
+        or is_partial_only(item.path)
+        or not is_under_media_root(item.path)
+        or get_canonical_path(item.path) != item.canonical
+    ):
+        return None
+    return before.st_size, float(before.st_mtime), parsed
+
+
+def mediainfo_paths_parallel(
+    db: Session,
+    paths: Iterable[Path | str],
+    *,
+    workers: int = DEFAULT_MEDIAINFO_WORKERS,
+    force: bool = False,
+    should_stop: Callable[[], bool] | None = None,
+    log_fn: Callable[[str], None] | None = None,
+) -> dict[str, int]:
+    """Batch gate and bounded native parse; caller alone owns Session and writes.
+
+    At most ``workers`` parses are in flight. A stop drains these parses and
+    persists their results, then returns stopped=1 without scheduling more.
+    Metadata is fetched in chunks; up to 25 ready reports are buffered, written
+    in canonical path order, then committed. The final partial batch also commits.
+    Parsing/stat errors affect one file; DB errors propagate to the job runner.
+    """
+    stats = dict(total=0, scanned=0, updated=0, skipped=0, missing=0, errors=0, stopped=0)
+    candidates: dict[str, Path] = {}
+
+    def stopping() -> bool:
+        if should_stop and should_stop():
+            stats['stopped'] = 1
+        return bool(stats['stopped'])
+
+    for index, raw in enumerate(paths):
+        if index % MEDIAINFO_COMMIT_BATCH == 0 and stopping():
+            return stats
+        path = complete_path_for(raw)
+        if not is_media_filename(path) or is_partial_only(raw):
+            continue
+        try:
+            canonical = get_canonical_path(path)
+            candidates.setdefault(canonical, path)
+        except OSError:
+            stats['errors'] += 1
+    stats['total'] = len(candidates)
+    need_parse: list[_MediaInfoWork] = []
+    items = sorted(candidates.items())
+    for offset in range(0, len(items), MEDIAINFO_QUERY_BATCH):
+        if stopping():
+            return stats
+        chunk = items[offset:offset + MEDIAINFO_QUERY_BATCH]
+        rows = db.execute(select(FileMediaInfo.full_path, FileMediaInfo.file_size, FileMediaInfo.mtime)
+                          .where(FileMediaInfo.full_path.in_([key for key, _ in chunk]))).all()
+        cached = {row[0]: (row[1], row[2]) for row in rows}
+        for index, (canonical, path) in enumerate(chunk):
+            if index and index % MEDIAINFO_COMMIT_BATCH == 0 and stopping():
+                return stats
+            stats['scanned'] += 1
+            if not path.is_file():
+                path = Path(canonical)
+                if not path.is_file():
+                    stats['missing'] += 1
+                    continue
+            try:
+                if not is_under_media_root(path):
+                    stats['errors'] += 1
+                    continue
+                stat = path.stat()
+            except OSError:
+                stats['errors'] += 1
+                continue
+            existing = cached.get(canonical)
+            if existing and not force and int(existing[0] or 0) == stat.st_size and abs(float(existing[1] or 0) - stat.st_mtime) < 0.001:
+                stats['skipped'] += 1
+                continue
+            need_parse.append(_MediaInfoWork(path, canonical))
+
+    if not need_parse or stopping():
+        return stats
+    worker_count = clamp_hash_workers(workers, default=DEFAULT_MEDIAINFO_WORKERS)
+    pending_writes: list[tuple[_MediaInfoWork, dict[str, Any]]] = []
+    dialect = db.get_bind().dialect.name
+    if dialect not in {'postgresql', 'sqlite'}:
+        raise ValueError(f'Unsupported MediaInfo batch dialect: {dialect}')
+    insert = postgres_insert if dialect == 'postgresql' else sqlite_insert
+
+    def flush_writes() -> None:
+        if not pending_writes:
+            return
+        # Native completion order is arbitrary. Concurrent jobs must acquire
+        # unique/row locks in the same order inside EACH transaction, otherwise
+        # overlapping batches can deadlock (A->B versus B->A).
+        for item, values in sorted(pending_writes, key=lambda pair: pair[0].canonical):
+            # Gate is a snapshot: another job/UI may insert during parse.
+            statement = insert(FileMediaInfo).values(
+                full_path=item.canonical, created_at=values['updated_at'], **values,
+            ).on_conflict_do_update(index_elements=[FileMediaInfo.full_path], set_=values)
+            db.execute(statement)
+        db.commit()
+        pending_writes.clear()
+
+    def record(item: _MediaInfoWork, result: tuple[int, float, ParsedMediaInfo] | None) -> None:
+        if result is None:
+            stats['errors'] += 1
+            return
+        size, mtime, parsed = result
+        try:
+            values = _parsed_values(parsed)
+        except Exception as exc:
+            parse_error(item, exc)
+            return
+        values.update(file_size=size, mtime=mtime)
+        pending_writes.append((item, values))
+        stats['updated'] += 1
+        if len(pending_writes) >= MEDIAINFO_COMMIT_BATCH:
+            flush_writes()
+
+    def parse_error(item: _MediaInfoWork, exc: Exception) -> None:
+        stats['errors'] += 1
+        logger.warning('Ошибка MediaInfo для %s: %s', item.path, exc)
+
+    def started(item: _MediaInfoWork, index: int) -> None:
+        if log_fn:
+            log_fn(f'mediainfo: [{index}/{len(need_parse)}] {item.path.parent.name}/{item.path.name}')
+
+    if worker_count == 1:
+        for index, item in enumerate(need_parse, 1):
+            if stopping():
+                break
+            started(item, index)
+            try:
+                result = _parse_work(item)
+            except Exception as exc:
+                parse_error(item, exc)
+                continue
+            record(item, result)
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix='mediainfo') as pool:
+            iterator = iter(enumerate(need_parse, 1))
+            futures = {}
+
+            def submit_next() -> None:
+                if stopping():
+                    return
+                next_item = next(iterator, None)
+                if next_item is not None:
+                    index, item = next_item
+                    started(item, index)
+                    futures[pool.submit(_parse_work, item)] = item
+
+            for _ in range(worker_count):
+                submit_next()
+            while futures:
+                stopping()
+                done, _ = wait(futures, return_when=FIRST_COMPLETED, timeout=0.5)
+                for future in done:
+                    item = futures.pop(future)
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        parse_error(item, exc)
+                    else:
+                        record(item, result)
+                    submit_next()
+    flush_writes()
+    return stats
 
 
 def upsert_file_mediainfo(

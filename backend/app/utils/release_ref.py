@@ -31,6 +31,7 @@ class ReleaseRef:
 
 
 _RELEASE_SEGMENT_RE = re.compile(r"/release/([^/\s?#]+)", re.IGNORECASE)
+_NOVA_RELEASE_RE = re.compile(r"/(?:nova(?:/resources)?|nova-api)/anime-releases/(\d+)(?:[/?#]|$)", re.IGNORECASE)
 _HAS_LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")
 _URLISH_RE = re.compile(r"^https?://", re.IGNORECASE)
 
@@ -78,6 +79,9 @@ def parse_release_ref(raw: str | int | None) -> ReleaseRef:
         raise ReleaseRefParseError("Укажите URL, alias или id релиза")
 
     match = _RELEASE_SEGMENT_RE.search(text)
+    nova_match = _NOVA_RELEASE_RE.search(text)
+    if nova_match:
+        return _ref_from_token(nova_match.group(1))
     if match:
         return _ref_from_token(match.group(1))
 

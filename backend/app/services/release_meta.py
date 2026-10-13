@@ -31,6 +31,9 @@ class ReleaseMetaView:
     # None = ключ ещё не писали из API — UI может взять fallback из quality_json.
     is_blocked_by_geo: bool | None = None
     is_blocked_by_copyrights: bool | None = None
+    source: str | None = None
+    is_hidden: bool = False
+    is_abandoned: bool = False
 
 
 def _member_rows_from_dicts(release_id: int, members: list[dict[str, str]]) -> list[ReleaseMember]:
@@ -84,6 +87,15 @@ def upsert_release_meta(
         row.title = main
     if original:
         row.original_title = original
+
+    source = release_payload.get("_source", "site")
+    if source in {"site", "backoffice"}:
+        row.source = source
+        row.source_checked_at = utcnow()
+    if "is_hidden" in release_payload:
+        row.is_hidden = parse_api_bool(release_payload["is_hidden"])
+    elif source == "site":
+        row.is_hidden = False
 
     if "genres" in release_payload:
         genres = extract_release_genres(release_payload)
@@ -148,5 +160,8 @@ def load_release_meta_by_ids(
             members=members,
             is_blocked_by_geo=row.is_blocked_by_geo,
             is_blocked_by_copyrights=row.is_blocked_by_copyrights,
+            source=row.source,
+            is_hidden=bool(row.is_hidden),
+            is_abandoned=bool(row.is_abandoned),
         )
     return out

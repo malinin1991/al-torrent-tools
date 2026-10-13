@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -46,6 +47,8 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    result_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     logs: Mapped[list["JobLog"]] = relationship(back_populates="job", cascade="all, delete-orphan")
 
@@ -58,6 +61,33 @@ class JobLog(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     job: Mapped["Job"] = relationship(back_populates="logs")
+
+
+class JobSyncFailure(Base):
+    """Persisted exact sync failures, independent of current release/archive rows."""
+
+    __tablename__ = "job_sync_failures"
+    __table_args__ = (
+        UniqueConstraint("job_id", "object_key", name="uq_job_sync_failure_object"),
+        Index("ix_job_sync_failures_job_id_id", "job_id", "id"),
+        Index("ix_job_sync_failures_retryable", "job_id", "retryable", "id"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    scope: Mapped[str] = mapped_column(String(24), nullable=False)
+    release_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    torrent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    info_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
+    operation: Mapped[str] = mapped_column(String(48), nullable=False)
+    qb_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    message: Mapped[str] = mapped_column(String(500), nullable=False)
+    retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    retry_params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    object_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class SeenTorrent(Base):
@@ -106,6 +136,12 @@ class Release(Base):
     release_alias: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     original_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Текущий подтверждённый источник; None у ещё не проверенных старых карточек.
+    source: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    source_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_hidden: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Ручная классификация: не влияет на загрузки / HEVC.
+    is_abandoned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     genres_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # None = ещё не синхронизировано с API (fallback на quality_json в UI).
     is_blocked_by_geo: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
@@ -167,6 +203,8 @@ class TelegramOutbox(Base):
     __tablename__ = "telegram_outbox"
     __table_args__ = (
         UniqueConstraint("bot_key", "dedupe_key", name="uq_telegram_outbox_bot_dedupe"),
+        Index("ix_telegram_outbox_due", "bot_key", "status", "next_attempt_at", "id"),
+        Index("ix_telegram_outbox_lease", "bot_key", "status", "lease_until"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     pipeline_id: Mapped[int | None] = mapped_column(
@@ -183,6 +221,13 @@ class TelegramOutbox(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class TelegramBotAccess(Base):
@@ -296,6 +341,10 @@ class TorrentArchive(Base):
     # AVC: не требовать HEVC-пару (фильтры/бейджи missing|overdue|type_mismatch).
     # Сбрасывается при новой версии (supersede → новая строка с default False).
     ignore_hevc: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Политика сохраняется при возвращении релиза на сайт (в т.ч. при том же hash).
+    backoffice_trackers: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    # Исходное состояние первого импорта, не повод для уведомлений HEVC.
+    notification_baseline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     # Дата загрузки версии на AniLibria (max API created_at/updated_at); SLA overdue.
     api_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -337,6 +386,71 @@ class DiskFileHash(Base):
     hash_algo: Mapped[str] = mapped_column(String(32), nullable=False, default="blake3")
     last_checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_hashed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class EncoderSubmission(Base):
+    """Durable receipt of a user action, independent of jobs and torrent lifetime.
+
+    A request_id claims the external POST once. There is deliberately no
+    automatic retry: a lost response may conceal an already accepted job.
+    """
+
+    __tablename__ = "encoder_submissions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    video_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    audio_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    audio_downmix: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    presets_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    retry_of_id: Mapped[int | None] = mapped_column(
+        ForeignKey("encoder_submissions.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    request_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    items: Mapped[list["EncoderSubmissionItem"]] = relationship(
+        back_populates="submission", cascade="all, delete-orphan", order_by="EncoderSubmissionItem.id"
+    )
+    __table_args__ = (Index("ix_encoder_submissions_created", "created_at", "id"),)
+
+
+class EncoderSubmissionItem(Base):
+    """Snapshot identity is (info_hash, exact relative_path), never basename.
+
+    file_id/release_id intentionally have no cascading foreign keys. A receipt
+    must remain readable after supersede, operational reset or file removal.
+    """
+
+    __tablename__ = "encoder_submission_items"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    submission_id: Mapped[int] = mapped_column(
+        ForeignKey("encoder_submissions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    file_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    release_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    torrent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    info_hash: Mapped[str] = mapped_column(String(128), nullable=False, default="", index=True)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    full_path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="sending", index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_job_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    submission: Mapped[EncoderSubmission] = relationship(back_populates="items")
+    __table_args__ = (
+        UniqueConstraint("submission_id", "file_id", name="uq_encoder_submission_file"),
+        CheckConstraint(
+            "status IN ('sending', 'accepted', 'not_sent', 'rejected', 'unknown')",
+            name="ck_encoder_item_status",
+        ),
+    )
 
 
 class FileChangeEvent(Base):
@@ -397,4 +511,3 @@ class FileMediaInfo(Base):
     attachments_total_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-

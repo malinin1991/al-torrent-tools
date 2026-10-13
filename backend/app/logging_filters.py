@@ -9,6 +9,8 @@ import re
 _BOT_TOKEN_RE = re.compile(r"\b(\d{6,}:[A-Za-z0-9_-]{20,})\b")
 # URL вида https://api.telegram.org/bot<token>/method
 _BOT_URL_TOKEN_RE = re.compile(r"(/(?:bot))(\d{6,}:[A-Za-z0-9_-]{20,})(/?)", re.IGNORECASE)
+_PASSKEY_RE = re.compile(r"([?&](?:pk|passkey)=)[^&\s\"'<>]+", re.IGNORECASE)
+_SESSION_RE = re.compile(r"((?:_al0|XSRF-TOKEN)=)[^;\s\"']+", re.IGNORECASE)
 
 
 def redact_secrets(text: str) -> str:
@@ -16,6 +18,8 @@ def redact_secrets(text: str) -> str:
         return text
     text = _BOT_URL_TOKEN_RE.sub(r"\1***\3", text)
     text = _BOT_TOKEN_RE.sub("***", text)
+    text = _PASSKEY_RE.sub(r"\1***", text)
+    text = _SESSION_RE.sub(r"\1***", text)
     return text
 
 

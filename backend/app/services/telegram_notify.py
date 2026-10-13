@@ -212,13 +212,20 @@ def set_tracked_enabled(db: Session, release_id: int, enabled: bool, *, source: 
     return row
 
 
-def disable_tracked_by_alias(db: Session, alias: str) -> TrackedRelease | None:
-    cleaned = (alias or "").strip().strip("/").lower()
+def find_tracked_release(db: Session, alias_or_id: str) -> TrackedRelease | None:
+    """Числовые ссылки (включая разобранный Nova URL) адресуют общий release_id."""
+    cleaned = (alias_or_id or "").strip().strip("/").lower()
     if not cleaned:
         return None
-    row = db.scalar(
+    if cleaned.isdigit():
+        return db.get(TrackedRelease, int(cleaned))
+    return db.scalar(
         select(TrackedRelease).where(TrackedRelease.release_alias.ilike(cleaned)).limit(1)
     )
+
+
+def disable_tracked_by_alias(db: Session, alias: str) -> TrackedRelease | None:
+    row = find_tracked_release(db, alias)
     if row is None:
         return None
     row.enabled = False
@@ -232,12 +239,15 @@ def build_torrent_notification_text(
     title: str,
     alias: str,
     torrents: list[dict[str, Any]],
+    offsite: bool = False,
 ) -> str:
     """MarkdownV2-шаблон обновления торрентов (жирный — одиночные *, не **)."""
     message = (
         f"🔔 *Обновление для [{escape_markdown_v2(title)}]"
         f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(alias)})*\n\n"
     )
+    if offsite:
+        message = f"🔔 *Обновление для {escape_markdown_v2(title)}*\nНет на сайте\n\n"
     if not torrents:
         message += "ℹ️ Торренты AVC/HEVC/AV1 не найдены\\."
         return message
@@ -273,6 +283,7 @@ def build_file_changes_notification_text(
     torrent_label: str,
     changes: list[dict[str, Any]],
     baseline: bool = False,
+    offsite: bool = False,
 ) -> str:
     """MarkdownV2: изменения файлов для tracked-релиза.
 
@@ -282,6 +293,8 @@ def build_file_changes_notification_text(
         f"[{escape_markdown_v2(title)}]"
         f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(alias)})"
     )
+    if offsite:
+        release_link = escape_markdown_v2(title) + " · Нет на сайте"
     if baseline:
         message = f"📦 *Файлы торрента добавлены в базу для {release_link}*\n\n"
     else:
@@ -367,6 +380,7 @@ def enqueue_file_changes_notification(
         torrent_label=torrent_label or f"torrent_id={torrent_id}",
         changes=changes,
         baseline=baseline,
+        offsite=_notification_offsite(db, release_id, archive=archive),
     )
     payload = {
         "parse_mode": "MarkdownV2",
@@ -378,6 +392,8 @@ def enqueue_file_changes_notification(
         "title": title,
         "alias": alias,
         "baseline": baseline,
+        "torrent_label": torrent_label or f"torrent_id={torrent_id}",
+        "changes": changes,
     }
     outbox = TelegramOutbox(
         pipeline_id=None,
@@ -507,6 +523,16 @@ def normalize_torrents_payload(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _notification_offsite(db, release_id: int, *, payload=None, archive=None) -> bool:
+    known = isinstance(payload, dict) and payload.get("_source") in {"site", "backoffice"}
+    quality = getattr(archive, "quality_json", None)
+    known = known or (isinstance(quality, dict) and quality.get("_source") in {"site", "backoffice"})
+    if known:
+        from app.services.release_source import release_is_offsite
+        return release_is_offsite(db, release_id)
+    return False
+
+
 def enqueue_pipeline_telegram_notification(
     db: Session,
     pipeline: TorrentPipeline,
@@ -514,9 +540,29 @@ def enqueue_pipeline_telegram_notification(
     release_payload: dict[str, Any] | None = None,
     torrent_payload: dict[str, Any] | None = None,
 ) -> TorrentPipeline:
-    """Если релиз отслеживается и TG включён — пишем в outbox; иначе tg_status=skipped."""
-    # Уже в очереди / отправлено — не дублируем (waiting_master → master_added).
-    if pipeline.tg_status in {TG_STATUS_QUEUED, TG_STATUS_SENT, TG_STATUS_PENDING}:
+    """One primary event per pipeline, including failed/cancelled history.
+
+    A normal processor call must never bypass acknowledgement of unknown
+    delivery. Only explicit retry of the existing failed row can do that.
+    Prevent query autoflush from locking a dirty pipeline before outbox insert.
+    """
+    with db.no_autoflush:
+        return _enqueue_pipeline_notification(db, pipeline, release_payload=release_payload,
+                                              torrent_payload=torrent_payload)
+
+
+def _enqueue_pipeline_notification(
+    db: Session, pipeline: TorrentPipeline, *, release_payload: dict[str, Any] | None,
+    torrent_payload: dict[str, Any] | None,
+) -> TorrentPipeline:
+    if pipeline.tg_status in {TG_STATUS_QUEUED, TG_STATUS_SENT, TG_STATUS_PENDING, OUTBOX_FAILED, OUTBOX_CANCELLED}:
+        return pipeline
+    # Legacy events have NULL dedupe_key. A stale pipeline object or changed chat
+    # does not make them new events; all historical delivery states count.
+    existing = db.scalar(select(TelegramOutbox.id).where(
+        TelegramOutbox.bot_key == PRIMARY_BOT_KEY, TelegramOutbox.pipeline_id == pipeline.id,
+    ).limit(1))
+    if existing is not None:
         return pipeline
 
     if not is_release_tracked(db, pipeline.release_id):
@@ -561,7 +607,8 @@ def enqueue_pipeline_telegram_notification(
         alias = str(pipeline.release_id)
 
     torrents = [torrent_payload] if isinstance(torrent_payload, dict) else []
-    text = build_torrent_notification_text(title=title, alias=alias, torrents=torrents)
+    text = build_torrent_notification_text(title=title, alias=alias, torrents=torrents,
+        offsite=_notification_offsite(db, pipeline.release_id, payload=release_payload))
     payload = {
         "parse_mode": "MarkdownV2",
         "disable_web_page_preview": True,
@@ -570,78 +617,66 @@ def enqueue_pipeline_telegram_notification(
         "torrent_id": pipeline.torrent_id,
         "title": title,
         "alias": alias,
+        "torrents": torrents,
     }
-    db.add(
-        TelegramOutbox(
-            pipeline_id=pipeline.id,
-            bot_key=PRIMARY_BOT_KEY,
-            chat_id=chat_id,
-            payload_json=payload,
-            status=OUTBOX_PENDING,
-            attempts=0,
-            created_at=utcnow(),
-        )
-    )
-    pipeline.tg_status = TG_STATUS_QUEUED
-    db.commit()
-    db.refresh(pipeline)
-    record_pipeline_event(
-        db,
-        pipeline.id,
-        event_type="tg_queued",
-        message=f"Pipeline {pipeline.id}: Telegram уведомление в очереди (chat_id={chat_id})",
-        details={"actor": "job", "chat_id": chat_id, "tg_status": TG_STATUS_QUEUED},
-    )
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    else:
+        raise RuntimeError("Telegram outbox требует PostgreSQL")
+    try:
+        outbox_id = db.execute(insert(TelegramOutbox).values(
+            pipeline_id=pipeline.id, bot_key=PRIMARY_BOT_KEY,
+            dedupe_key=f"primary_pipeline:{pipeline.id}", chat_id=chat_id,
+            payload_json=payload, status=OUTBOX_PENDING, attempts=0,
+            created_at=utcnow(), updated_at=utcnow(),
+        ).on_conflict_do_nothing(index_elements=[TelegramOutbox.bot_key, TelegramOutbox.dedupe_key])
+            .returning(TelegramOutbox.id)).scalar_one_or_none()
+        if outbox_id is not None:
+            pipeline.tg_status = TG_STATUS_QUEUED
+            record_pipeline_event(db, pipeline.id, event_type="tg_queued",
+                message=f"Pipeline {pipeline.id}: Telegram уведомление в очереди (chat_id={chat_id})",
+                details={"actor": "job", "chat_id": chat_id, "tg_status": TG_STATUS_QUEUED,
+                         "bot_key": PRIMARY_BOT_KEY, "outbox_id": outbox_id}, commit=False)
+        db.commit()
+        db.refresh(pipeline)
+    except Exception:
+        db.rollback()
+        raise
     return pipeline
 
 
-def mark_outbox_sent(db: Session, outbox: TelegramOutbox) -> None:
-    outbox.status = OUTBOX_SENT
-    outbox.sent_at = utcnow()
-    outbox.last_error = None
-    if outbox.pipeline_id is not None:
-        pipeline = db.get(TorrentPipeline, outbox.pipeline_id)
-        if pipeline is not None:
-            pipeline.tg_status = TG_STATUS_SENT
-    db.commit()
-    if outbox.pipeline_id is not None:
-        record_pipeline_event(
-            db,
-            outbox.pipeline_id,
-            event_type="tg_sent",
-            message=f"Pipeline {outbox.pipeline_id}: Telegram уведомление отправлено",
-            details={
-                "actor": "job",
-                "outbox_id": outbox.id,
-                "chat_id": outbox.chat_id,
-                "tg_status": TG_STATUS_SENT,
-            },
-        )
+def mark_outbox_sent(db: Session, outbox: TelegramOutbox, *, claim_token: str | None = None,
+                     message_id: int | None = None) -> bool:
+    """Only the current lease owner may acknowledge delivery."""
+    from app.services.telegram_outbox import finalize_outbox
+    return finalize_outbox(db, outbox.id, claim_token,
+                           status=OUTBOX_SENT, message_id=message_id)
 
 
-def mark_outbox_attempt_failed(db: Session, outbox: TelegramOutbox, error: str) -> None:
-    outbox.attempts = int(outbox.attempts or 0) + 1
-    outbox.last_error = error[:2000]
-    outbox.status = OUTBOX_PENDING
-    if outbox.pipeline_id is not None:
-        pipeline = db.get(TorrentPipeline, outbox.pipeline_id)
-        if pipeline is not None and pipeline.tg_status != TG_STATUS_SENT:
-            pipeline.tg_status = TG_STATUS_PENDING
-    db.commit()
+def mark_outbox_attempt_failed(db: Session, outbox: TelegramOutbox, error: str,
+                               *, claim_token: str | None = None) -> bool:
+    from datetime import timedelta
+    from app.services.telegram_outbox import finalize_outbox, retry_delay_seconds
+    return finalize_outbox(db, outbox.id, claim_token,
+        status=OUTBOX_PENDING, error=error, error_kind="temporary",
+        next_attempt_at=utcnow() + timedelta(seconds=retry_delay_seconds(int(outbox.attempts or 0), outbox.id)))
 
 
-def mark_outbox_failed(db: Session, outbox: TelegramOutbox, error: str) -> None:
-    """Терминальная ошибка: больше не ретраим (dead-letter)."""
-    outbox.attempts = int(outbox.attempts or 0) + 1
-    outbox.last_error = (error or "")[:2000]
-    outbox.status = OUTBOX_FAILED
-    db.commit()
+def mark_outbox_failed(db: Session, outbox: TelegramOutbox, error: str,
+                       *, claim_token: str | None = None, error_kind: str = "permanent") -> bool:
+    from app.services.telegram_outbox import finalize_outbox
+    return finalize_outbox(db, outbox.id, claim_token,
+                           status=OUTBOX_FAILED, error=error, error_kind=error_kind)
 
 
-def mark_outbox_cancelled(db: Session, outbox: TelegramOutbox, reason: str) -> None:
-    outbox.last_error = (reason or "")[:2000]
-    outbox.status = OUTBOX_CANCELLED
-    db.commit()
+def mark_outbox_cancelled(db: Session, outbox: TelegramOutbox, reason: str,
+                          *, claim_token: str | None = None) -> bool:
+    from app.services.telegram_outbox import finalize_outbox
+    return finalize_outbox(db, outbox.id, claim_token,
+                           status=OUTBOX_CANCELLED, error=reason, error_kind="acl_rejected")
 
 
 async def test_telegram_get_me(

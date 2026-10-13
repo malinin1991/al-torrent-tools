@@ -1,0 +1,6 @@
+<form id="release-abandoned-{{ release_id }}" class="row" style="gap:6px; margin:0;"
+      hx-post="/releases/{{ release_id }}/abandoned" hx-target="this" hx-swap="outerHTML" hx-trigger="change">
+  <label class="row" style="gap:6px; margin:0;" title="Ручная отметка; загрузки и HEVC-контроль продолжаются">
+    <input type="checkbox" name="abandoned" value="on" {% if is_abandoned %}checked{% endif %} /> Брошен
+  </label>
+</form>

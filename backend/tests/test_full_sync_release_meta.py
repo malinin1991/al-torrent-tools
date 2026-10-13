@@ -96,6 +96,7 @@ def test_full_sync_all_seen_calls_get_release_for_ui_meta(monkeypatch) -> None:
         "app.services.torrent_processor.TorrentArchiveService",
         lambda *_a, **_k: archive_svc,
     )
+    monkeypatch.setattr(processor, "_qb_clients_for_meta", lambda: [])
     monkeypatch.setattr(processor, "_refresh_qb_comments", MagicMock(return_value=0))
     monkeypatch.setattr(processor, "_refresh_qb_tags", MagicMock(return_value=0))
     monkeypatch.setattr(processor, "_refresh_qb_renames", MagicMock(return_value=0))

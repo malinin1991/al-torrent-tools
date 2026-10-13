@@ -1,0 +1,23 @@
+{
+  "verified_at_utc": "2026-10-13T11:23:53.624302+00:00",
+  "ownership_label_verified_before_removal": "altt.operation-eval=20261013",
+  "removed": {
+    "container": {
+      "name": "altt-operations-315-pg-20261013",
+      "absent_after_removal": true
+    },
+    "volume": {
+      "name": "altt-operations-315-pgdata-20261013",
+      "absent_after_removal": true
+    },
+    "network": {
+      "name": "altt-operations-315-20261013",
+      "absent_after_removal": true
+    }
+  },
+  "user_originals_preserved": true,
+  "user_original_size_mtime_ns_verified_unchanged_after_all_series": true,
+  "shared_runtime_images_preserved": true,
+  "clean_source_snapshots_preserved": true,
+  "unrelated_docker_resources_not_modified": true
+}

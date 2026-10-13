@@ -23,6 +23,7 @@ from app.services.hevc_bot import (
     format_release_detail,
     query_release_detail,
     telegram_text_length,
+    _release_link,
 )
 from app.services.runtime_settings import get_setting_value
 from app.services.telegram_access import HEVC_BOT_KEY, list_approved_group_ids
@@ -100,6 +101,13 @@ def sync_overdue_notifications(db: Session, *, now: datetime | None = None) -> i
     return emitted
 
 
+def _baseline_only(db: Session, release_id: int) -> bool:
+    archives = list(db.scalars(select(TorrentArchive).where(TorrentArchive.release_id == release_id)).all())
+    active_avc = [a for a in archives if a.api_present and not a.superseded
+                  and classify_archive_codec(quality_json=a.quality_json, torrent_type=a.torrent_type) == "AVC"]
+    return bool(active_avc) and all(a.notification_baseline for a in active_avc)
+
+
 def enqueue_new_release_notification(
     db: Session,
     *,
@@ -121,6 +129,7 @@ def enqueue_new_release_notification(
     normalized = info_hash.strip().lower()
     if (
         first is None
+        or getattr(first, "notification_baseline", False) is True
         or (first.info_hash or "").strip().lower() != normalized
         or not first.api_present
         or first.superseded
@@ -163,6 +172,8 @@ def _enqueue_release_notifications(
     info_hash: str | None = None,
 ) -> int:
     """Одно сообщение данного типа на релиз и одобренный HEVC-чат."""
+    if _baseline_only(db, release_id):
+        return 0
     chats = list_approved_group_ids(db, bot_key=HEVC_BOT_KEY)
     pending_chats = []
     for chat_id in chats:
@@ -206,6 +217,9 @@ def _enqueue_release_notifications(
                             "release_id": release_id,
                             "info_hash": info_hash,
                             "reply_markup": _release_reply_markup(db, release_id),
+                            "release_link": _release_link(row),
+                            "title": row.title,
+                            "alias": row.alias,
                         },
                         status=OUTBOX_PENDING,
                         attempts=0,
@@ -265,6 +279,8 @@ def enqueue_overdue_event_notifications(
     info_hash = details.get("info_hash")
     if not isinstance(release_id, int):
         return 0
+    if _baseline_only(db, release_id):
+        return 0
     if not isinstance(info_hash, str) or not info_hash.strip():
         return 0
     prev_event_id = details.get("prev_hevc_status_event_id")
@@ -313,6 +329,9 @@ def enqueue_overdue_event_notifications(
                             "event_id": event.id,
                             "info_hash": info_hash.strip().lower(),
                             "reply_markup": _release_reply_markup(db, release_id),
+                            "release_link": _release_link(row),
+                            "title": row.title,
+                            "alias": row.alias,
                         },
                         status=OUTBOX_PENDING,
                         attempts=0,

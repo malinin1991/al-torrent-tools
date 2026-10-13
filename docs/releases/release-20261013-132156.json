@@ -1,0 +1,87 @@
+{
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "tags": [
+    "release-20261013-132156",
+    "latest"
+  ],
+  "digest": "sha256:60bb3f091dc8e22808ba0db641b2404f0db4624131cadabcab9713ba2fbfde10",
+  "build_time_utc": "2026-10-13T13:21:56Z",
+  "published_time_utc": "2026-10-13T13:31:10Z",
+  "git_sha": "7388e07-dirty",
+  "git_commit": "7388e07ba709701f9f1ec7510e0e39426edb8014",
+  "source_sha256": "2107d8a157871f3e2c6e3b7be2abfdcbc70947ee6778c2330f2c645b8617fff2",
+  "source_file_count": 241,
+  "previous_latest_digest": "sha256:86b015c076363dabf6b8ed2647f000eb657e8d08421add811acd0dc6b5e2fe3a",
+  "provenance_attestation": false,
+  "sbom_attestation": false,
+  "validation_environment": "Docker Desktop on macOS arm64; linux/amd64 validated under emulation",
+  "platforms": {
+    "linux/arm64": {
+      "manifest_digest": "sha256:fe2d8cef3fdf5628692d4fd91c617a08c67391bd37f0eb68838adf8862478d3f",
+      "runtime": {
+        "python": "3.15.0",
+        "machine": "aarch64",
+        "gil_enabled": true,
+        "jit_available": false,
+        "mediainfo": "26.10",
+        "libmpdec": "2.5.1",
+        "libyaml": "0.2.5",
+        "build_time": "2026-10-13T13:21:56Z",
+        "git_sha": "7388e07-dirty",
+        "source_checks": 10,
+        "local_env_absent": true
+      },
+      "pytest": "1288 passed, 0 skipped",
+      "pip_check": "No broken requirements found.",
+      "alembic_head": "0026_job_outcomes_outbox (head)",
+      "compileall": "passed",
+      "startup": {
+        "health": "ok",
+        "pages": [
+          "/",
+          "/jobs",
+          "/hevc-workbench",
+          "/telegram-outbox",
+          "/encoder-history",
+          "/static/hevc_workbench.js",
+          "/static/operations.js"
+        ],
+        "startup_migrations": "passed"
+      }
+    },
+    "linux/amd64": {
+      "manifest_digest": "sha256:31a2f6eb9477a81143dd4dc346e5c212a996cafe1e3ea436d451da6871d578e2",
+      "runtime": {
+        "python": "3.15.0",
+        "machine": "x86_64",
+        "gil_enabled": true,
+        "jit_available": false,
+        "mediainfo": "26.10",
+        "libmpdec": "2.5.1",
+        "libyaml": "0.2.5",
+        "build_time": "2026-10-13T13:21:56Z",
+        "git_sha": "7388e07-dirty",
+        "source_checks": 10,
+        "local_env_absent": true
+      },
+      "pytest": "1288 passed, 0 skipped",
+      "pip_check": "No broken requirements found.",
+      "alembic_head": "0026_job_outcomes_outbox (head)",
+      "compileall": "passed",
+      "startup": {
+        "health": "ok",
+        "pages": [
+          "/",
+          "/jobs",
+          "/hevc-workbench",
+          "/telegram-outbox",
+          "/encoder-history",
+          "/static/hevc_workbench.js",
+          "/static/operations.js"
+        ],
+        "startup_migrations": "passed"
+      }
+    }
+  },
+  "unraid_deployed": false
+}

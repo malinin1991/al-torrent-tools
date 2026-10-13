@@ -42,6 +42,13 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
         interval_default_sec=settings.ongoing_interval_sec,
     ),
     JobTypeDef(
+        type="backoffice_sync",
+        title="Backoffice sync",
+        description="Read-only обход скрытых / copyright-blocked релизов админки; сверка источников и меток qB.",
+        interval_setting_key="backoffice_interval_sec",
+        interval_default_sec=settings.backoffice_interval_sec,
+    ),
+    JobTypeDef(
         type="full_sync",
         title="Full sync",
         description=(
@@ -69,6 +76,13 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
             "даже если он не в отслеживании (архив + process_release / meta)."
         ),
         manual_hint="При запуске запрашивается URL / alias / id релиза.",
+    ),
+    JobTypeDef(
+        type="retry_sync_failures",
+        title="Повтор ошибок синхронизации",
+        description="Повтор только выбранных проблемных объектов завершённого запуска с проверкой точной версии.",
+        manual_run=False,
+        manual_hint="Выберите ошибки в результате исходной синхронизации.",
     ),
     JobTypeDef(
         type="cleanup_master",

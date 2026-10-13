@@ -1,0 +1,18 @@
+{
+  "operation_benchmark_core_linux_arm64.json": {
+    "bytes": 442755,
+    "sha256": "d9e2f28c7eb249603eb1c8b05da4e2e084d040971513ed0f3c2f4e387d89b4f1"
+  },
+  "operation_benchmark_supplement_linux_arm64.json": {
+    "bytes": 336169,
+    "sha256": "70ca435fb6976262b04f35a235ce059b012bed4cb40e30b93a025ad8cb0a010c"
+  },
+  "operation_benchmark_hevc_pool_linux_arm64.json": {
+    "bytes": 252478,
+    "sha256": "2a4e04b120ddea7d26304b02eda61d177608bbcf48763ebbeed571618de87496"
+  },
+  "operation_benchmark_mediainfo_workers_linux_arm64.json": {
+    "bytes": 239024,
+    "sha256": "db000161f0ae2a56f847a585dc65f3562709f253b6d67704ae5d311908aa1bad"
+  }
+}

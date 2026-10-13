@@ -26,6 +26,13 @@
         {% if group.is_blocked_by_geo %}
         <span class="badge badge-danger" title="Блокировка по геолокации">Геоблок</span>
         {% endif %}
+        {% if group.source == 'backoffice' %}
+        <span class="member-tag source-tag--backoffice" title="Админка · нет на сайте" aria-label="Источник: админка, нет на сайте">B</span>
+        {% elif group.source == 'site' %}
+        <span class="member-tag source-tag--site" title="Сайт" aria-label="Источник: сайт">L</span>
+        {% endif %}
+        {% if group.is_hidden %}<span class="badge badge-danger">Скрыт</span>{% endif %}
+        {% if group.is_abandoned %}<span class="badge badge-danger">Брошен</span>{% endif %}
         {% if group.is_blocked_by_copyrights %}
         <span class="badge badge-danger" title="Заблокирован правообладателем">Копирасты</span>
         {% endif %}
@@ -69,6 +76,9 @@
       {% endif %}
       {% with release_id=group.release_id, release_alias=group.release_alias, anime_name=group.anime_name, tracked=group.tracked, track_source=group.track_source %}
       {% include "partials/release_track_toggle.html" %}
+      {% endwith %}
+      {% with release_id=group.release_id, is_abandoned=group.is_abandoned %}
+      {% include "partials/release_abandoned_toggle.html" %}
       {% endwith %}
     </div>
     <table>
@@ -207,11 +217,12 @@
 {% set tracked_qs = '&tracked_only=on' if tracked_only else '' %}
 {% set hevc_qs = ('&hevc_filter=' ~ (hevc_filter|urlencode)) if hevc_filter else '' %}
 {% set hidden_qs = '&show_hidden=on' if show_hidden else '' %}
+{% set source_qs = '&source_filter=' ~ (source_filter|urlencode) ~ '&block_filter=' ~ (block_filter|urlencode) ~ '&abandoned_filter=' ~ (abandoned_filter|urlencode) %}
 <div class="row" style="margin-top:12px;">
   {% if page > 1 %}
-  <a class="btn" href="/releases?search={{ search|urlencode }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}&page={{ page - 1 }}">Назад</a>
+  <a class="btn" href="/releases?search={{ search|urlencode }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}{{ source_qs }}&page={{ page - 1 }}">Назад</a>
   {% endif %}
   {% if page < total_pages %}
-  <a class="btn" href="/releases?search={{ search|urlencode }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}&page={{ page + 1 }}">Вперёд</a>
+  <a class="btn" href="/releases?search={{ search|urlencode }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}{{ source_qs }}&page={{ page + 1 }}">Вперёд</a>
   {% endif %}
 </div>

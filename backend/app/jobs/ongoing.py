@@ -22,6 +22,7 @@ from app.services.release_checkpoint import (
 from app.services.runtime_settings import build_anilibria_client
 from app.services.telegram_notify import list_enabled_tracked_releases
 from app.services.torrent_processor import TorrentProcessor
+from app.services.sync_outcomes import current_outcome, sync_job
 
 
 def _setting_int(db: Session, key: str, default: int) -> int:
@@ -121,8 +122,10 @@ async def _confirm_removed(client: Any, release_id: int) -> bool:
     return False
 
 
+@sync_job
 async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
     _ = params
+    outcome = current_outcome(db, job_id)
     _add_log(db, job_id, "Ongoing: инициализация клиента AniLibria и TorrentProcessor")
     al_client = build_anilibria_client(db)
     processor = TorrentProcessor(db=db, job_id=job_id, client=al_client)
@@ -143,6 +146,9 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
             _validated_items(payload, schedule=True)
         )
     except Exception as exc:
+        if isinstance(exc, JobStopRequested):
+            raise
+        outcome.failure(operation="schedule", code="schedule_unavailable", message=exc, retryable=False)
         _add_log(
             db,
             job_id,
@@ -175,6 +181,9 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
                     _extract_releases_from_schedule(_validated_items(details))
                 )
             except Exception as exc:
+                if isinstance(exc, JobStopRequested):
+                    raise
+                outcome.failure(operation="extra_ref", code="extra_ref_unavailable", message=exc, retryable=False)
                 _add_log(
                     db,
                     job_id,
@@ -204,6 +213,14 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
             _add_log(db, job_id, "Ongoing: остановка по запросу", "warning")
             raise JobStopRequested()
         try:
+            from app.providers.anilibria.sources import ReleaseSourceClient
+            if isinstance(al_client, ReleaseSourceClient):
+                from app.db.models import Release
+                state = db.get(Release, ref.release_id)
+                if state is not None and state.source == "backoffice":
+                    # Админка проверяет эти релизы своим отдельным, более редким интервалом.
+                    outcome.release(ref.release_id, status="skipped")
+                    continue
             _add_log(
                 db,
                 job_id,
@@ -223,6 +240,7 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
                         job_id,
                         f"Ongoing: релиз {ref.release_id} удалён из донаблюдения (404)",
                     )
+                    outcome.release(ref.release_id, status="skipped")
                     continue
                 raise
             torrents = _validated_items(payload)
@@ -233,6 +251,7 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
                     job_id,
                     f"Ongoing: релиз {ref.release_id} удалён из донаблюдения (404)",
                 )
+                outcome.release(ref.release_id, status="skipped")
                 continue
             extended += int(
                 observe_torrents(
@@ -261,15 +280,18 @@ async def run_ongoing(db: Session, job_id: int, params: dict[str, Any]) -> None:
                         job_id,
                         f"Ongoing: релиз {ref.release_id} удалён из донаблюдения (404)",
                     )
+                    outcome.release(ref.release_id, status="skipped")
                     continue
                 raise
             processed += 1
             TorrentProcessor.merge_release_stats(total_stats, part)
+            outcome.release(ref.release_id, part)
         except JobStopRequested:
             raise
         except Exception as exc:
             db.rollback()
             errors += 1
+            outcome.failure(release_id=ref.release_id, source="site", message=exc)
             _add_log(
                 db,
                 job_id,

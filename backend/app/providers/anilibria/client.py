@@ -80,7 +80,15 @@ class AniLibriaClient:
             for exc in errors
         ):
             raise AniLibriaNotFoundError("AniLibria API: ресурс не найден") from last_error
-        raise RuntimeError("AniLibria API недоступен на основном и fallback URL") from last_error
+        # Не выводим URL, параметры и тело ответа: в них могут оказаться секреты.
+        reasons = [
+            f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
+            else "некорректный JSON" if isinstance(exc, ValueError)
+            else type(exc).__name__
+            for exc in errors
+        ]
+        reason = ", ".join(dict.fromkeys(reasons))
+        raise RuntimeError(f"AniLibria API: запрос не выполнен ({reason})") from last_error
 
     async def _request_bytes(self, path: str, params: dict[str, Any] | None = None) -> bytes:
         base_urls = [self.base_url]
@@ -178,10 +186,13 @@ class AniLibriaClient:
         return await self._request_json("/anime/schedule/week", self._build_fields_params(include, exclude) or None)
 
     async def get_release(self, release_id_or_alias: str | int, include: Iterable[str] | None = None, exclude: Iterable[str] | None = None) -> Any:
-        return await self._request_json(
+        result = await self._request_json(
             f"/anime/releases/{release_id_or_alias}",
             self._build_fields_params(include, exclude) or None,
         )
+        if isinstance(result, dict):
+            result = {**result, "_source": "site"}
+        return result
 
     async def get_releases_list(
         self,

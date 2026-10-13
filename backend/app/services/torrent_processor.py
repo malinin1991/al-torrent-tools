@@ -1,5 +1,6 @@
 from app.utils.datetime_fmt import utcnow
 from typing import Any
+from contextlib import contextmanager
 
 import qbittorrentapi
 from sqlalchemy import or_, select
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import ExtraUrl, JobLog, QbClient, SeenTorrent, TorrentArchive
 from app.providers.anilibria.client import AniLibriaClient
 from app.services.anilibria_auth import ensure_passkey_stored
+from app.services.sync_outcomes import current_outcome
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import (
     _ensure_torrent_comment,
@@ -31,6 +33,7 @@ from app.services.release_checkpoint import (
 from app.services.hevc_pairing import sync_hevc_pair_events_for_release
 from app.services.telegram_notify import enqueue_pipeline_telegram_notification
 from app.services.torrent_archive import TorrentArchiveService
+from app.services.release_source import release_url as source_release_url
 from app.services.file_tracker import update_api_present_for_release
 from app.services.torrent_qb_meta import (
     build_qb_torrent_name_from_archive,
@@ -67,8 +70,84 @@ class TorrentProcessor:
         self._al_client = client
         self._pipeline = TorrentPipelineService(db, job_id=job_id)
         self._master_wait_reason = qb_client_wait_message("master", missing=True)
+        self._retry_targets = None
+        self._retry_qb_role = None
+        self._policy_targets = None
+        self._retry_operation = None
+        self._active_release_id = None
+        self._metadata_waiting_roles = set()
+
+    def _source(self, release_id: int) -> str:
+        from app.providers.anilibria.sources import ReleaseSourceClient
+        if isinstance(self._al_client, ReleaseSourceClient):
+            return self._al_client._releases.get(release_id, {}).get("_source", "unknown")
+        return "site"
+
+    def _failure(self, release_id: int, exc, *, torrent_id=None, info_hash=None,
+                 operation="process", qb_role=None, force_qb_load=False):
+        outcome = current_outcome(self._db, self._job_id)
+        if outcome is not None:
+            from app.providers.anilibria.sources import ReleaseSourceClient
+            payload = self._al_client._releases.get(release_id, {}) if isinstance(self._al_client, ReleaseSourceClient) else {}
+            outcome.failure(release_id=release_id, torrent_id=torrent_id, info_hash=info_hash,
+                source=self._source(release_id), operation=operation, qb_role=qb_role, message=exc,
+                retry_params={"force_qb_load": force_qb_load, "notification_baseline": bool(payload.get("_notification_baseline"))})
+
+    def _torrent_outcome(self, release_id, torrent_id, info_hash, status):
+        outcome = current_outcome(self._db, self._job_id)
+        if outcome is not None:
+            outcome.torrent(release_id, torrent_id, info_hash, status)
+
+    def _has_release_errors(self, release_id):
+        outcome = current_outcome(self._db, self._job_id)
+        return outcome is not None and any(f["release_id"] == release_id for f in outcome.failures.values())
+
+    def _metadata_failed(self, release_id, torrent_id, info_hash, role, client, operation, desired=None):
+        """Verify final state: legacy helpers return False for both no-op and error."""
+        if current_outcome(self._db, self._job_id) is None:
+            return
+        try:
+            items = list(client.torrents_info(torrent_hashes=info_hash) or [])
+            present = bool(items)
+            if present and desired is not None:
+                if operation == "comment":
+                    props = client.torrents_properties(torrent_hash=info_hash)
+                    current = props.get("comment") if isinstance(props, dict) else getattr(props, "comment", None)
+                    if isinstance(current, str) and current.strip() == str(desired).strip():
+                        return
+                elif operation == "rename":
+                    current = items[0].get("name") if isinstance(items[0], dict) else getattr(items[0], "name", None)
+                    if isinstance(current, str) and current.strip() == str(desired).strip():
+                        return
+                elif operation == "tags":
+                    raw = items[0].get("tags") if isinstance(items[0], dict) else getattr(items[0], "tags", None)
+                    current = {t.strip().casefold() for t in (raw or "").split(",")} if isinstance(raw, str) else set()
+                    wanted = {t.casefold() for t in desired}
+                    from app.services.torrent_policy import SOURCE_TAGS
+                    managed = self._managed_qb_genres(info_hash, desired)
+                    extra = (current - wanted - SOURCE_TAGS) if managed is None else (current & {t.casefold() for t in managed} - wanted - SOURCE_TAGS)
+                    if wanted.issubset(current) and not extra:
+                        return
+        except Exception as exc:
+            if should_wait_for_qb(exc):
+                self._torrent_outcome(release_id, torrent_id, info_hash, "waiting")
+                return
+            self._failure(release_id, exc, torrent_id=torrent_id, info_hash=info_hash, operation=operation, qb_role=role)
+            return
+        if present:
+            self._failure(release_id, "Метаданные не применены к существующей раздаче", torrent_id=torrent_id,
+                info_hash=info_hash, operation=operation, qb_role=role)
+
+    def _check_stop(self):
+        outcome = current_outcome(self._db, self._job_id)
+        if outcome is not None:
+            from app.services.job_runner import JobStopRequested, is_stop_requested
+            if is_stop_requested(self._db, self._job_id):
+                raise JobStopRequested()
 
     def _add_log(self, message: str, level: str = "info") -> None:
+        from app.logging_filters import redact_secrets
+        message = redact_secrets(message)
         self._db.add(JobLog(job_id=self._job_id, message=message, level=level))
         self._db.commit()
 
@@ -84,6 +163,10 @@ class TorrentProcessor:
                     "debug",
                 )
         except Exception as exc:
+            from app.services.job_runner import JobStopRequested
+            if isinstance(exc, JobStopRequested):
+                raise
+            self._failure(release_id, exc)
             self._add_log(
                 f"Релиз {release_id}: hevc_status sync failed: {exc}",
                 "warning",
@@ -124,6 +207,7 @@ class TorrentProcessor:
             return qb
         except Exception as exc:
             if role_key == "master" and should_wait_for_qb(exc):
+                self._metadata_waiting_roles.add(role_key)
                 self._master_wait_reason = qb_client_wait_message("master", exc)
                 self._add_log(
                     f"{self._master_wait_reason} Торренты → waiting_master.",
@@ -133,21 +217,24 @@ class TorrentProcessor:
             if role_key == "master" and "Не найден" in str(exc):
                 return None
             if role_key != "master" and should_wait_for_qb(exc):
+                self._metadata_waiting_roles.add(role_key)
                 self._add_log(f"{qb_client_wait_message(role_key, exc)} (meta refresh)", "warning")
                 return None
             if role_key == "master":
                 raise
+            if self._active_release_id is not None:
+                self._failure(self._active_release_id, exc, operation="meta", qb_role=role_key)
             self._add_log(f"qB {role_key}: {exc} (meta refresh)", "warning")
             return None
 
     def _qb_clients_for_meta(self) -> list[tuple[str, qbittorrentapi.Client]]:
         clients: list[tuple[str, qbittorrentapi.Client]] = []
-        master = self._try_connect_qb("master", log_missing=False)
-        if master is not None:
-            clients.append(("master", master))
-        slave = self._try_connect_qb("slave", log_missing=False)
-        if slave is not None:
-            clients.append(("slave", slave))
+        self._metadata_waiting_roles = set()
+        roles = (self._retry_qb_role,) if self._retry_qb_role else ("master", "slave")
+        for role in roles:
+            client = self._try_connect_qb(role, log_missing=False)
+            if client is not None:
+                clients.append((role, client))
         return clients
 
     def _alias_for_release(self, release_id: int, release_alias: str | None) -> str | None:
@@ -187,6 +274,8 @@ class TorrentProcessor:
         seen: SeenTorrent | None,
     ) -> list[str]:
         """Хэши для setComment: архив (из файла) → seen → API."""
+        if self._retry_targets is not None:
+            return [api_hash] if api_hash else []
         candidates: list[str] = []
 
         def _add(raw: str | None) -> None:
@@ -222,17 +311,19 @@ class TorrentProcessor:
         return []
 
     def _persist_genres_to_archives(self, release_id: int, genres: list[str]) -> None:
-        if not genres:
-            return
         rows = self._db.scalars(
             select(TorrentArchive).where(TorrentArchive.release_id == release_id)
         ).all()
         changed = False
         for row in rows:
+            if self._retry_targets is not None and (row.torrent_id, row.info_hash.lower()) not in (self._policy_targets or set()):
+                continue
             quality = dict(row.quality_json) if isinstance(row.quality_json, dict) else {}
             if genres_from_quality_json(quality) == genres:
                 continue
             quality["genres"] = genres
+            previous = quality.get("qb_managed_genres", genres_from_quality_json(row.quality_json))
+            quality["qb_managed_genres"] = list(dict.fromkeys(previous + genres))
             row.quality_json = quality
             changed = True
         if changed:
@@ -254,6 +345,8 @@ class TorrentProcessor:
         ).all()
         changed = False
         for row in rows:
+            if self._retry_targets is not None and (row.torrent_id, row.info_hash.lower()) not in (self._policy_targets or set()):
+                continue
             quality = dict(row.quality_json) if isinstance(row.quality_json, dict) else {}
             row_changed = False
             if members is not None and members_from_quality_json(quality) != members:
@@ -286,7 +379,7 @@ class TorrentProcessor:
         upsert_release_meta(self._db, release_id, release_payload, commit=True)
 
         genres = extract_release_genres(release_payload)
-        if genres:
+        if genres or (release_payload.get("_source") == "backoffice" and isinstance(release_payload.get("genres"), list)):
             self._persist_genres_to_archives(release_id, genres)
         members = extract_release_members(release_payload)
         geo, copy = extract_release_block_flags(release_payload)
@@ -317,7 +410,7 @@ class TorrentProcessor:
         if release_payload is not None:
             self._persist_release_ui_meta_from_payload(release_id, release_payload)
             genres = extract_release_genres(release_payload)
-            if genres:
+            if genres or (release_payload.get("_source") == "backoffice" and isinstance(release_payload.get("genres"), list)):
                 return genres
         try:
             payload = await self._al_client.get_release(
@@ -333,15 +426,28 @@ class TorrentProcessor:
                 ],
             )
         except Exception as exc:
+            from app.services.job_runner import JobStopRequested
+            if isinstance(exc, JobStopRequested):
+                raise
+            self._failure(release_id, exc, operation="meta")
             self._add_log(f"Релиз {release_id}: не удалось получить genres: {exc}", "warning")
             return self._genres_from_archives(release_id)
         if not isinstance(payload, dict):
             return self._genres_from_archives(release_id)
         self._persist_release_ui_meta_from_payload(release_id, payload)
         genres = extract_release_genres(payload)
-        if genres:
+        if genres or (payload.get("_source") == "backoffice" and isinstance(payload.get("genres"), list)):
             return genres
         return self._genres_from_archives(release_id)
+
+    def _managed_qb_genres(self, info_hash: str, desired: list[str]) -> list[str] | None:
+        from app.providers.anilibria.sources import ReleaseSourceClient
+        if not isinstance(self._al_client, ReleaseSourceClient):
+            return None
+        archive = self._db.scalar(select(TorrentArchive).where(TorrentArchive.info_hash == info_hash).limit(1))
+        quality = archive.quality_json if archive is not None and isinstance(archive.quality_json, dict) else {}
+        known = quality.get("qb_managed_genres", quality.get("genres", []))
+        return list(dict.fromkeys((known if isinstance(known, list) else []) + desired))
 
     def _refresh_qb_tags(
         self,
@@ -349,12 +455,17 @@ class TorrentProcessor:
         release_id: int,
         torrents: list[dict[str, Any]],
         genre_tags: list[str],
+        clients: list | None = None,
     ) -> int:
         """Проставляет genre tags на master/slave для уже известных торрентов."""
         if not genre_tags:
-            return 0
-        clients = self._qb_clients_for_meta()
+            from app.providers.anilibria.sources import ReleaseSourceClient
+            if not isinstance(self._al_client, ReleaseSourceClient):
+                return 0
+        clients = self._qb_clients_for_meta() if clients is None else clients
         if not clients:
+            for t in torrents:
+                self._torrent_outcome(release_id, self._to_int(t.get("id") or t.get("torrent_id")), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "waiting")
             return 0
 
         updated = 0
@@ -381,14 +492,18 @@ class TorrentProcessor:
                         attempts=3,
                         delay_sec=0.2,
                         require_present=True,
+                        managed_tags=self._managed_qb_genres(info_hash, genre_tags),
                     ):
                         updated += 1
                         break
+                else:
+                    self._metadata_failed(release_id, torrent_id, hashes[0], _role, client, "tags", genre_tags)
         if updated:
             self._add_log(
                 f"Релиз {release_id}: обновлено tags на qB: {updated} ({genre_tags})",
                 "debug",
             )
+
         return updated
 
     def _refresh_qb_comments(
@@ -397,11 +512,12 @@ class TorrentProcessor:
         release_id: int,
         release_alias: str | None,
         torrents: list[dict[str, Any]],
+        clients: list | None = None,
     ) -> int:
         """Проставляет URL релиза в comment на master/slave для уже известных торрентов."""
         site_url = resolve_anilibria_site_url(self._al_client.base_url)
         alias = self._alias_for_release(release_id, release_alias)
-        release_url = build_release_torrents_url(alias, site_url=site_url)
+        release_url = source_release_url(self._db, release_id, alias, site_url=site_url)
         if not release_url:
             self._add_log(
                 f"Релиз {release_id}: нет alias — нечего писать в comment",
@@ -409,8 +525,10 @@ class TorrentProcessor:
             )
             return 0
 
-        clients = self._qb_clients_for_meta()
+        clients = self._qb_clients_for_meta() if clients is None else clients
         if not clients:
+            for t in torrents:
+                self._torrent_outcome(release_id, self._to_int(t.get("id") or t.get("torrent_id")), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "waiting")
             self._add_log(
                 f"Релиз {release_id}: нет доступных qB для обновления comment",
                 "warning",
@@ -448,6 +566,7 @@ class TorrentProcessor:
                         ok = True
                         break
                 if not ok:
+                    self._metadata_failed(release_id, torrent_id, hashes[0], role, client, "comment", release_url)
                     self._add_log(
                         f"Релиз {release_id}: не удалось обновить comment на {role} "
                         f"для torrent_id={torrent_id}",
@@ -507,10 +626,13 @@ class TorrentProcessor:
         release_id: int,
         torrents: list[dict[str, Any]],
         release_payload: dict[str, Any] | None = None,
+        clients: list | None = None,
     ) -> int:
         """Переименовывает торренты на master/slave по актуальному display name."""
-        clients = self._qb_clients_for_meta()
+        clients = self._qb_clients_for_meta() if clients is None else clients
         if not clients:
+            for t in torrents:
+                self._torrent_outcome(release_id, self._to_int(t.get("id") or t.get("torrent_id")), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "waiting")
             return 0
 
         updated = 0
@@ -539,8 +661,11 @@ class TorrentProcessor:
                         display_name,
                         require_present=True,
                     ):
+                        self._metadata_failed(release_id, torrent_id, info_hash, _role, client, "rename", display_name)
                         updated += 1
                         break
+                else:
+                    self._metadata_failed(release_id, torrent_id, hashes[0], _role, client, "rename", display_name)
         if updated:
             self._add_log(
                 f"Релиз {release_id}: обновлено rename на qB: {updated}",
@@ -549,6 +674,21 @@ class TorrentProcessor:
         return updated
 
     async def refresh_release_meta(
+        self,
+        release_id: int,
+        release_alias: str | None = None,
+        torrents: list[dict[str, Any]] | None = None,
+        *,
+        torrent_id_filter: int | None = None,
+        release_payload: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
+        with self._release_source_update(release_id):
+            return await self._refresh_release_meta(
+                release_id, release_alias, torrents,
+                torrent_id_filter=torrent_id_filter, release_payload=release_payload,
+            )
+
+    async def _refresh_release_meta(
         self,
         release_id: int,
         release_alias: str | None = None,
@@ -566,7 +706,8 @@ class TorrentProcessor:
                 release_id,
                 include=list(self.RELEASE_TORRENTS_INCLUDE),
             )
-            torrents = self._iter_torrents(torrents_payload)
+            from app.jobs.ongoing import _validated_items
+            torrents = _validated_items(torrents_payload)
 
         if torrent_id_filter is not None:
             torrents = [
@@ -598,6 +739,10 @@ class TorrentProcessor:
                 if isinstance(fetched, dict):
                     payload = fetched
             except Exception as exc:
+                from app.services.job_runner import JobStopRequested
+                if isinstance(exc, JobStopRequested):
+                    raise
+                self._failure(release_id, exc, operation="meta")
                 self._add_log(
                     f"Релиз {release_id}: не удалось получить release для meta: {exc}",
                     "warning",
@@ -633,22 +778,29 @@ class TorrentProcessor:
                 "debug",
             )
 
+        clients = self._qb_clients_for_meta()
+        if self._metadata_waiting_roles:
+            for t in meta_torrents:
+                self._torrent_outcome(release_id, self._to_int(t.get("id") or t.get("torrent_id")), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "waiting")
         renames_updated = self._refresh_qb_renames(
             release_id=release_id,
             torrents=meta_torrents,
+            clients=clients,
             release_payload=payload,
-        )
+        ) if self._retry_operation in {None, "process", "meta", "rename"} else 0
         comments_updated = self._refresh_qb_comments(
             release_id=release_id,
             release_alias=release_alias
             or (self._clean_release_alias(payload) if isinstance(payload, dict) else None),
             torrents=meta_torrents,
-        )
+            clients=clients,
+        ) if self._retry_operation in {None, "process", "meta", "comment"} else 0
         tags_updated = self._refresh_qb_tags(
             release_id=release_id,
             torrents=meta_torrents,
+            clients=clients,
             genre_tags=genre_tags,
-        )
+        ) if self._retry_operation in {None, "process", "meta", "tags"} else 0
         return {
             "archive": archive_updated,
             "renames": renames_updated,
@@ -690,7 +842,7 @@ class TorrentProcessor:
                 info_hash = sanitize_info_hash(archive.info_hash)
             except ValueError:
                 continue
-            release_url = build_release_torrents_url(archive.release_alias, site_url=site_url)
+            release_url = source_release_url(self._db, archive.release_id, archive.release_alias, site_url=site_url)
             genre_tags = genres_from_quality_json(
                 archive.quality_json if isinstance(archive.quality_json, dict) else None
             )
@@ -714,6 +866,7 @@ class TorrentProcessor:
                     updated += 1
                 elif release_url:
                     missing += 1
+                    self._metadata_failed(archive.release_id, archive.torrent_id, info_hash, role, client, "comment", release_url)
                 if genre_tags and _ensure_torrent_tags(
                     client,
                     info_hash,
@@ -721,8 +874,11 @@ class TorrentProcessor:
                     attempts=2,
                     delay_sec=0.15,
                     require_present=require_present,
+                    managed_tags=self._managed_qb_genres(info_hash, genre_tags),
                 ):
                     tags_updated += 1
+                elif genre_tags:
+                    self._metadata_failed(archive.release_id, archive.torrent_id, info_hash, role, client, "tags", genre_tags)
 
         self._add_log(
             f"Backfill meta: готово, архивов={len(archives)}, "
@@ -811,6 +967,7 @@ class TorrentProcessor:
             "comments": 0,
             "tags": 0,
             "renames": 0,
+            "errors": 0,
         }
 
     @classmethod
@@ -829,6 +986,7 @@ class TorrentProcessor:
             + (f", comments={batch['comments']}" if batch.get("comments") else "")
             + (f", tags={batch['tags']}" if batch.get("tags") else "")
             + (f", renames={batch['renames']}" if batch.get("renames") else "")
+            + (f", ошибок={batch['errors']}" if batch.get("errors") else "")
         )
 
     async def refresh_api_present_only(self, release_id: int) -> dict[str, int]:
@@ -867,7 +1025,9 @@ class TorrentProcessor:
                 f"Релиз {release_id}: force_qb_load — нет доступных qB (master/slave)",
                 "warning",
             )
-            return {"added": 0, "updated": 0, "skipped": len(torrents)}
+            for t in torrents:
+                self._torrent_outcome(release_id, self._to_int(t.get("id")), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "waiting")
+            return {"added": 0, "updated": 0, "skipped": 0, "waiting_master": len(torrents), "errors": 0}
 
         passkey = await ensure_passkey_stored(self._db)
         if passkey:
@@ -894,6 +1054,10 @@ class TorrentProcessor:
                 if isinstance(fetched, dict):
                     payload = fetched
             except Exception as exc:
+                from app.services.job_runner import JobStopRequested
+                if isinstance(exc, JobStopRequested):
+                    raise
+                self._failure(release_id, exc, operation="meta", force_qb_load=True)
                 self._add_log(
                     f"Релиз {release_id}: force_qb_load — get_release не удался: {exc}",
                     "warning",
@@ -907,7 +1071,10 @@ class TorrentProcessor:
         added = 0
         updated = 0
         skipped = 0
+        errors = 0
+        waiting = 0
         for torrent in torrents:
+            self._check_stop()
             torrent_id = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
             if torrent_id is None:
                 skipped += 1
@@ -928,6 +1095,11 @@ class TorrentProcessor:
                         path.read_bytes(),
                         effective_passkey,
                     )
+                    from app.services.torrent_policy import prepare_archive_bytes, replace_trackers
+                    if isinstance(payload, dict) and payload.get("_source") == "backoffice":
+                        torrent_bytes = replace_trackers(torrent_bytes, effective_passkey)
+                    else:
+                        torrent_bytes = prepare_archive_bytes(archive, torrent_bytes, effective_passkey)
                 if not category and archive.category:
                     category = archive.category
                 if not genre_tags:
@@ -940,13 +1112,23 @@ class TorrentProcessor:
                     torrent_bytes = await self._al_client.download_torrent_file(torrent_id)
                     torrent_bytes = ensure_announce_passkey(torrent_bytes, effective_passkey)
                 except Exception as exc:
+                    from app.services.job_runner import JobStopRequested
+                    if isinstance(exc, JobStopRequested):
+                        raise
                     self._add_log(
                         f"Релиз {release_id}: force_qb_load торрент {torrent_id}: "
                         f"нет файла в архиве и download failed: {exc}",
                         "error",
                     )
-                    skipped += 1
+                    errors += 1
+                    self._failure(release_id, exc, torrent_id=torrent_id, info_hash=api_hash, operation="force_load", force_qb_load=True)
                     continue
+
+            if self._retry_targets is not None and api_hash and sanitize_info_hash(torrent_info_hash(torrent_bytes)) != api_hash:
+                errors += 1
+                self._failure(release_id, "Скачанный файл относится к другой версии; отправка отменена", torrent_id=torrent_id,
+                    info_hash=api_hash, operation="force_load", force_qb_load=True)
+                continue
 
             display_name = self._display_name_for_torrent(
                 {**torrent, "id": torrent_id},
@@ -967,7 +1149,7 @@ class TorrentProcessor:
                 )
                 or (archive.release_alias if archive is not None else None),
             )
-            release_url = build_release_torrents_url(alias_value, site_url=site_url)
+            release_url = source_release_url(self._db, release_id, alias_value, site_url=site_url)
             torrent_category = category or (archive.category if archive is not None else None)
 
             for role, client in clients:
@@ -979,13 +1161,22 @@ class TorrentProcessor:
                         comment=release_url,
                         category=torrent_category,
                         tags=genre_tags,
+                        managed_tags=self._managed_qb_genres(torrent_info_hash(torrent_bytes), genre_tags),
                     )
                 except Exception as exc:
+                    from app.services.job_runner import JobStopRequested
+                    if isinstance(exc, JobStopRequested):
+                        raise
+                    if should_wait_for_qb(exc):
+                        waiting += 1
+                        self._torrent_outcome(release_id, torrent_id, api_hash, "waiting")
+                        continue
                     self._add_log(
                         f"Релиз {release_id}: force_qb_load торрент {torrent_id} → {role}: {exc}",
                         "error",
                     )
-                    skipped += 1
+                    errors += 1
+                    self._failure(release_id, exc, torrent_id=torrent_id, info_hash=api_hash, operation="force_load", qb_role=role, force_qb_load=True)
                     continue
                 if added_new:
                     added += 1
@@ -1000,11 +1191,13 @@ class TorrentProcessor:
                         "debug",
                     )
                 if release_url and not comment_ok:
+                    self._metadata_failed(release_id, torrent_id, api_hash, role, client, "comment", release_url)
                     self._add_log(
                         f"force_qb_load: торрент {torrent_id} comment не установлен на {role}",
                         "warning",
                     )
                 if genre_tags and not tags_ok:
+                    self._metadata_failed(release_id, torrent_id, api_hash, role, client, "tags", genre_tags)
                     self._add_log(
                         f"force_qb_load: торрент {torrent_id} tags не установлены на {role}",
                         "warning",
@@ -1015,9 +1208,55 @@ class TorrentProcessor:
             f"added={added}, updated={updated}, skipped={skipped}",
             "info",
         )
-        return {"added": added, "updated": updated, "skipped": skipped}
+        return {"added": added, "updated": updated, "skipped": skipped, "errors": errors, "waiting_master": waiting}
 
-    async def process_release(
+    @contextmanager
+    def _release_source_update(self, release_id: int):
+        """Shared release lock and source policy for discovery and scoped metadata."""
+        from app.services.release_lock import release_lock
+        with release_lock(self._db, release_id):
+            previous_release_id = self._active_release_id
+            self._active_release_id = release_id
+            try:
+                yield
+                from app.services.release_source import apply_release_policy, tags_for_release
+                if tags_for_release(self._db, release_id):
+                    options = {}
+                    if self._retry_targets is not None:
+                        options["torrent_targets"] = self._policy_targets or set()
+                    if current_outcome(self._db, self._job_id) is not None:
+                        options["on_error"] = lambda archive, role, exc: (
+                            self._torrent_outcome(release_id, archive.torrent_id, archive.info_hash, "waiting")
+                            if should_wait_for_qb(exc) else self._failure(
+                                release_id, exc, torrent_id=archive.torrent_id, info_hash=archive.info_hash,
+                                operation="source_policy", qb_role=role))
+                    apply_release_policy(self._db, release_id, self._qb_clients_for_meta(),
+                                         self._al_client.passkey, log=self._add_log, **options)
+            finally:
+                self._active_release_id = previous_release_id
+
+    async def process_release(self, release_id: int, release_alias: str | None = None, **kwargs) -> dict[str, int]:
+        targets = kwargs.pop("retry_targets", None)
+        if targets is not None and any(t.get("torrent_id") is not None and self._normalize_api_info_hash(t.get("info_hash")) is None for t in targets):
+            raise ValueError("Точечный повтор торрента требует точного info_hash")
+        role = kwargs.pop("retry_qb_role", None)
+        operation = kwargs.pop("retry_operation", None)
+        previous = self._retry_targets, self._retry_qb_role, self._policy_targets, self._retry_operation
+        self._retry_targets, self._retry_qb_role, self._policy_targets = targets, role, None
+        self._retry_operation = operation
+        try:
+            with self._release_source_update(release_id):
+                result = await self._process_release(release_id, release_alias, **kwargs)
+            if self._has_release_errors(release_id):
+                outcome = current_outcome(self._db, self._job_id)
+                result["errors"] = max(int(result.get("errors", 0)), len({(f["torrent_id"], f["info_hash"]) for f in outcome.failures.values() if f["release_id"] == release_id}))
+                if targets is None:
+                    invalidate_release_checkpoint(self._db, release_id)
+            return result
+        finally:
+            self._retry_targets, self._retry_qb_role, self._policy_targets, self._retry_operation = previous
+
+    async def _process_release(
         self,
         release_id: int,
         release_alias: str | None = None,
@@ -1033,10 +1272,57 @@ class TorrentProcessor:
                 release_id,
                 include=list(self.RELEASE_TORRENTS_INCLUDE),
             )
-            torrents = self._iter_torrents(torrents_payload)
+            from app.jobs.ongoing import _validated_items
+            torrents = _validated_items(torrents_payload)
         else:
             torrents = prefetched_torrents
+        if self._retry_targets is not None:
+            # Never infer presence from a stale standalone torrent card. The full
+            # selected-source list is fetched under the same release lock.
+            payload = await self._al_client.get_release(release_id)
+            source = payload.get("_source", "site")
+            from app.jobs.ongoing import _validated_items
+            if prefetched_torrents is not None:
+                raise ValueError("Scoped retry must fetch a fresh complete source list")
+            torrents = _validated_items(torrents_payload)
+            selected = []
+            matched_targets = []
+            outcome = current_outcome(self._db, self._job_id)
+            for target in self._retry_targets:
+                expected = target.get("info_hash")
+                candidates = [t for t in torrents if target.get("torrent_id") is None or self._to_int(t.get("id")) == target["torrent_id"]]
+                matched = [t for t in candidates if not expected or self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")) == expected]
+                if target.get("source") not in {"unknown", source} or not matched:
+                    if outcome:
+                        outcome.stale(release_id, target.get("torrent_id"), "Версия или источник изменились; повтор пропущен")
+                    continue
+                selected.extend(matched)
+                matched_targets.append(target)
+            torrents = list({self._to_int(t["id"]): t for t in selected}.values())
+            self._policy_targets = {(self._to_int(t["id"]), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash"))) for t in torrents}
+            if any(t.get("notification_baseline") for t in matched_targets):
+                payload["_notification_baseline"] = True
+            if not torrents:
+                return self.empty_release_stats()
+            if self._retry_operation == "source_policy":
+                for t in torrents:
+                    self._torrent_outcome(release_id, self._to_int(t["id"]), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "processed")
+                return {**self.empty_release_stats(), "total": len(torrents)}
+            if self._retry_operation == "force_load":
+                force = await self._force_load_release_torrents(release_id, release_alias, torrents, release_payload=payload)
+                for t in torrents:
+                    self._torrent_outcome(release_id, self._to_int(t["id"]), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "processed")
+                return {**self.empty_release_stats(), "total": len(torrents), **force,
+                        "new": int(force.get("added", 0)) + int(force.get("updated", 0))}
+            if self._retry_operation in {"meta", "comment", "tags", "rename"}:
+                meta = await self._refresh_release_meta(release_id, release_alias, torrents, release_payload=payload)
+                for t in torrents:
+                    self._torrent_outcome(release_id, self._to_int(t["id"]), self._normalize_api_info_hash(t.get("info_hash") or t.get("hash")), "processed")
+                return {**self.empty_release_stats(), "total": len(torrents),
+                        "comments": meta.get("comments", 0), "tags": meta.get("tags", 0), "renames": meta.get("renames", 0)}
         if not torrents:
+            if self._retry_targets is not None:
+                return self.empty_release_stats()
             self._add_log(f"Релиз {release_id}: торренты не найдены", "debug")
             update_api_present_for_release(self._db, release_id, set())
             mark_release_processed(
@@ -1055,11 +1341,12 @@ class TorrentProcessor:
             tid = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
             if tid is not None:
                 present_ids.add(tid)
-        update_api_present_for_release(self._db, release_id, present_ids)
+        if self._retry_targets is None:
+            update_api_present_for_release(self._db, release_id, present_ids)
         # Backfill api_created_at из list (в т.ч. already-seen / full_sync), не перекачивая .torrent.
         filled = TorrentArchiveService(self._db).fill_missing_api_created_at(
             release_id, torrents
-        )
+        ) if self._retry_targets is None else 0
         if filled:
             self._add_log(
                 f"Релиз {release_id}: api_created_at backfill={filled}",
@@ -1088,7 +1375,8 @@ class TorrentProcessor:
             tags_updated = 0
             renames_updated = 0
             if refresh_qb_meta:
-                meta = await self.refresh_release_meta(
+                # Внешняя process_release уже держит lock и применит source policy.
+                meta = await self._refresh_release_meta(
                     release_id,
                     release_alias,
                     torrents,
@@ -1138,13 +1426,15 @@ class TorrentProcessor:
                     ),
                     "debug",
                 )
-            mark_release_processed(
-                self._db,
-                release_id,
-                updated_at=list_updated_at,
-                fresh_at=list_fresh_at,
-                torrents_fingerprint_value=fingerprint,
-            )
+            if self._retry_targets is None and not self._has_release_errors(release_id):
+                mark_release_processed(
+                    self._db, release_id, updated_at=list_updated_at,
+                    fresh_at=list_fresh_at, torrents_fingerprint_value=fingerprint,
+                )
+            elif self._has_release_errors(release_id):
+                invalidate_release_checkpoint(self._db, release_id)
+            for torrent in torrents:
+                self._torrent_outcome(release_id, self._to_int(torrent.get("id")), self._normalize_api_info_hash(torrent.get("info_hash") or torrent.get("hash")), "processed" if force_qb_load or refresh_qb_meta else "skipped")
             self._sync_hevc_pair_events(release_id)
             return {
                 "total": len(torrents),
@@ -1152,11 +1442,12 @@ class TorrentProcessor:
                 "updated": force_updated,
                 "new": force_added + force_updated,
                 "skipped": 0 if force_qb_load else len(torrents),
-                "waiting_master": 0,
+                "waiting_master": int(force.get("waiting_master", 0)) if force_qb_load else 0,
                 "unchanged": unchanged,
                 "comments": comments_updated,
                 "tags": tags_updated,
                 "renames": renames_updated,
+                "errors": int(force.get("errors", 0)) if force_qb_load else 0,
             }
 
         release_payload = await self._al_client.get_release(
@@ -1178,6 +1469,10 @@ class TorrentProcessor:
         )
         if not isinstance(release_payload, dict):
             raise RuntimeError(f"Релиз {release_id}: AniLibria API вернул некорректные метаданные")
+        if release_payload.get("_source") == "backoffice" and "genres" not in release_payload:
+            genres = self._genres_from_archives(release_id)
+            if genres:
+                release_payload = {**release_payload, "genres": genres}
 
         api_updated_at, api_fresh_at = extract_release_markers(release_payload)
         if list_updated_at and not api_updated_at:
@@ -1198,7 +1493,6 @@ class TorrentProcessor:
         archive_service = TorrentArchiveService(self._db)
         site_url = resolve_anilibria_site_url(self._al_client.base_url)
         category = archive_service._build_category(release_payload)
-        meta_clients = self._qb_clients_for_meta() if refresh_qb_meta else []
         genre_tags = extract_release_genres(release_payload)
         self._persist_release_ui_meta_from_payload(release_id, release_payload)
 
@@ -1206,6 +1500,7 @@ class TorrentProcessor:
         stats["total"] = len(torrents)
         errors = 0
         for torrent in torrents:
+            self._check_stop()
             torrent_id = self._to_int(torrent.get("id") or torrent.get("torrent_id"))
             if torrent_id is None:
                 self._add_log(f"Релиз {release_id}: пропуск торрента без корректного id", "warning")
@@ -1224,63 +1519,13 @@ class TorrentProcessor:
             exists = self._db.scalar(self.build_seen_exists_query(torrent_id, info_hash).limit(1))
             hash_mismatch = self._archive_hash_mismatches(torrent)
             if exists is not None and not hash_mismatch:
-                if refresh_qb_meta and meta_clients:
-                    archive_service.update_archive_meta_from_api_payload(
-                        release_id=release_id,
-                        torrent_payload={**torrent, "id": torrent_id},
-                        release_payload=release_payload,
-                        release_alias=release_alias or self._clean_release_alias(release_payload),
-                    )
-                    alias_value = self._alias_for_release(
-                        release_id,
-                        release_alias or self._clean_release_alias(release_payload),
-                    )
-                    release_url = build_release_torrents_url(alias_value, site_url=site_url)
-                    display_name = self._display_name_for_torrent(
-                        {**torrent, "id": torrent_id},
+                if refresh_qb_meta:
+                    meta = await self._refresh_release_meta(
+                        release_id, release_alias, [{**torrent, "id": torrent_id}],
                         release_payload=release_payload,
                     )
-                    hashes = self._candidate_hashes_for_torrent(
-                        torrent_id=torrent_id,
-                        api_hash=info_hash,
-                        seen=exists,
-                    )
-                    if hashes:
-                        for _role, client in meta_clients:
-                            if display_name:
-                                for hash_for_qb in hashes:
-                                    if ensure_torrent_rename(
-                                        client,
-                                        hash_for_qb,
-                                        display_name,
-                                        require_present=True,
-                                    ):
-                                        stats["renames"] += 1
-                                        break
-                            if release_url:
-                                for hash_for_qb in hashes:
-                                    if _ensure_torrent_comment(
-                                        client,
-                                        hash_for_qb,
-                                        release_url,
-                                        attempts=3,
-                                        delay_sec=0.2,
-                                        require_present=True,
-                                    ):
-                                        stats["comments"] += 1
-                                        break
-                            if genre_tags:
-                                for hash_for_qb in hashes:
-                                    if _ensure_torrent_tags(
-                                        client,
-                                        hash_for_qb,
-                                        genre_tags,
-                                        attempts=3,
-                                        delay_sec=0.2,
-                                        require_present=True,
-                                    ):
-                                        stats["tags"] += 1
-                                        break
+                    for key in ("comments", "tags", "renames"):
+                        stats[key] += int(meta.get(key, 0) or 0)
                 if force_qb_load:
                     force = await self._force_load_release_torrents(
                         release_id,
@@ -1293,9 +1538,13 @@ class TorrentProcessor:
                     stats["new"] += int(force.get("added", 0) or 0) + int(
                         force.get("updated", 0) or 0
                     )
+                    stats["errors"] += int(force.get("errors", 0) or 0)
+                    stats["waiting_master"] += int(force.get("waiting_master", 0) or 0)
+                    self._torrent_outcome(release_id, torrent_id, info_hash, "processed")
                     continue
                 self._add_log(f"Релиз {release_id}: торрент {torrent_id} уже обработан, пропуск", "debug")
                 stats["skipped"] += 1
+                self._torrent_outcome(release_id, torrent_id, info_hash, "skipped")
                 continue
 
             alias_value = self._alias_for_release(
@@ -1304,13 +1553,14 @@ class TorrentProcessor:
             )
             alias_text = f" ({alias_value})" if alias_value else ""
             display_name = build_qb_torrent_name_from_payloads(release_payload, {**torrent, "id": torrent_id})
-            release_url = build_release_torrents_url(alias_value, site_url=site_url)
+            release_url = source_release_url(self._db, release_id, alias_value, site_url=site_url)
             if not release_url:
                 self._add_log(
                     f"Торрент {torrent_id}: нет alias — comment в qB не будет установлен",
                     "warning",
                 )
             pipeline = None
+            final_hash = info_hash
             try:
                 torrent_bytes = await self._al_client.download_torrent_file(torrent_id)
                 torrent_bytes = ensure_announce_passkey(torrent_bytes, self._al_client.passkey)
@@ -1320,6 +1570,8 @@ class TorrentProcessor:
                         "warning",
                     )
                 final_hash = sanitize_info_hash(torrent_info_hash(torrent_bytes))
+                if self._retry_targets is not None and info_hash and final_hash != info_hash:
+                    raise RuntimeError("Скачанный файл относится к другой версии; обработка отменена")
                 pipeline = self._pipeline.create_discovered(final_hash, release_id, torrent_id)
                 self._add_log(
                     f"Pipeline создан для торрента {torrent_id}: status={pipeline.status}, hash={final_hash}",
@@ -1351,6 +1603,7 @@ class TorrentProcessor:
                     )
                     self._mark_seen(torrent_id=torrent_id, info_hash=final_hash, release_id=release_id)
                     stats["waiting_master"] += 1
+                    self._torrent_outcome(release_id, torrent_id, final_hash, "waiting")
                     self._add_log(
                         f"Торрент {torrent_id} отложен (waiting_master) для релиза {release_id}{alias_text}: "
                         f"{self._master_wait_reason}",
@@ -1366,6 +1619,7 @@ class TorrentProcessor:
                         comment=release_url,
                         category=category,
                         tags=genre_tags,
+                        managed_tags=self._managed_qb_genres(final_hash, genre_tags),
                     )
                 except Exception as add_exc:
                     if should_wait_for_qb(add_exc):
@@ -1381,15 +1635,18 @@ class TorrentProcessor:
                         )
                         self._mark_seen(torrent_id=torrent_id, info_hash=final_hash, release_id=release_id)
                         stats["waiting_master"] += 1
+                        self._torrent_outcome(release_id, torrent_id, final_hash, "waiting")
                         continue
                     raise
 
                 if release_url and not comment_ok:
+                    self._metadata_failed(release_id, torrent_id, final_hash, "master", qb, "comment", release_url)
                     self._add_log(
                         f"Торрент {torrent_id}: comment не установлен на master",
                         "warning",
                     )
                 if genre_tags and not tags_ok:
+                    self._metadata_failed(release_id, torrent_id, final_hash, "master", qb, "tags", genre_tags)
                     self._add_log(
                         f"Торрент {torrent_id}: tags не установлены на master ({genre_tags})",
                         "warning",
@@ -1429,11 +1686,15 @@ class TorrentProcessor:
                 )
                 self._mark_seen(torrent_id=torrent_id, info_hash=final_hash, release_id=release_id)
                 stats["new"] += 1
+                self._torrent_outcome(release_id, torrent_id, final_hash, "processed")
                 self._add_log(
                     f"Обработан торрент {torrent_id} для релиза {release_id}{alias_text}",
                     "debug",
                 )
             except Exception as exc:
+                from app.services.job_runner import JobStopRequested
+                if isinstance(exc, JobStopRequested):
+                    raise
                 self._db.rollback()
                 errors += 1
                 if pipeline is not None:
@@ -1442,10 +1703,13 @@ class TorrentProcessor:
                     except Exception:
                         self._db.rollback()
                 self._add_log(f"Релиз {release_id}: ошибка обработки торрента {torrent_id}: {exc}", "error")
-                stats["skipped"] += 1
+                self._failure(release_id, exc, torrent_id=torrent_id, info_hash=final_hash)
                 continue
 
-        if errors == 0:
+        errors += stats.get("errors", 0)
+        if self._has_release_errors(release_id):
+            errors = max(1, errors)
+        if errors == 0 and self._retry_targets is None:
             mark_release_processed(
                 self._db,
                 release_id,
@@ -1453,8 +1717,9 @@ class TorrentProcessor:
                 fresh_at=api_fresh_at,
                 torrents_fingerprint_value=fingerprint,
             )
-        else:
+        elif errors:
             # Иначе markers совпадут со старым checkpoint и early-skip скроет ретрай.
             invalidate_release_checkpoint(self._db, release_id)
+            stats["errors"] = errors
         self._sync_hevc_pair_events(release_id)
         return stats

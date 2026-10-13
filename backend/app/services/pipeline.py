@@ -3,6 +3,7 @@ from app.utils.datetime_fmt import utcnow
 from typing import Any, Literal
 
 import qbittorrentapi
+from app.core.config import settings
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -76,6 +77,10 @@ def _ci_tg_state(tg_status: str | None, *, tracked: bool) -> CiStageState:
         return "success"
     if raw in {"pending", "queued"}:
         return "running"
+    if raw == "failed":
+        return "failed"
+    if raw == "cancelled":
+        return "cancelled"
     if raw == "skipped":
         return "skipped"
     return "pending"
@@ -1065,6 +1070,20 @@ class TorrentPipelineService:
             passkey = get_setting_value(self._db, "anilibria_passkey", "")
             prepared = ensure_announce_passkey(torrent_bytes, passkey)
             rename, comment, category, tags = self._resolve_qb_meta(pipeline)
+            from app.services.torrent_policy import SOURCE_TAGS, prepare_archive_bytes, reconcile_source_tags, reconcile_trackers
+            source_tags = [tag for tag in tags if tag in SOURCE_TAGS]
+            extra = {}
+            archive = None
+            if source_tags:
+                archive = self._db.scalar(select(TorrentArchive).where(
+                    TorrentArchive.info_hash == pipeline.info_hash).limit(1))
+                if archive is not None:
+                    prepared = prepare_archive_bytes(archive, torrent_bytes, passkey)
+                    quality = archive.quality_json if isinstance(archive.quality_json, dict) else {}
+                    known = quality.get("qb_managed_genres", quality.get("genres", []))
+                    extra["managed_tags"] = list(dict.fromkeys((known if isinstance(known, list) else []) + tags))
+                else:
+                    extra["managed_tags"] = tags
 
             added_new, comment_ok, tags_ok = qb_add_torrent(
                 qb,
@@ -1073,7 +1092,12 @@ class TorrentPipelineService:
                 comment=comment,
                 category=category,
                 tags=tags,
+                **extra,
             )
+            if source_tags:
+                reconcile_source_tags(qb, pipeline.info_hash, source_tags)
+                if archive is not None and archive.backoffice_trackers:
+                    reconcile_trackers(qb, pipeline.info_hash, passkey)
             if comment and not comment_ok:
                 self._add_log(
                     f"Pipeline {pipeline.id}: comment не установлен на slave "
@@ -1116,7 +1140,7 @@ class TorrentPipelineService:
                 (TorrentArchive.info_hash == pipeline.info_hash)
                 | (TorrentArchive.torrent_id == pipeline.torrent_id)
             )
-            .order_by(TorrentArchive.id.desc())
+            .order_by((TorrentArchive.info_hash == pipeline.info_hash).desc(), TorrentArchive.id.desc())
             .limit(1)
         )
         rename: str | None = None
@@ -1179,6 +1203,17 @@ class TorrentPipelineService:
             *alias_candidates,
             site_url=resolve_anilibria_site_url(),
         )
+        from app.services.release_source import tags_for_release, release_is_offsite
+        source_known = archive is not None and (
+            getattr(archive, "backoffice_trackers", False) is True or
+            isinstance(archive.quality_json, dict) and archive.quality_json.get("_source") in {"site", "backoffice"}
+        )
+        if source_known:
+            tags = list(dict.fromkeys(tags + tags_for_release(self._db, pipeline.release_id)))
+        if source_known and release_is_offsite(self._db, pipeline.release_id):
+            from app.services.torrent_qb_meta import build_release_admin_url
+            comment = build_release_admin_url(pipeline.release_id, get_setting_value(
+                self._db, "anilibria_admin_url_template", settings.anilibria_admin_url_template))
         if comment is None:
             self._add_log(
                 f"Pipeline {pipeline.id}: нет alias для comment "
@@ -1195,7 +1230,7 @@ class TorrentPipelineService:
                 (TorrentArchive.info_hash == pipeline.info_hash)
                 | (TorrentArchive.torrent_id == pipeline.torrent_id)
             )
-            .order_by(TorrentArchive.id.desc())
+            .order_by((TorrentArchive.info_hash == pipeline.info_hash).desc(), TorrentArchive.id.desc())
             .limit(1)
         )
         if archive is None:
@@ -1204,7 +1239,12 @@ class TorrentPipelineService:
         if not path.exists():
             return None
         passkey = get_setting_value(self._db, "anilibria_passkey", "")
-        return ensure_announce_passkey(path.read_bytes(), passkey)
+        from app.services.release_source import release_is_offsite
+        if release_is_offsite(self._db, pipeline.release_id):
+            # Retry может первым обнаружить переход на админку до планового обхода.
+            archive.backoffice_trackers = True
+        from app.services.torrent_policy import prepare_archive_bytes
+        return prepare_archive_bytes(archive, path.read_bytes(), passkey)
 
     def _get_master_api(self) -> qbittorrentapi.Client:
         if self._master_client is not None:

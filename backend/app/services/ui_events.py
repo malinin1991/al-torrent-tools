@@ -14,6 +14,7 @@ from starlette.requests import Request
 
 from app.db.models import (
     FileChangeEvent,
+    EncoderSubmission,
     Job,
     JobLog,
     PipelineEvent,
@@ -33,7 +34,7 @@ from app.services.telegram_notify import OUTBOX_PENDING
 logger = logging.getLogger(__name__)
 
 SIMPLE_CHANNELS = frozenset(
-    {"dashboard", "jobs", "pipeline", "releases", "archive", "info"}
+    {"dashboard", "jobs", "pipeline", "releases", "archive", "info", "encoder", "telegram-outbox", "hevc_workbench"}
 )
 
 # Статусы, при которых на pipeline нужен live progress с master/slave (qB).
@@ -92,7 +93,19 @@ def channel_token(db: Session, channel: str) -> str:
         return _archive_token(db)
     if channel == "info":
         return _info_token(db)
+    if channel == "encoder":
+        return _encoder_token(db)
+    if channel == "telegram-outbox":
+        return _telegram_outbox_token(db)
+    if channel == "hevc_workbench":
+        return _hevc_workbench_token(db)
     return ""
+
+
+def _encoder_token(db: Session) -> str:
+    row = db.execute(select(func.max(EncoderSubmission.id), func.max(EncoderSubmission.updated_at), func.count().filter(EncoderSubmission.finished_at.is_(None)))).one()
+    tick = int(time.time() // 30) if row[2] else ""
+    return f"enc:{row[0]}:{row[1]}:{tick}"
 
 
 def _max_id(db: Session, column) -> int:
@@ -121,7 +134,26 @@ def _jobs_token(db: Session) -> str:
     if active:
         # Пока есть активные — подтягиваем логи/статусы чаще (max_log уже ловит новые строки).
         tick = f"|a:{int(active)}"
-    return f"j:{max_job}|l:{max_log}|s:{status_sig}{tick}"
+    result_updated = db.scalar(select(func.max(Job.result_updated_at)))
+    return f"j:{max_job}|l:{max_log}|s:{status_sig}{tick}|result:{result_updated}"
+
+
+def _telegram_outbox_token(db: Session) -> str:
+    row = db.execute(select(
+        func.max(TelegramOutbox.id), func.max(TelegramOutbox.updated_at),
+        func.coalesce(func.sum(TelegramOutbox.attempts), 0),
+        *[func.count().filter(TelegramOutbox.status == status)
+          for status in ("pending", "sending", "failed", "sent", "cancelled")],
+    )).one()
+    tick = int(time.time() // 15) if row[3] or row[4] else ""
+    return "outbox:" + ":".join(str(value) for value in row) + f":{tick}"
+
+
+def _hevc_workbench_token(db: Session) -> str:
+    # Pairing and filesystem probes belong to rendering, never SSE token checks.
+    settings_updated = db.scalar(select(func.max(Setting.updated_at)))
+    return (f"{_releases_token(db)}|{_jobs_token(db)}|{_encoder_token(db)}|"
+            f"settings:{settings_updated}|sla:{int(time.time() // 60)}")
 
 
 def _pipeline_list_token(db: Session) -> str:
@@ -188,6 +220,9 @@ def _releases_token(db: Session) -> str:
         select(
             func.count().filter(Release.is_blocked_by_geo.is_(True)),
             func.count().filter(Release.is_blocked_by_copyrights.is_(True)),
+            func.count().filter(Release.is_hidden.is_(True)),
+            func.count().filter(Release.is_abandoned.is_(True)),
+            func.count().filter(Release.source == "backoffice"),
         )
     ).one()
     # ignore_hevc / api_present / superseded влияют на фильтры и бейджи.
@@ -201,7 +236,7 @@ def _releases_token(db: Session) -> str:
     return (
         f"r:{max_arch}|fe:{max_file_ev}|pe:{max_pipe_ev}|tf:{max_tf_upd}:{max_tf_id}|"
         f"tr:{tracked}|rel:{max_rel_upd}|rm:{max_member}|"
-        f"geo:{release_flags[0]}|cr:{release_flags[1]}|"
+        f"geo:{release_flags[0]}|cr:{release_flags[1]}|hidden:{release_flags[2]}|ab:{release_flags[3]}|bo:{release_flags[4]}|"
         f"ig:{flag_counts[0]}|ap:{flag_counts[1]}|su:{flag_counts[2]}"
     )
 
@@ -233,9 +268,11 @@ def _info_token(db: Session) -> str:
     heartbeat = db.scalar(
         select(Setting.value).where(Setting.key == "telegram_bot_heartbeat_at")
     ) or ""
+    hevc_heartbeat = db.scalar(select(Setting.value).where(Setting.key == "telegram_hevc_bot_heartbeat_at")) or ""
     # Внешние пробы (qB / AniLibria) — редкий tick, без постоянного HTML-poll.
     tick = int(time.time() // _INFO_PROBE_TICK_SEC)
-    return f"i:{pending}|o:{max_outbox}|tr:{tracked}|hb:{heartbeat}|t:{tick}"
+    return (f"i:{pending}|o:{max_outbox}|tr:{tracked}|hb:{heartbeat}|"
+            f"hevc-hb:{hevc_heartbeat}|{_telegram_outbox_token(db)}|t:{tick}")
 
 
 async def sse_event_stream(

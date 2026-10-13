@@ -11,7 +11,7 @@
           <code style="font-size:0.8rem;">{{ d.type }}</code>
         </div>
         {% if job %}
-        <span class="job-status job-status-{{ job.status }}">{{ job.status }}</span>
+        <span class="job-status job-status-{{ job.status }}">{{ 'Завершено с ошибками' if job.status == 'partial' else job.status }}</span>
         {% else %}
         <span class="muted">ещё не запускался</span>
         {% endif %}

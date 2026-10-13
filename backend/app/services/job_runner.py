@@ -7,13 +7,14 @@ from datetime import datetime, timedelta
 from app.utils.datetime_fmt import utcnow
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text, update
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import Job, JobLog
 from app.db.session import SessionLocal, engine
+from app.services.sync_outcomes import JobPartialFailure
 
 JobHandler = Callable[[Session, int, dict[str, Any]], Awaitable[None]]
 
@@ -23,6 +24,7 @@ STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
 STATUS_STOPPING = "stopping"
 STATUS_SUCCESS = "success"
+STATUS_PARTIAL = "partial"
 STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 
@@ -86,18 +88,30 @@ def get_active_job_ids() -> list[int]:
         return list(_active_job_ids)
 
 
-def _mark_job_cancelled(db: Session, job: Job, *, reason: str, now: datetime) -> None:
-    job.status = STATUS_CANCELLED
-    job.error = reason
-    if job.finished_at is None:
-        job.finished_at = now
-    db.add(
-        JobLog(
-            job_id=job.id,
-            level="warning",
-            message=f"Джоб переведён в cancelled: {reason}",
-        )
+def _cancel_active_jobs(
+    db: Session, *, reason: str, now: datetime, job_ids: list[int] | None = None
+) -> list[int]:
+    """CAS отмены: устаревшая identity map не может затереть terminal-результат."""
+    stmt = update(Job).where(Job.status.in_(_STALE_STATUSES))
+    if job_ids is not None:
+        stmt = stmt.where(Job.id.in_(job_ids))
+    changed = sorted(
+        db.scalars(
+            stmt.values(
+                status=STATUS_CANCELLED,
+                error=reason,
+                finished_at=func.coalesce(Job.finished_at, now),
+            )
+            .returning(Job.id)
+            .execution_options(synchronize_session=False)
+        ).all()
     )
+    for job_id in changed:
+        db.add(JobLog(job_id=job_id, level="warning", message=f"Джоб переведён в cancelled: {reason}"))
+    if changed:
+        db.commit()
+        db.expire_all()
+    return changed
 
 
 def cancel_stale_jobs(
@@ -106,19 +120,7 @@ def cancel_stale_jobs(
     reason: str = "Процесс остановлен (Ctrl+C / рестарт), джоб помечен как cancelled",
 ) -> list[int]:
     """Пометить все pending/running как cancelled (явный сброс, без порога возраста)."""
-    stale = list(
-        db.scalars(select(Job).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
-    )
-    if not stale:
-        return []
-
-    now = utcnow()
-    cancelled_ids: list[int] = []
-    for job in stale:
-        _mark_job_cancelled(db, job, reason=reason, now=now)
-        cancelled_ids.append(job.id)
-    db.commit()
-    return cancelled_ids
+    return _cancel_active_jobs(db, reason=reason, now=utcnow())
 
 
 def cancel_jobs_by_ids(
@@ -130,20 +132,7 @@ def cancel_jobs_by_ids(
     """Отменить конкретные джобы (graceful shutdown текущего процесса)."""
     if not job_ids:
         return []
-    jobs = list(
-        db.scalars(
-            select(Job).where(Job.id.in_(job_ids), Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())
-        ).all()
-    )
-    if not jobs:
-        return []
-    now = utcnow()
-    cancelled_ids: list[int] = []
-    for job in jobs:
-        _mark_job_cancelled(db, job, reason=reason, now=now)
-        cancelled_ids.append(job.id)
-    db.commit()
-    return cancelled_ids
+    return _cancel_active_jobs(db, reason=reason, now=utcnow(), job_ids=job_ids)
 
 
 def _job_last_activity_at(db: Session, job: Job) -> datetime | None:
@@ -167,12 +156,18 @@ def is_stop_requested(db: Session, job_id: int) -> bool:
 
 def request_stop(db: Session, job_id: int) -> Job:
     """Перевести running → stopping. Иначе JobStopError."""
-    job = db.get(Job, job_id)
-    if job is None:
-        raise JobStopError(f"Джоб {job_id} не найден")
-    if job.status != STATUS_RUNNING:
+    changed = db.scalar(
+        update(Job)
+        .where(Job.id == job_id, Job.status == STATUS_RUNNING)
+        .values(status=STATUS_STOPPING)
+        .returning(Job.id)
+        .execution_options(synchronize_session=False)
+    )
+    job = db.get(Job, job_id, populate_existing=True)
+    if changed is None:
+        if job is None:
+            raise JobStopError(f"Джоб {job_id} не найден")
         raise JobStopError(f"Остановка возможна только для running (сейчас {job.status})")
-    job.status = STATUS_STOPPING
     db.add(
         JobLog(
             job_id=job.id,
@@ -198,40 +193,27 @@ def request_stop_latest_running(db: Session, job_type: str) -> Job:
     return request_stop(db, job.id)
 
 
-def _try_run_lock(db: Session, job_id: int) -> bool:
-    """Попытка взять run-lock (для reclaim: успех = runner мёртв)."""
-    return bool(
-        db.execute(
-            text("SELECT pg_try_advisory_lock(:cls, :oid)"),
-            {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
-        ).scalar()
-    )
-
-
-def _unlock_run_lock(db: Session, job_id: int) -> None:
-    """Снять try-lock после reclaim на той же ORM-сессии."""
-    db.execute(
-        text("SELECT pg_advisory_unlock(:cls, :oid)"),
-        {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
-    )
-
-
-def _hold_run_lock(job_id: int) -> Connection:
-    """Отдельное raw-соединение с session advisory lock на весь run_job.
+def _hold_run_lock(job_id: int) -> Connection | None:
+    """Неблокирующий session advisory lock на отдельном raw-соединении.
 
     Нельзя держать lock на ORM Session джоба: reconnect / pool_pre_ping
     меняет соединение → lock пропадает → reclaim ложно помечает сиротой.
     """
     conn = engine.connect()
     try:
-        conn.execute(
-            text("SELECT pg_advisory_lock(:cls, :oid)"),
+        acquired = conn.execute(
+            text("SELECT pg_try_advisory_lock(:cls, :oid)"),
             {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
-        )
+        ).scalar()
         # Session-level lock переживает commit; не оставляем idle-in-transaction.
         conn.commit()
+        if not acquired:
+            conn.close()
+            return None
         return conn
     except Exception:
+        # Session-lock нельзя вернуть в pool даже при ошибке commit/unlock.
+        conn.invalidate()
         conn.close()
         raise
 
@@ -246,6 +228,9 @@ def _release_run_lock(conn: Connection | None, job_id: int) -> None:
             {"cls": _JOB_RUN_LOCK_CLASS, "oid": job_id},
         )
         conn.commit()
+    except Exception:
+        conn.invalidate()
+        raise
     finally:
         conn.close()
 
@@ -263,7 +248,7 @@ def reclaim_orphan_jobs(
     Живые джобы другого контейнера lock держат — не трогаем.
     """
     candidates = list(
-        db.scalars(select(Job).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
+        db.scalars(select(Job.id).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
     )
     if not candidates:
         return []
@@ -271,26 +256,23 @@ def reclaim_orphan_jobs(
     now = utcnow()
     pending_threshold = now - timedelta(seconds=max(0, pending_grace_sec))
     cancelled_ids: list[int] = []
-    for job in candidates:
-        if job.status == STATUS_PENDING:
-            created = job.created_at or now
-            if created > pending_threshold:
-                continue
-            _mark_job_cancelled(db, job, reason=reason, now=now)
-            cancelled_ids.append(job.id)
-            continue
-
-        # RUNNING/STOPPING: lock свободен только если runner мёртв.
-        if not _try_run_lock(db, job.id):
+    for job_id in candidates:
+        # Pending тоже может стартовать между выборкой кандидатов и проверкой.
+        lock_conn = _hold_run_lock(job_id)
+        if lock_conn is None:
             continue
         try:
-            _mark_job_cancelled(db, job, reason=reason, now=now)
-            cancelled_ids.append(job.id)
+            job = db.get(Job, job_id, populate_existing=True)
+            if job is None or job.status not in _STALE_STATUSES:
+                continue
+            if job.status == STATUS_PENDING and (job.created_at or now) > pending_threshold:
+                continue
+            cancelled_ids.extend(_cancel_active_jobs(db, reason=reason, now=now, job_ids=[job_id]))
+        except Exception:
+            db.rollback()
+            raise
         finally:
-            _unlock_run_lock(db, job.id)
-
-    if cancelled_ids:
-        db.commit()
+            _release_run_lock(lock_conn, job_id)
     return cancelled_ids
 
 
@@ -300,7 +282,7 @@ def reclaim_stale_jobs(
     max_age_minutes: int | None = None,
     reason: str | None = None,
 ) -> list[int]:
-    """Отменить pending/running без активности дольше порога (fallback без lock)."""
+    """Отменить orphan-задачи без активности дольше порога, сохраняя run-lock."""
     age = max_age_minutes if max_age_minutes is not None else settings.job_stale_minutes
     if age <= 0:
         return []
@@ -309,31 +291,27 @@ def reclaim_stale_jobs(
         f"Джоб без активности дольше {age} мин (pending/running) и помечен как cancelled"
     )
     candidates = list(
-        db.scalars(select(Job).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
+        db.scalars(select(Job.id).where(Job.status.in_(_STALE_STATUSES)).order_by(Job.id.asc())).all()
     )
     cancelled_ids: list[int] = []
     now = utcnow()
-    for job in candidates:
-        anchor = _job_last_activity_at(db, job)
-        if anchor is None or anchor > threshold:
+    for job_id in candidates:
+        lock_conn = _hold_run_lock(job_id)
+        if lock_conn is None:
             continue
-        # Не отменяем живой джоб другого процесса (lock занят).
-        held_lock = False
-        if job.status in (STATUS_RUNNING, STATUS_STOPPING):
-            if not _try_run_lock(db, job.id):
-                continue
-            held_lock = True
         try:
-            _mark_job_cancelled(db, job, reason=msg, now=now)
-            cancelled_ids.append(job.id)
+            job = db.get(Job, job_id, populate_existing=True)
+            if job is None or job.status not in _STALE_STATUSES:
+                continue
+            anchor = _job_last_activity_at(db, job)
+            if anchor is None or anchor > threshold:
+                continue
+            cancelled_ids.extend(_cancel_active_jobs(db, reason=msg, now=now, job_ids=[job_id]))
+        except Exception:
+            db.rollback()
+            raise
         finally:
-            if held_lock:
-                try:
-                    _unlock_run_lock(db, job.id)
-                except Exception:
-                    pass
-    if cancelled_ids:
-        db.commit()
+            _release_run_lock(lock_conn, job_id)
     return cancelled_ids
 
 
@@ -347,6 +325,34 @@ def shutdown_cancel_active_jobs(
         return []
     with SessionLocal() as db:
         return cancel_jobs_by_ids(db, job_ids, reason=reason)
+
+
+def _finalize_job(db: Session, job_id: int, status: str, error: str | None) -> None:
+    """Финализировать активного владельца, не перезаписывая отмену/terminal."""
+    row = db.execute(
+        update(Job)
+        .where(Job.id == job_id, Job.status.in_((STATUS_RUNNING, STATUS_STOPPING)))
+        .values(
+            status=case((Job.status == STATUS_STOPPING, STATUS_CANCELLED), else_=status),
+            error=case((Job.status == STATUS_STOPPING, "Остановлено пользователем"), else_=error),
+            finished_at=func.coalesce(Job.finished_at, utcnow()),
+        )
+        .returning(Job.status, Job.error)
+        .execution_options(synchronize_session=False)
+    ).first()
+    if row is not None:
+        final_status, final_error = row
+        if final_status == STATUS_SUCCESS:
+            message, level = "Джоб завершен успешно", "info"
+        elif final_status == STATUS_PARTIAL:
+            message, level = final_error or "Джоб завершён с ошибками", "warning"
+        elif final_status == STATUS_CANCELLED:
+            message, level = final_error or "Джоб отменён", "warning"
+        else:
+            message, level = f"Ошибка выполнения: {final_error}", "error"
+        db.add(JobLog(job_id=job_id, level=level, message=message))
+    db.commit()
+    db.expire_all()
 
 
 class JobRunner:
@@ -406,74 +412,67 @@ class JobRunner:
         if job.type not in self._handlers:
             raise ValueError(f"Тип джоба {job.type} не зарегистрирован")
 
-        # Lock на отдельном соединении (не ORM Session): reconnect джоба lock не роняет.
+        # Только владелец успешного claim входит в local active set.
         lock_conn: Connection | None = None
+        owns_active_slot = False
         try:
             lock_conn = _hold_run_lock(job_id)
+            if lock_conn is None:
+                db.refresh(job)
+                return job
+            claimed = db.scalar(
+                update(Job)
+                .where(Job.id == job_id, Job.status == STATUS_PENDING)
+                .values(status=STATUS_RUNNING, started_at=utcnow(), error=None, finished_at=None)
+                .returning(Job.id)
+                .execution_options(synchronize_session=False)
+            )
+            if claimed is None:
+                db.refresh(job)
+                return job
+            db.refresh(job)
+            db.add(JobLog(job_id=job_id, level="info", message=f"Старт джоба {job.type}"))
+            # Shutdown должен видеть владельца уже в момент публикации running.
             with _active_lock:
                 _active_job_ids.add(job_id)
-
-            job.status = STATUS_RUNNING
-            job.started_at = utcnow()
-            job.error = None
-            job.finished_at = None
+                owns_active_slot = True
             db.commit()
-            self.add_log(db, job.id, f"Старт джоба {job.type}")
 
             final_status = STATUS_SUCCESS
             final_error: str | None = None
             try:
-                await self._handlers[job.type](db, job.id, job.params_json or {})
                 db.refresh(job)
-                # Короткий джоб мог завершиться после Stop, но до чекпоинта в handler.
-                if job.status == STATUS_STOPPING:
+                if job.status in (STATUS_STOPPING, STATUS_CANCELLED):
                     raise JobStopRequested()
-                # Reclaim уже cancelled — не пишем success и не воскрешаем слот в finally.
-                if job.status == STATUS_CANCELLED:
-                    final_status = STATUS_CANCELLED
-                    final_error = job.error
-                else:
-                    self.add_log(db, job.id, "Джоб завершен успешно")
+                await self._handlers[job.type](db, job.id, job.params_json or {})
             except JobStopRequested:
-                db.refresh(job)
-                # Reclaim уже cancelled — не затираем reason и не дублируем UI-stop лог.
-                if job.status == STATUS_CANCELLED:
-                    final_status = STATUS_CANCELLED
-                    final_error = job.error
-                else:
-                    final_status = STATUS_CANCELLED
-                    final_error = "Остановлено пользователем"
-                    self.add_log(db, job.id, "Джоб остановлен по запросу", level="warning")
+                db.rollback()
+                final_status = STATUS_CANCELLED
+                final_error = "Остановлено пользователем"
             except asyncio.CancelledError:
+                db.rollback()
                 final_status = STATUS_CANCELLED
                 final_error = "Прервано (Ctrl+C / shutdown)"
-                self.add_log(db, job.id, "Джоб отменён (CancelledError)", level="warning")
                 raise
+            except JobPartialFailure as exc:
+                db.rollback()
+                final_status = STATUS_PARTIAL
+                final_error = str(exc)
             except Exception as exc:
+                # После SQLAlchemy flush/commit ошибки Session требует rollback.
+                db.rollback()
                 final_status = STATUS_FAILED
                 final_error = str(exc)
-                self.add_log(db, job.id, f"Ошибка выполнения: {exc}", level="error")
             finally:
+                _finalize_job(db, job_id, final_status, final_error)
                 db.refresh(job)
-                # Reclaim/shutdown уже финализировал — не воскрешаем и не затираем error.
-                if job.status == STATUS_CANCELLED:
-                    if job.finished_at is None:
-                        job.finished_at = utcnow()
-                else:
-                    # UI Stop → stopping: после handler финализируем cancelled.
-                    if job.status == STATUS_STOPPING:
-                        final_status = STATUS_CANCELLED
-                        if final_error is None:
-                            final_error = "Остановлено пользователем"
-                    job.status = final_status
-                    job.error = final_error
-                    if job.finished_at is None:
-                        job.finished_at = utcnow()
-                db.commit()
-                db.refresh(job)
+        except BaseException:
+            db.rollback()
+            raise
         finally:
-            with _active_lock:
-                _active_job_ids.discard(job_id)
+            if owns_active_slot:
+                with _active_lock:
+                    _active_job_ids.discard(job_id)
             try:
                 _release_run_lock(lock_conn, job_id)
             except Exception:

@@ -1,0 +1,568 @@
+{
+  "real_inventory": [
+    {
+      "name": "One_Piece_[0013]_[HEVC].mkv",
+      "size": 393817937,
+      "mtime_ns": 1790974544000000000
+    },
+    {
+      "name": "One_Piece_[0014]_[HEVC].mkv",
+      "size": 332025615,
+      "mtime_ns": 1790974550000000000
+    },
+    {
+      "name": "One_Piece_[0015]_[HEVC].mkv",
+      "size": 386696174,
+      "mtime_ns": 1790972442000000000
+    },
+    {
+      "name": "One_Piece_[0016]_[HEVC].mkv",
+      "size": 387858903,
+      "mtime_ns": 1790972508000000000
+    }
+  ],
+  "real_identification": "size+mtime_ns+native parsed output; no extra full content digest",
+  "generated": {
+    "files": 96,
+    "seed_bytes": 117980,
+    "seed_sha256": "f32b2e79f68b07fc80b81b85175035b2b14bd5e1938d8462af0fc2a757e6f79a",
+    "command": [
+      "/opt/homebrew/bin/ffmpeg",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc2=size=320x180:rate=24",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:sample_rate=48000",
+      "-t",
+      "3",
+      "-c:v",
+      "libx264",
+      "-threads",
+      "2",
+      "-preset",
+      "fast",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-metadata",
+      "title=ALTT generated benchmark",
+      "/private/tmp/altt-operation-eval-20261013/fixtures/seed.mkv"
+    ],
+    "copies_identical": true,
+    "inventory": [
+      {
+        "name": "generated-000.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587141210258
+      },
+      {
+        "name": "generated-001.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587141427425
+      },
+      {
+        "name": "generated-002.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587141629425
+      },
+      {
+        "name": "generated-003.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587141805800
+      },
+      {
+        "name": "generated-004.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587141982300
+      },
+      {
+        "name": "generated-005.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587142143092
+      },
+      {
+        "name": "generated-006.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587142293425
+      },
+      {
+        "name": "generated-007.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587142445550
+      },
+      {
+        "name": "generated-008.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587142617926
+      },
+      {
+        "name": "generated-009.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587142773592
+      },
+      {
+        "name": "generated-010.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587142927801
+      },
+      {
+        "name": "generated-011.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587143084884
+      },
+      {
+        "name": "generated-012.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587143247176
+      },
+      {
+        "name": "generated-013.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587143393717
+      },
+      {
+        "name": "generated-014.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587143535009
+      },
+      {
+        "name": "generated-015.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587143680093
+      },
+      {
+        "name": "generated-016.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587143824259
+      },
+      {
+        "name": "generated-017.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587143975301
+      },
+      {
+        "name": "generated-018.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587144333968
+      },
+      {
+        "name": "generated-019.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587144568676
+      },
+      {
+        "name": "generated-020.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587144751635
+      },
+      {
+        "name": "generated-021.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587145138760
+      },
+      {
+        "name": "generated-022.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587145389218
+      },
+      {
+        "name": "generated-023.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587145564593
+      },
+      {
+        "name": "generated-024.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587145724052
+      },
+      {
+        "name": "generated-025.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587145871968
+      },
+      {
+        "name": "generated-026.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587146020552
+      },
+      {
+        "name": "generated-027.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587146172760
+      },
+      {
+        "name": "generated-028.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587146321594
+      },
+      {
+        "name": "generated-029.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587146474594
+      },
+      {
+        "name": "generated-030.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587146626844
+      },
+      {
+        "name": "generated-031.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587146772636
+      },
+      {
+        "name": "generated-032.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587146924636
+      },
+      {
+        "name": "generated-033.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587147074011
+      },
+      {
+        "name": "generated-034.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587147217594
+      },
+      {
+        "name": "generated-035.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587147365136
+      },
+      {
+        "name": "generated-036.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587147521886
+      },
+      {
+        "name": "generated-037.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587147684678
+      },
+      {
+        "name": "generated-038.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587147847219
+      },
+      {
+        "name": "generated-039.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587147999636
+      },
+      {
+        "name": "generated-040.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587148142761
+      },
+      {
+        "name": "generated-041.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587148286428
+      },
+      {
+        "name": "generated-042.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587148448511
+      },
+      {
+        "name": "generated-043.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587148608428
+      },
+      {
+        "name": "generated-044.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587148768053
+      },
+      {
+        "name": "generated-045.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587148918678
+      },
+      {
+        "name": "generated-046.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587149065553
+      },
+      {
+        "name": "generated-047.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587149211053
+      },
+      {
+        "name": "generated-048.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587149362178
+      },
+      {
+        "name": "generated-049.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587149499762
+      },
+      {
+        "name": "generated-050.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587149650762
+      },
+      {
+        "name": "generated-051.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587149793595
+      },
+      {
+        "name": "generated-052.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587149947387
+      },
+      {
+        "name": "generated-053.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587150094137
+      },
+      {
+        "name": "generated-054.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587150235387
+      },
+      {
+        "name": "generated-055.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587150373887
+      },
+      {
+        "name": "generated-056.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587150522387
+      },
+      {
+        "name": "generated-057.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587150662845
+      },
+      {
+        "name": "generated-058.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587150821554
+      },
+      {
+        "name": "generated-059.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587150972346
+      },
+      {
+        "name": "generated-060.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587151121762
+      },
+      {
+        "name": "generated-061.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587151266804
+      },
+      {
+        "name": "generated-062.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587151407221
+      },
+      {
+        "name": "generated-063.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587151547179
+      },
+      {
+        "name": "generated-064.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587151699763
+      },
+      {
+        "name": "generated-065.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587151838554
+      },
+      {
+        "name": "generated-066.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587151983554
+      },
+      {
+        "name": "generated-067.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587152137930
+      },
+      {
+        "name": "generated-068.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587152296596
+      },
+      {
+        "name": "generated-069.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587152432096
+      },
+      {
+        "name": "generated-070.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587152576305
+      },
+      {
+        "name": "generated-071.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587152714263
+      },
+      {
+        "name": "generated-072.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587152859805
+      },
+      {
+        "name": "generated-073.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587153006513
+      },
+      {
+        "name": "generated-074.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587153149638
+      },
+      {
+        "name": "generated-075.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587153293847
+      },
+      {
+        "name": "generated-076.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587153446847
+      },
+      {
+        "name": "generated-077.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587153605513
+      },
+      {
+        "name": "generated-078.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587153746430
+      },
+      {
+        "name": "generated-079.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587153898847
+      },
+      {
+        "name": "generated-080.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587154050555
+      },
+      {
+        "name": "generated-081.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587154194722
+      },
+      {
+        "name": "generated-082.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587154342222
+      },
+      {
+        "name": "generated-083.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587154492972
+      },
+      {
+        "name": "generated-084.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587154641180
+      },
+      {
+        "name": "generated-085.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587154783306
+      },
+      {
+        "name": "generated-086.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587155013681
+      },
+      {
+        "name": "generated-087.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587155184222
+      },
+      {
+        "name": "generated-088.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587155355264
+      },
+      {
+        "name": "generated-089.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587155516181
+      },
+      {
+        "name": "generated-090.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587155678639
+      },
+      {
+        "name": "generated-091.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587155840389
+      },
+      {
+        "name": "generated-092.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587156004431
+      },
+      {
+        "name": "generated-093.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587156154556
+      },
+      {
+        "name": "generated-094.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587156313390
+      },
+      {
+        "name": "generated-095.mkv",
+        "size": 117980,
+        "mtime_ns": 1791887587156466640
+      }
+    ]
+  },
+  "ffmpeg_version": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with Apple clang version 21.0.0 (clang-2100.0.123.102)\nconfiguration: --prefix=/opt/homebrew/Cellar/ffmpeg/8.1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvmaf --enable-libvpx --enable-libx265 --enable-openssl --enable-videotoolbox --enable-audiotoolbox --enable-neon\nlibavutil      60. 26.100 / 60. 26.100\nlibavcodec     62. 28.100 / 62. 28.100\nlibavformat    62. 12.100 / 62. 12.100\nlibavdevice    62.  3.100 / 62.  3.100\nlibavfilter    11. 14.100 / 11. 14.100\nlibswscale      9.  5.100 /  9.  5.100\nlibswresample   6.  3.100 /  6.  3.100\n\nExiting with exit code 0\n",
+  "real_inventory_after": [
+    {
+      "name": "One_Piece_[0013]_[HEVC].mkv",
+      "size": 393817937,
+      "mtime_ns": 1790974544000000000
+    },
+    {
+      "name": "One_Piece_[0014]_[HEVC].mkv",
+      "size": 332025615,
+      "mtime_ns": 1790974550000000000
+    },
+    {
+      "name": "One_Piece_[0015]_[HEVC].mkv",
+      "size": 386696174,
+      "mtime_ns": 1790972442000000000
+    },
+    {
+      "name": "One_Piece_[0016]_[HEVC].mkv",
+      "size": 387858903,
+      "mtime_ns": 1790972508000000000
+    }
+  ],
+  "original_size_mtime_unchanged": true,
+  "original_size_mtime_unchanged_after_all_series": true
+}

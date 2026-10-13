@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 from app.api.rest import job_runner, router as api_router
+from app.api.operations_ui import create_operations_router
+from app.api.hevc_workbench import create_hevc_workbench_router
 from app.core.config import settings
 from app.db.models import (
     ExtraUrl,
@@ -28,6 +30,8 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal, get_db
 from app.services.job_catalog import load_job_catalog
+from app.services.sync_outcomes import get_failure_page
+from app.services.encoder_history import history_page as encoder_history_page_context
 from app.services.job_runner import (
     JobAlreadyRunningError,
     UnknownJobTypeError,
@@ -149,6 +153,8 @@ templates.env.filters["as_utc_iso"] = as_utc_iso
 templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
 templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
 app.mount("/static", StaticFiles(directory=str(base_path / "static")), name="static")
+app.include_router(create_operations_router(templates, job_runner))
+app.include_router(create_hevc_workbench_router(templates))
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -288,6 +294,7 @@ def dashboard_jobs_live(request: Request, db: Session = Depends(get_db)) -> HTML
 def settings_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     rows = db.scalars(select(Setting)).all()
     settings_map = {row.key: row.value for row in rows}
+    settings_map.setdefault("anilibria_admin_base_url", settings.anilibria_admin_base_url)
     has_anilibria_token = bool((settings_map.get("anilibria_bearer_token") or "").strip())
     has_anilibria_passkey = bool((settings_map.get("anilibria_passkey") or "").strip())
     has_telegram_token = bool((settings_map.get("telegram_bot_token") or "").strip())
@@ -312,6 +319,7 @@ def update_settings(
     request: Request,
     anilibria_base_url: str = Form(default=settings.anilibria_base_url),
     anilibria_fallback_base_url: str = Form(default=settings.anilibria_fallback_base_url),
+    anilibria_admin_base_url: str = Form(default=""),
     anilibria_admin_url_template: str = Form(default=settings.anilibria_admin_url_template),
     anilibria_bearer_token: str = Form(default=""),
     anilibria_login: str = Form(default=""),
@@ -336,6 +344,7 @@ def update_settings(
     scrape_pause_every: str = Form(default=str(settings.scrape_pause_every)),
     scrape_pause_sec: str = Form(default=str(settings.scrape_pause_sec)),
     ongoing_interval_sec: str = Form(default=str(settings.ongoing_interval_sec)),
+    backoffice_interval_sec: str = Form(default=str(settings.backoffice_interval_sec)),
     cleanup_interval_sec: str = Form(default=str(settings.cleanup_interval_sec)),
     pipeline_master_min_age_min: str = Form(default=str(settings.pipeline_master_min_age_min)),
     pipeline_reconcile_interval_sec: str = Form(
@@ -348,6 +357,7 @@ def update_settings(
     form_data = {
         "anilibria_base_url": anilibria_base_url,
         "anilibria_fallback_base_url": anilibria_fallback_base_url,
+        "anilibria_admin_base_url": anilibria_admin_base_url.strip(),
         "anilibria_admin_url_template": anilibria_admin_url_template,
         "anilibria_login": anilibria_login,
         "anilibria_bearer_token": anilibria_bearer_token,
@@ -371,6 +381,7 @@ def update_settings(
         "scrape_pause_every": scrape_pause_every,
         "scrape_pause_sec": scrape_pause_sec,
         "ongoing_interval_sec": ongoing_interval_sec,
+        "backoffice_interval_sec": str(max(60, int(backoffice_interval_sec))) if backoffice_interval_sec.isdigit() else "900",
         "cleanup_interval_sec": cleanup_interval_sec,
         "pipeline_master_min_age_min": pipeline_master_min_age_min,
         "pipeline_reconcile_interval_sec": pipeline_reconcile_interval_sec,
@@ -806,9 +817,11 @@ def jobs_detail_live(
     job_type: str | None = Query(default=None),
     status: str | None = Query(default=None),
     job_id: int | None = Query(default=None),
+    failure_after_id: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = _jobs_page_context(db, job_type=job_type, status=status, job_id=job_id)
+    context = _jobs_page_context(db, job_type=job_type, status=status, job_id=job_id,
+                                 failure_after_id=failure_after_id)
     return templates.TemplateResponse(request, "partials/job_detail_live.html", context)
 
 
@@ -831,6 +844,7 @@ def _jobs_page_context(
     job_type: str | None,
     status: str | None,
     job_id: int | None,
+    failure_after_id: int = 0,
 ) -> dict:
     query = select(Job)
     if job_type:
@@ -856,6 +870,9 @@ def _jobs_page_context(
         "job_type": job_type or "",
         "status": status or "",
         "job_catalog": load_job_catalog(db),
+        "failure_page": get_failure_page(db, selected_job.id, after_id=failure_after_id)
+        if selected_job is not None and getattr(selected_job, "result_json", None) else None,
+        "failure_after_id": failure_after_id,
     }
 
 
@@ -1147,6 +1164,9 @@ def releases_page(
     tracked_only: str | None = Query(default=None),
     hevc_filter: str | None = Query(default=None),
     show_hidden: str | None = Query(default=None),
+    source_filter: str | None = Query(default=None),
+    block_filter: str | None = Query(default=None),
+    abandoned_filter: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -1157,6 +1177,7 @@ def releases_page(
         tracked_only=only_tracked,
         hevc_filter=hevc_filter,
         show_hidden=show_hidden == "on",
+        source_filter=source_filter, block_filter=block_filter, abandoned_filter=abandoned_filter,
         page=page,
         per_page=30,
     )
@@ -1170,6 +1191,9 @@ def releases_live(
     tracked_only: str | None = Query(default=None),
     hevc_filter: str | None = Query(default=None),
     show_hidden: str | None = Query(default=None),
+    source_filter: str | None = Query(default=None),
+    block_filter: str | None = Query(default=None),
+    abandoned_filter: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -1180,10 +1204,30 @@ def releases_live(
         tracked_only=only_tracked,
         hevc_filter=hevc_filter,
         show_hidden=show_hidden == "on",
+        source_filter=source_filter, block_filter=block_filter, abandoned_filter=abandoned_filter,
         page=page,
         per_page=30,
     )
     return templates.TemplateResponse(request, "partials/releases_live.html", context)
+
+
+@app.post("/releases/{release_id}/abandoned", response_class=HTMLResponse)
+def toggle_release_abandoned(request: Request, release_id: int,
+                             abandoned: str | None = Form(default=None), db: Session = Depends(get_db)):
+    from app.db.models import Release
+    from app.utils.datetime_fmt import utcnow
+    row = db.get(Release, release_id)
+    if row is None:
+        archive = db.scalar(select(TorrentArchive).where(TorrentArchive.release_id == release_id).limit(1))
+        if archive is None:
+            raise HTTPException(status_code=404, detail="Релиз не найден")
+        row = Release(release_id=release_id, title=archive.anime_name, release_alias=archive.release_alias)
+        db.add(row)
+    row.is_abandoned = abandoned == "on"
+    row.updated_at = utcnow()
+    db.commit()
+    return templates.TemplateResponse(request, "partials/release_abandoned_toggle.html",
+        {"release_id": release_id, "is_abandoned": row.is_abandoned})
 
 
 @app.post("/releases/{release_id}/track", response_class=HTMLResponse)
@@ -1332,6 +1376,26 @@ def archive_page(
     return templates.TemplateResponse(request, "archive.html", context)
 
 
+@app.get("/encoder-history", response_class=HTMLResponse)
+def encoder_history_page(
+    request: Request, page: int = Query(default=1, ge=1), search: str = "",
+    status: str = "", release_id: int | None = None, submission_id: int | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = encoder_history_page_context(db, page=page, search=search, status=status, release_id=release_id, submission_id=submission_id)
+    return templates.TemplateResponse(request, "encoder_history.html", context)
+
+
+@app.get("/encoder-history/live", response_class=HTMLResponse)
+def encoder_history_live(
+    request: Request, page: int = Query(default=1, ge=1), search: str = "",
+    status: str = "", release_id: int | None = None, submission_id: int | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    context = encoder_history_page_context(db, page=page, search=search, status=status, release_id=release_id, submission_id=submission_id)
+    return templates.TemplateResponse(request, "partials/encoder_history_live.html", context)
+
+
 @app.get("/archive/live", response_class=HTMLResponse)
 def archive_live(
     request: Request,
@@ -1422,6 +1486,10 @@ async def run_job_action(
     release: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    if job_type == "retry_sync_failures":
+        return templates.TemplateResponse(request, "partials/action_result.html", {
+            "message": "Выберите ошибки в результате завершённой синхронизации.",
+        }, status_code=422)
     if job_type == "orphan_cleanup":
         params: dict = {"dry_run": dry_run, "apply": apply}
     elif job_type in ("cleanup_master", "cleanup_slave"):

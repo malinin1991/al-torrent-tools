@@ -75,7 +75,7 @@ def resolve_anilibria_settings(db: Session | None = None) -> AniLibriaRuntimeSet
 
 def build_anilibria_client(db: Session | None = None) -> AniLibriaClient:
     resolved = resolve_anilibria_settings(db)
-    return AniLibriaClient(
+    public = AniLibriaClient(
         base_url=resolved.base_url,
         fallback_base_url=resolved.fallback_base_url,
         bearer_token=resolved.bearer_token,
@@ -83,6 +83,17 @@ def build_anilibria_client(db: Session | None = None) -> AniLibriaClient:
         request_retries=resolved.request_retries,
         retry_delay_ms=resolved.retry_delay_ms,
     )
+    admin_base_url = get_setting_value(
+        db, "anilibria_admin_base_url", settings.anilibria_admin_base_url, allow_empty=True
+    ).strip()
+    if not admin_base_url:
+        return public
+    from app.providers.anilibria.backoffice import BackofficeClient
+    from app.providers.anilibria.sources import ReleaseSourceClient
+    backoffice = BackofficeClient(admin_base_url,
+        get_setting_value(db, "anilibria_login", ""), get_setting_value(db, "anilibria_password", ""),
+        retries=resolved.request_retries, retry_delay_sec=resolved.retry_delay_ms / 1000)
+    return ReleaseSourceClient(public, backoffice, db)
 
 
 def resolve_telegram_bot_settings(

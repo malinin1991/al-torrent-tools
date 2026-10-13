@@ -1,0 +1,84 @@
+{
+  "sqlalchemy": {
+    "version": "2.1.4",
+    "source": "https://pypi.org/pypi/sqlalchemy/2.1.4/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "sqlalchemy-2.1.4-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+    ],
+    "has_source": true
+  },
+  "psycopg-binary": {
+    "version": "3.3.6",
+    "source": "https://pypi.org/pypi/psycopg-binary/3.3.6/json",
+    "linux_aarch64_free_threaded_wheels": [],
+    "has_source": false
+  },
+  "pydantic-core": {
+    "version": "2.50.1",
+    "source": "https://pypi.org/pypi/pydantic-core/2.50.1/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "pydantic_core-2.50.1-cp315-cp315t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+    ],
+    "has_source": true
+  },
+  "blake3": {
+    "version": "1.0.11",
+    "source": "https://pypi.org/pypi/blake3/1.0.11/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "blake3-1.0.11-cp315-cp315t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"
+    ],
+    "has_source": true
+  },
+  "uvloop": {
+    "version": "0.23.0",
+    "source": "https://pypi.org/pypi/uvloop/0.23.0/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "uvloop-0.23.0-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+    ],
+    "has_source": true
+  },
+  "httptools": {
+    "version": "0.9.0",
+    "source": "https://pypi.org/pypi/httptools/0.9.0/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "httptools-0.9.0-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+    ],
+    "has_source": true
+  },
+  "pyyaml": {
+    "version": "6.0.3",
+    "source": "https://pypi.org/pypi/pyyaml/6.0.3/json",
+    "linux_aarch64_free_threaded_wheels": [],
+    "has_source": true
+  },
+  "markupsafe": {
+    "version": "3.0.4",
+    "source": "https://pypi.org/pypi/markupsafe/3.0.4/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "markupsafe-3.0.4-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+    ],
+    "has_source": true
+  },
+  "charset-normalizer": {
+    "version": "3.5.2",
+    "source": "https://pypi.org/pypi/charset-normalizer/3.5.2/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "charset_normalizer-3.5.2-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+    ],
+    "has_source": true
+  },
+  "watchfiles": {
+    "version": "1.3.0",
+    "source": "https://pypi.org/pypi/watchfiles/1.3.0/json",
+    "linux_aarch64_free_threaded_wheels": [],
+    "has_source": true
+  },
+  "websockets": {
+    "version": "17.2",
+    "source": "https://pypi.org/pypi/websockets/17.2/json",
+    "linux_aarch64_free_threaded_wheels": [
+      "websockets-17.2-cp315-cp315t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl"
+    ],
+    "has_source": true
+  }
+}

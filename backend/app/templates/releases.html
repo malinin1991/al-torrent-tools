@@ -17,9 +17,30 @@
         <option value="type_mismatch" {% if hevc_filter == "type_mismatch" %}selected{% endif %}>Расхождение типов</option>
       </select>
     </label>
+    <label>Источник
+      <select class="input" name="source_filter">
+        {% for value, label in [('', 'Все'), ('site', 'Сайт'), ('backoffice', 'Админка'), ('unknown', 'Ещё не проверен')] %}
+        <option value="{{ value }}" {% if source_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Скрытие / блокировка
+      <select class="input" name="block_filter">
+        {% for value, label in [('', 'Все'), ('hidden', 'Скрыт'), ('copyright', 'Правообладатель'), ('geo', 'Геоблок'), ('none', 'Без скрытия и блокировок')] %}
+        <option value="{{ value }}" {% if block_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Ручной статус
+      <select class="input" name="abandoned_filter">
+        {% for value, label in [('', 'Все'), ('yes', 'Брошенные'), ('no', 'Без брошенных')] %}
+        <option value="{{ value }}" {% if abandoned_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label class="row" style="gap:6px; margin:0;" title="{% if hevc_filter %}Включает AVC с «Игнорировать HEVC» в фильтр{% else %}Влияет только при фильтре HEVC (Нет HEVC / Просрочка / Расхождение){% endif %}">
       <input type="checkbox" name="show_hidden" value="on" {% if show_hidden %}checked{% endif %} {% if not hevc_filter %}disabled{% endif %} />
-      Отображать скрытое
+      Включать AVC с игнором HEVC
     </label>
     <button class="btn" type="submit">Найти</button>
   </form>
@@ -28,11 +49,12 @@
 {% set tracked_qs = '&tracked_only=on' if tracked_only else '' %}
 {% set hevc_qs = ('&hevc_filter=' ~ (hevc_filter|urlencode)) if hevc_filter else '' %}
 {% set hidden_qs = '&show_hidden=on' if show_hidden else '' %}
+{% set source_qs = '&source_filter=' ~ (source_filter|urlencode) ~ '&block_filter=' ~ (block_filter|urlencode) ~ '&abandoned_filter=' ~ (abandoned_filter|urlencode) %}
 <div id="releases-action-result" class="muted" style="margin-bottom:8px;"></div>
 <div
   id="releases-live"
   data-ui-sse-channel="releases"
-  data-ui-sse-url="/releases/live?search={{ search|urlencode }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}&page={{ page }}"
+  data-ui-sse-url="/releases/live?search={{ search|urlencode }}{{ tracked_qs }}{{ hevc_qs }}{{ hidden_qs }}{{ source_qs }}&page={{ page }}"
   data-ui-sse-target="#releases-live"
   data-encoder-enabled="{% if video_kensetsu_ok %}1{% else %}0{% endif %}"
 >

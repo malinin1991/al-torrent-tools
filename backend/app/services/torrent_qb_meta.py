@@ -112,7 +112,7 @@ def genres_from_quality_json(quality_json: dict[str, Any] | None) -> list[str]:
 
 
 _KNOWN_MEMBER_ROLES = frozenset(
-    {"poster", "timing", "voicing", "editing", "decorating", "translating"}
+    {"poster", "timing", "voicing", "editing", "decorating", "translating", "hevc"}
 )
 
 

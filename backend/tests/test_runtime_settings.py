@@ -1,10 +1,50 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.runtime_settings import (
     mask_settings_dict,
     resolve_anilibria_settings,
     resolve_telegram_bot_settings,
 )
+
+
+@pytest.mark.parametrize("admin_url", ["https://admin.test", ""])
+def test_admin_api_url_is_independent_of_release_link_and_public_fallback(monkeypatch, admin_url):
+    from app.core.config import settings
+    from app.providers.anilibria.sources import ReleaseSourceClient
+    from app.services.runtime_settings import build_anilibria_client
+
+    monkeypatch.setattr(settings, "anilibria_admin_base_url", "https://env-admin.test")
+    values = {
+        "anilibria_base_url": "https://public.test/api/v1",
+        "anilibria_fallback_base_url": "https://public-backup.test/api/v1",
+        "anilibria_admin_base_url": admin_url,
+        "anilibria_admin_url_template": "https://links.test/nova/{release_id}",
+        "anilibria_login": "user",
+        "anilibria_password": "secret",
+    }
+    db = SimpleNamespace(get=lambda model, key: SimpleNamespace(value=values[key]) if key in values else None)
+    client = build_anilibria_client(db)
+    if not admin_url:
+        assert not isinstance(client, ReleaseSourceClient)
+        assert client.base_url == "https://public.test/api/v1"
+    else:
+        assert isinstance(client, ReleaseSourceClient)
+        assert client.backoffice.base_url == "https://admin.test"
+        assert client.public.fallback_base_url == "https://public-backup.test/api/v1"
+
+
+def test_admin_source_works_without_release_link_template(monkeypatch):
+    from app.core.config import settings
+    from app.providers.anilibria.sources import ReleaseSourceClient
+    from app.services.runtime_settings import build_anilibria_client
+
+    monkeypatch.setattr(settings, "anilibria_admin_base_url", "https://env-admin.test")
+    monkeypatch.setattr(settings, "anilibria_admin_url_template", "")
+    client = build_anilibria_client()
+    assert isinstance(client, ReleaseSourceClient)
+    assert client.backoffice.base_url == "https://env-admin.test"
 
 
 def test_mask_settings_dict_hides_secrets() -> None:

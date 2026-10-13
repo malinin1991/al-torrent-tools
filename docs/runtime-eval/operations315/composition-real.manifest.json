@@ -1,0 +1,26 @@
+{
+  "info_hash": "d5340517b3ec5cb0795918109dccc860f7c262e4",
+  "torrent_sha256": "398871903559ef2826a955a802720260a3999e1227081b9aabb322080cbf78aa",
+  "inventory": [
+    {
+      "name": "One_Piece_[0013]_[HEVC].mkv",
+      "size": 393817937,
+      "mtime_ns": 1790974544000000000
+    },
+    {
+      "name": "One_Piece_[0014]_[HEVC].mkv",
+      "size": 332025615,
+      "mtime_ns": 1790974550000000000
+    },
+    {
+      "name": "One_Piece_[0015]_[HEVC].mkv",
+      "size": 386696174,
+      "mtime_ns": 1790972442000000000
+    },
+    {
+      "name": "One_Piece_[0016]_[HEVC].mkv",
+      "size": 387858903,
+      "mtime_ns": 1790972508000000000
+    }
+  ]
+}

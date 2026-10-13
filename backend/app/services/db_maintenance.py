@@ -7,6 +7,7 @@ from app.db.models import (
     FileChangeEvent,
     Job,
     JobLog,
+    JobSyncFailure,
     OngoingWatch,
     ReleaseCheckpoint,
     SeenTorrent,
@@ -29,6 +30,7 @@ def reset_operational_state(db: Session) -> dict[str, int]:
     outbox = db.scalar(select(func.count()).select_from(TelegramOutbox)) or 0
 
     db.execute(delete(JobLog))
+    db.execute(delete(JobSyncFailure))
     db.execute(delete(Job))
     db.execute(delete(SeenTorrent))
     db.execute(delete(TelegramOutbox))

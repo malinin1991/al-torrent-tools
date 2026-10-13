@@ -7,14 +7,22 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.db.models import ExtraUrl, OngoingWatch
+from app.db.models import ExtraUrl, OngoingWatch, Job, JobLog, JobSyncFailure
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from app.jobs import ongoing
 from app.providers.anilibria.client import AniLibriaNotFoundError
 from app.services.ongoing_watch import observe_torrents, update_watch_list
 from app.services.release_checkpoint import ReleaseRef
 from app.services.torrent_processor import TorrentProcessor
+from app.services.sync_outcomes import JobPartialFailure
 
 NOW = datetime(2026, 10, 9)
+
+
+@compiles(JSONB, "sqlite")
+def _jsonb(*args, **kwargs):
+    return "JSON"
 
 
 @pytest.fixture
@@ -22,7 +30,12 @@ def db():
     engine = create_engine("sqlite://")
     OngoingWatch.__table__.create(engine)
     ExtraUrl.__table__.create(engine)
+    Job.__table__.create(engine)
+    JobLog.__table__.create(engine)
+    JobSyncFailure.__table__.create(engine)
     with Session(engine) as session:
+        session.add(Job(id=1, type="ongoing", status="running", params_json={}))
+        session.commit()
         yield session
     engine.dispose()
 
@@ -87,8 +100,12 @@ def job_env(db, monkeypatch):
     return client, calls
 
 
-def run(db):
-    asyncio.run(ongoing.run_ongoing(db, 1, {}))
+def run(db, *, partial=False):
+    if partial:
+        with pytest.raises(JobPartialFailure):
+            asyncio.run(ongoing.run_ongoing(db, 1, {}))
+    else:
+        asyncio.run(ongoing.run_ongoing(db, 1, {}))
 
 
 def test_late_hevc_is_processed_with_unchanged_markers(db, job_env, monkeypatch):
@@ -119,7 +136,7 @@ def test_broken_schedule_does_not_start_expiry(db, job_env, schedule):
     client, calls = job_env
     update_watch_list(db, [ReleaseRef(1)], now=NOW)
     client.get_schedule_week.return_value = schedule
-    run(db)
+    run(db, partial=True)
     assert db.get(OngoingWatch, 1).missing_since is None
     calls.assert_awaited_once()
 
@@ -139,7 +156,7 @@ def test_only_confirmed_release_404_removes_watch(
         client.get_release.side_effect = (
             AniLibriaNotFoundError() if release_result == "404" else TimeoutError()
         )
-    run(db)
+    run(db, partial=release_result == "timeout" or (release_result == "exists" and isinstance(torrent_result, Exception)))
     assert (db.get(OngoingWatch, 1) is None) == (release_result == "404")
 
 
@@ -149,7 +166,7 @@ def test_failure_isolated_and_does_not_refresh_deadline(db, job_env):
     update_watch_list(db, [], now=NOW - timedelta(days=1))
     expiry = db.get(OngoingWatch, 1).expires_at
     client.get_torrents_for_release.side_effect = [TimeoutError(), [{"id": 102}]]
-    run(db)
+    run(db, partial=True)
     assert db.get(OngoingWatch, 1).expires_at == expiry
     assert db.get(OngoingWatch, 2).max_torrent_id == 102
     calls.assert_awaited_once()
@@ -161,10 +178,10 @@ def test_processing_failure_does_not_repeatedly_extend(db, job_env, monkeypatch)
     update_watch_list(db, [ReleaseRef(1)], now=NOW - timedelta(days=2))
     update_watch_list(db, [], now=NOW - timedelta(days=1))
     calls.side_effect = RuntimeError("torrent download failed")
-    run(db)
+    run(db, partial=True)
     assert db.get(OngoingWatch, 1).expires_at == NOW + timedelta(days=14)
     monkeypatch.setattr(ongoing, "utcnow", lambda: NOW + timedelta(days=1))
-    run(db)
+    run(db, partial=True)
     assert db.get(OngoingWatch, 1).expires_at == NOW + timedelta(days=14)
 
 
@@ -205,7 +222,7 @@ def test_malformed_torrents_do_not_erase_or_extend(db, job_env):
     update_watch_list(db, [], now=NOW - timedelta(days=1))
     expiry = db.get(OngoingWatch, 1).expires_at
     client.get_torrents_for_release.return_value = {"error": "unavailable"}
-    run(db)
+    run(db, partial=True)
     assert db.get(OngoingWatch, 1).expires_at == expiry
     calls.assert_not_awaited()
 

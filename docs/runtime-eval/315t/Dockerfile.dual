@@ -1,0 +1,8 @@
+FROM altt-python-eval:315-regular-pure-20261013 AS regular
+FROM altt-python-eval:315t-pure-fixed-20261013
+COPY --from=regular /usr/local /opt/python315regular
+COPY run_regular.sh run_t_gil1.sh run_t_default.sh /opt/runtime-modes/
+RUN chmod 755 /opt/runtime-modes/*.sh \
+    && /opt/runtime-modes/run_regular.sh -c 'import sys,psycopg; assert sys.prefix == "/opt/python315regular"; assert psycopg.pq.__impl__ == "python"; print(sys.version,sys._is_gil_enabled())' \
+    && /opt/runtime-modes/run_t_gil1.sh -c 'import sys,psycopg; assert sys._is_gil_enabled(); assert psycopg.pq.__impl__ == "python"; print(sys.version,sys._is_gil_enabled())' \
+    && /opt/runtime-modes/run_t_default.sh -c 'import sys,psycopg; assert not sys._is_gil_enabled(); assert psycopg.pq.__impl__ == "python"; print(sys.version,sys._is_gil_enabled())'

@@ -1,395 +1,201 @@
-from datetime import datetime, timedelta
-from app.utils.datetime_fmt import utcnow
-from types import SimpleNamespace
+import asyncio
+from datetime import timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session
 
+from app.db.models import Job, JobLog
 from app.services import job_runner as job_runner_module
 from app.services.job_runner import (
-    STATUS_CANCELLED,
-    STATUS_PENDING,
-    STATUS_RUNNING,
-    STATUS_STOPPING,
-    STATUS_SUCCESS,
-    JobRunner,
-    JobStopError,
-    JobStopRequested,
-    UnknownJobTypeError,
-    cancel_jobs_by_ids,
-    cancel_stale_jobs,
-    is_stop_requested,
-    reclaim_orphan_jobs,
-    reclaim_stale_jobs,
-    request_stop,
+    STATUS_CANCELLED, STATUS_PENDING, STATUS_RUNNING, STATUS_STOPPING, STATUS_SUCCESS,
+    JobRunner, JobStopError, JobStopRequested, UnknownJobTypeError,
+    cancel_jobs_by_ids, cancel_stale_jobs, is_stop_requested, reclaim_orphan_jobs,
+    reclaim_stale_jobs, request_stop,
 )
+from app.utils.datetime_fmt import utcnow
 
 
-def test_cancel_stale_jobs_marks_running_and_pending() -> None:
-    running = SimpleNamespace(id=1, status=STATUS_RUNNING, error=None, finished_at=None)
-    pending = SimpleNamespace(id=2, status=STATUS_PENDING, error=None, finished_at=None)
-    success = SimpleNamespace(id=3, status="success", error=None, finished_at=None)
-
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = [running, pending]
-
-    cancelled = cancel_stale_jobs(db, reason="тест")
-
-    assert cancelled == [1, 2]
-    assert running.status == STATUS_CANCELLED
-    assert pending.status == STATUS_CANCELLED
-    assert running.error == "тест"
-    assert pending.finished_at is not None
-    assert success.status == "success"
-    db.commit.assert_called_once()
-    assert db.add.call_count == 2
+@compiles(JSONB, 'sqlite')
+def _jsonb_sqlite(*_args, **_kwargs):
+    return 'JSON'
 
 
-def test_cancel_stale_jobs_noop_when_empty() -> None:
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = []
+@pytest.fixture
+def db(tmp_path, monkeypatch):
+    engine = create_engine(f'sqlite:///{tmp_path / "jobs.sqlite"}')
+    Job.__table__.create(engine)
+    JobLog.__table__.create(engine)
+    monkeypatch.setattr(job_runner_module, '_hold_run_lock', lambda _id: object())
+    monkeypatch.setattr(job_runner_module, '_release_run_lock', lambda *_args: None)
+    with Session(engine, expire_on_commit=False) as session:
+        yield session
+    engine.dispose()
 
+
+def _job(db, status=STATUS_PENDING, **kwargs):
+    values = dict(type='demo', status=status, params_json={}, created_at=utcnow())
+    values.update(kwargs)
+    job = Job(**values)
+    db.add(job)
+    db.commit()
+    return job
+
+
+def _logs(db, job_id):
+    return list(db.scalars(select(JobLog).where(JobLog.job_id == job_id)).all())
+
+
+def test_cancel_stale_jobs_marks_running_and_pending(db):
+    running, pending, success = [_job(db, status) for status in (STATUS_RUNNING, STATUS_PENDING, STATUS_SUCCESS)]
+    assert cancel_stale_jobs(db, reason='тест') == [running.id, pending.id]
+    assert running.status == pending.status == STATUS_CANCELLED
+    assert running.error == 'тест' and pending.finished_at is not None
+    assert success.status == STATUS_SUCCESS
+    assert len(_logs(db, running.id)) == len(_logs(db, pending.id)) == 1
+    assert _logs(db, success.id) == []
+
+
+def test_cancel_stale_jobs_noop_when_empty(db):
     assert cancel_stale_jobs(db) == []
-    db.commit.assert_not_called()
+    assert list(db.scalars(select(JobLog)).all()) == []
 
 
-def test_cancel_jobs_by_ids() -> None:
-    running = SimpleNamespace(id=7, status=STATUS_RUNNING, error=None, finished_at=None)
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = [running]
-
-    cancelled = cancel_jobs_by_ids(db, [7], reason="shutdown")
-
-    assert cancelled == [7]
-    assert running.status == STATUS_CANCELLED
-    assert running.error == "shutdown"
-    db.commit.assert_called_once()
+def test_cancel_jobs_by_ids(db):
+    running, other = _job(db, STATUS_RUNNING), _job(db, STATUS_RUNNING)
+    assert cancel_jobs_by_ids(db, [running.id], reason='shutdown') == [running.id]
+    assert running.status == STATUS_CANCELLED and running.error == 'shutdown'
+    assert other.status == STATUS_RUNNING
 
 
-def test_reclaim_stale_jobs_by_age() -> None:
-    old = utcnow() - timedelta(minutes=60)
-    fresh = utcnow() - timedelta(minutes=1)
-    stale_running = SimpleNamespace(
-        id=1, status=STATUS_RUNNING, error=None, finished_at=None, started_at=old, created_at=old
-    )
-    fresh_pending = SimpleNamespace(
-        id=2, status=STATUS_PENDING, error=None, finished_at=None, started_at=None, created_at=fresh
-    )
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = [stale_running, fresh_pending]
-    # Нет логов — для running якорь = started_at (старый).
-    db.scalar.return_value = None
-    # try_lock успешен → сирота / можно отменить.
-    db.execute.return_value.scalar.return_value = True
-
-    cancelled = reclaim_stale_jobs(db, max_age_minutes=30)
-
-    assert cancelled == [1]
-    assert stale_running.status == STATUS_CANCELLED
-    assert fresh_pending.status == STATUS_PENDING
-    db.commit.assert_called_once()
+def test_reclaim_stale_jobs_by_age(db):
+    old, fresh = utcnow() - timedelta(minutes=60), utcnow() - timedelta(minutes=1)
+    stale = _job(db, STATUS_RUNNING, created_at=old, started_at=old)
+    pending = _job(db, created_at=fresh)
+    assert reclaim_stale_jobs(db, max_age_minutes=30) == [stale.id]
+    assert stale.status == STATUS_CANCELLED and pending.status == STATUS_PENDING
 
 
-def test_reclaim_keeps_long_running_job_with_recent_logs() -> None:
-    """full_sync старше порога, но с свежими логами — не отменяем."""
+def test_reclaim_keeps_long_running_job_with_recent_logs(db):
     old = utcnow() - timedelta(minutes=120)
-    recent_log = utcnow() - timedelta(minutes=2)
-    long_running = SimpleNamespace(
-        id=9,
-        status=STATUS_RUNNING,
-        error=None,
-        finished_at=None,
-        started_at=old,
-        created_at=old,
-    )
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = [long_running]
-    db.scalar.return_value = recent_log
-
-    cancelled = reclaim_stale_jobs(db, max_age_minutes=30)
-
-    assert cancelled == []
-    assert long_running.status == STATUS_RUNNING
-    db.commit.assert_not_called()
+    job = _job(db, STATUS_RUNNING, created_at=old, started_at=old)
+    db.add(JobLog(job_id=job.id, message='alive', created_at=utcnow() - timedelta(minutes=2)))
+    db.commit()
+    assert reclaim_stale_jobs(db, max_age_minutes=30) == []
+    assert job.status == STATUS_RUNNING
 
 
-def test_reclaim_orphan_running_when_lock_free() -> None:
-    running = SimpleNamespace(
-        id=3,
-        status=STATUS_RUNNING,
-        error=None,
-        finished_at=None,
-        started_at=utcnow(),
-        created_at=utcnow(),
-    )
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = [running]
-    db.execute.return_value.scalar.return_value = True
-
-    cancelled = reclaim_orphan_jobs(db, reason="сирота")
-
-    assert cancelled == [3]
-    assert running.status == STATUS_CANCELLED
-    db.commit.assert_called_once()
+def test_reclaim_orphan_running_when_lock_free(db):
+    job = _job(db, STATUS_RUNNING)
+    assert reclaim_orphan_jobs(db, reason='сирота') == [job.id]
+    assert job.status == STATUS_CANCELLED and job.error == 'сирота'
 
 
-def test_reclaim_orphan_skips_running_when_lock_held() -> None:
-    running = SimpleNamespace(
-        id=4,
-        status=STATUS_RUNNING,
-        error=None,
-        finished_at=None,
-        started_at=utcnow(),
-        created_at=utcnow(),
-    )
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = [running]
-    db.execute.return_value.scalar.return_value = False
-
-    cancelled = reclaim_orphan_jobs(db)
-
-    assert cancelled == []
-    assert running.status == STATUS_RUNNING
-    db.commit.assert_not_called()
+def test_reclaim_orphan_skips_running_when_lock_held(db, monkeypatch):
+    job = _job(db, STATUS_RUNNING)
+    monkeypatch.setattr(job_runner_module, '_hold_run_lock', lambda _id: None)
+    assert reclaim_orphan_jobs(db) == []
+    assert job.status == STATUS_RUNNING
 
 
-def test_reclaim_orphan_pending_older_than_grace() -> None:
-    old = utcnow() - timedelta(seconds=120)
-    pending = SimpleNamespace(
-        id=5, status=STATUS_PENDING, error=None, finished_at=None, started_at=None, created_at=old
-    )
-    db = MagicMock()
-    db.scalars.return_value.all.return_value = [pending]
-
-    cancelled = reclaim_orphan_jobs(db, pending_grace_sec=60)
-
-    assert cancelled == [5]
-    assert pending.status == STATUS_CANCELLED
+def test_reclaim_orphan_pending_older_than_grace(db):
+    job = _job(db, created_at=utcnow() - timedelta(seconds=120))
+    assert reclaim_orphan_jobs(db, pending_grace_sec=60) == [job.id]
+    assert job.status == STATUS_CANCELLED
 
 
-def test_create_job_rejects_unknown_type() -> None:
-    runner = JobRunner()
-    db = MagicMock()
+def test_create_job_rejects_unknown_type():
     with pytest.raises(UnknownJobTypeError):
-        runner.create_job(db, "not_a_real_job", {})
+        JobRunner().create_job(MagicMock(), 'not_a_real_job', {})
 
 
-def test_request_stop_running_to_stopping() -> None:
-    job = SimpleNamespace(id=11, status=STATUS_RUNNING)
-    db = MagicMock()
-    db.get.return_value = job
-
-    result = request_stop(db, 11)
-
-    assert result is job
+def test_request_stop_running_to_stopping(db):
+    job = _job(db, STATUS_RUNNING)
+    assert request_stop(db, job.id) is job
     assert job.status == STATUS_STOPPING
-    db.commit.assert_called()
-    db.add.assert_called()
+    assert len(_logs(db, job.id)) == 1
 
 
-def test_request_stop_rejects_non_running() -> None:
-    job = SimpleNamespace(id=12, status=STATUS_SUCCESS)
-    db = MagicMock()
-    db.get.return_value = job
+def test_request_stop_rejects_non_running(db):
+    job = _job(db, STATUS_SUCCESS)
     with pytest.raises(JobStopError):
-        request_stop(db, 12)
+        request_stop(db, job.id)
+    assert job.status == STATUS_SUCCESS
+    assert _logs(db, job.id) == []
 
 
-def test_is_stop_requested() -> None:
-    job = SimpleNamespace(id=13, status=STATUS_STOPPING)
-    db = MagicMock()
-    db.get.return_value = job
-    assert is_stop_requested(db, 13) is True
+def test_is_stop_requested(db):
+    job = _job(db, STATUS_STOPPING)
+    assert is_stop_requested(db, job.id)
     job.status = STATUS_RUNNING
-    assert is_stop_requested(db, 13) is False
+    db.commit()
+    assert not is_stop_requested(db, job.id)
     job.status = STATUS_CANCELLED
-    assert is_stop_requested(db, 13) is True
+    db.commit()
+    assert is_stop_requested(db, job.id)
 
 
-def _patch_run_lock(monkeypatch) -> MagicMock:
-    """Подмена dedicated lock-connection (без реальной БД)."""
-    lock_conn = MagicMock()
-    lock_conn.closed = False
-    monkeypatch.setattr(job_runner_module, "_hold_run_lock", lambda *_a, **_k: lock_conn)
-    monkeypatch.setattr(job_runner_module, "_release_run_lock", lambda *_a, **_k: None)
-    return lock_conn
-
-
-def test_run_job_holds_lock_on_separate_connection(monkeypatch) -> None:
-    """run-lock берётся через _hold_run_lock (engine.connect), не через ORM Session."""
-    import asyncio
-
-    runner = JobRunner()
-
-    async def handler(db: object, job_id: int, params: dict) -> None:
-        return None
-
-    runner.register("demo_lock", handler)
-    job = SimpleNamespace(
-        id=50,
-        type="demo_lock",
-        status=STATUS_PENDING,
-        params_json={},
-        started_at=None,
-        finished_at=None,
-        error=None,
-    )
-    db = MagicMock()
-    db.get.return_value = job
-
-    fake_conn = MagicMock()
-    fake_conn.closed = False
-    hold_calls: list[int] = []
-    release_calls: list[tuple[object, int]] = []
-
-    def fake_hold(job_id: int) -> object:
-        hold_calls.append(job_id)
-        return fake_conn
-
-    def fake_release(conn: object, job_id: int) -> None:
-        release_calls.append((conn, job_id))
-
-    monkeypatch.setattr(job_runner_module, "_hold_run_lock", fake_hold)
-    monkeypatch.setattr(job_runner_module, "_release_run_lock", fake_release)
-
-    # ORM Session не должна получать advisory lock execute от run_job.
-    db.execute.side_effect = AssertionError("run_job не должен брать lock через ORM Session")
-
-    result = asyncio.run(runner.run_job(db, 50))
-
-    assert hold_calls == [50]
-    assert release_calls == [(fake_conn, 50)]
+def test_run_job_holds_lock_on_separate_connection(db, monkeypatch):
+    runner, calls, connection = JobRunner(), [], object()
+    async def handler(_db, _id, _params):
+        calls.append('handler')
+    runner.register('demo', handler)
+    job = _job(db)
+    monkeypatch.setattr(job_runner_module, '_hold_run_lock', lambda job_id: calls.append(('hold', job_id)) or connection)
+    monkeypatch.setattr(job_runner_module, '_release_run_lock', lambda conn, job_id: calls.append(('release', conn, job_id)))
+    # ORM executes conditional SQL, but never takes advisory locks itself.
+    original = db.execute
+    def execute(stmt, *args, **kwargs):
+        assert 'advisory' not in str(stmt)
+        return original(stmt, *args, **kwargs)
+    monkeypatch.setattr(db, 'execute', execute)
+    result = asyncio.run(runner.run_job(db, job.id))
     assert result.status == STATUS_SUCCESS
+    assert calls == [('hold', job.id), 'handler', ('release', connection, job.id)]
 
 
-def test_hold_run_lock_uses_engine_not_session(monkeypatch) -> None:
-    """_hold_run_lock открывает engine.connect и берёт pg_advisory_lock там."""
-    fake_conn = MagicMock()
-    fake_conn.closed = False
-    connect_calls: list[object] = []
-
-    def fake_connect() -> object:
-        connect_calls.append(True)
-        return fake_conn
-
-    monkeypatch.setattr(job_runner_module.engine, "connect", fake_connect)
-
-    conn = job_runner_module._hold_run_lock(42)
-
-    assert conn is fake_conn
-    assert connect_calls == [True]
-    fake_conn.execute.assert_called()
-    sql = str(fake_conn.execute.call_args[0][0])
-    assert "pg_advisory_lock" in sql
-    fake_conn.commit.assert_called()
+def test_hold_run_lock_uses_engine_not_session(monkeypatch):
+    conn = MagicMock()
+    conn.execute.return_value.scalar.return_value = True
+    monkeypatch.setattr(job_runner_module.engine, 'connect', lambda: conn)
+    assert job_runner_module._hold_run_lock(42) is conn
+    assert 'pg_try_advisory_lock' in str(conn.execute.call_args.args[0])
+    conn.commit.assert_called_once()
+    conn.close.assert_not_called()
 
 
-def test_run_job_finalizes_stop_requested_as_cancelled(monkeypatch) -> None:
-    import asyncio
-
+def test_run_job_finalizes_stop_requested_as_cancelled(db):
     runner = JobRunner()
-
-    async def handler(db: object, job_id: int, params: dict) -> None:
+    async def handler(_db, _id, _params):
         raise JobStopRequested()
-
-    runner.register("demo_stop", handler)
-    job = SimpleNamespace(
-        id=99,
-        type="demo_stop",
-        status=STATUS_PENDING,
-        params_json={},
-        started_at=None,
-        finished_at=None,
-        error=None,
-    )
-    db = MagicMock()
-    db.get.return_value = job
-    _patch_run_lock(monkeypatch)
-
-    result = asyncio.run(runner.run_job(db, 99))
-
+    runner.register('demo', handler)
+    job = _job(db)
+    result = asyncio.run(runner.run_job(db, job.id))
     assert result.status == STATUS_CANCELLED
-    assert result.error == "Остановлено пользователем"
+    assert result.error == 'Остановлено пользователем'
 
 
-def test_run_job_cancelled_mid_run_via_is_stop_requested(monkeypatch) -> None:
-    """Handler видит cancelled через is_stop_requested и останавливается."""
-    import asyncio
-
+def test_run_job_cancelled_mid_run_via_is_stop_requested(db):
     runner = JobRunner()
-    orphan_reason = "Джоб-сирота (процесс умер) помечен как cancelled"
-
-    async def handler(db: object, job_id: int, params: dict) -> None:
-        if is_stop_requested(db, job_id):
+    async def handler(session, job_id, _params):
+        cancel_jobs_by_ids(session, [job_id], reason='сирота')
+        if is_stop_requested(session, job_id):
             raise JobStopRequested()
-
-    runner.register("demo_cancel_mid", handler)
-    job = SimpleNamespace(
-        id=77,
-        type="demo_cancel_mid",
-        status=STATUS_PENDING,
-        params_json={},
-        started_at=None,
-        finished_at=None,
-        error=None,
-    )
-    db = MagicMock()
-    db.get.return_value = job
-
-    # После старта (status=running) handler увидит cancelled — как после reclaim.
-    def _refresh(obj: object) -> None:
-        if obj is job and job.status == STATUS_RUNNING:
-            job.status = STATUS_CANCELLED
-            job.error = orphan_reason
-            job.finished_at = utcnow()
-
-    db.refresh.side_effect = _refresh
-    _patch_run_lock(monkeypatch)
-
-    result = asyncio.run(runner.run_job(db, 77))
-
-    assert result.status == STATUS_CANCELLED
-    assert result.error == orphan_reason
+    runner.register('demo', handler)
+    job = _job(db)
+    result = asyncio.run(runner.run_job(db, job.id))
+    assert result.status == STATUS_CANCELLED and result.error == 'сирота'
 
 
-def test_run_job_no_success_log_when_already_cancelled(monkeypatch) -> None:
-    """После handler слот уже cancelled — без лога «завершен успешно»."""
-    import asyncio
-
+def test_run_job_no_success_log_when_already_cancelled(db):
     runner = JobRunner()
-    logged: list[str] = []
-    orphan_reason = "Джоб-сирота (процесс умер) помечен как cancelled"
-
-    async def handler(db: object, job_id: int, params: dict) -> None:
-        # Имитация: reclaim отменил слот пока handler работал.
-        job.status = STATUS_CANCELLED
-        job.error = orphan_reason
-        job.finished_at = utcnow()
-
-    runner.register("demo_orphan_cancel", handler)
-    job = SimpleNamespace(
-        id=88,
-        type="demo_orphan_cancel",
-        status=STATUS_PENDING,
-        params_json={},
-        started_at=None,
-        finished_at=None,
-        error=None,
-    )
-    db = MagicMock()
-    db.get.return_value = job
-    _patch_run_lock(monkeypatch)
-
-    orig_add_log = runner.add_log
-
-    def tracking_add_log(db_arg: object, job_id: int, message: str, level: str = "info") -> None:
-        logged.append(message)
-        return orig_add_log(db_arg, job_id, message, level)
-
-    monkeypatch.setattr(runner, "add_log", tracking_add_log)
-
-    result = asyncio.run(runner.run_job(db, 88))
-
-    assert result.status == STATUS_CANCELLED
-    assert "Джоб завершен успешно" not in logged
-    assert result.error == orphan_reason
+    async def handler(session, job_id, _params):
+        cancel_jobs_by_ids(session, [job_id], reason='сирота')
+    runner.register('demo', handler)
+    job = _job(db)
+    result = asyncio.run(runner.run_job(db, job.id))
+    assert result.status == STATUS_CANCELLED and result.error == 'сирота'
+    assert not any('завершен успешно' in row.message for row in _logs(db, job.id))

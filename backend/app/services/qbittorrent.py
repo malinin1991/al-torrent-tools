@@ -235,13 +235,8 @@ def _decode_bencode(data: bytes, start: int = 0) -> tuple[object, int]:
 
 
 def _extract_info_slice(data: bytes) -> bytes:
-    marker = b"4:info"
-    marker_index = data.find(marker)
-    if marker_index < 0:
-        raise ValueError("В torrent-файле отсутствует секция info")
-    info_start = marker_index + len(marker)
-    _, info_end = _decode_bencode(data, info_start)
-    return data[info_start:info_end]
+    from app.services.torrent_policy import raw_torrent_fields
+    return raw_torrent_fields(data)[b"info"]
 
 
 def torrent_info_hash(torrent: str | Path | bytes) -> str:
@@ -286,6 +281,7 @@ def qb_add_torrent(
     comment: str | None = None,
     category: str | None = None,
     tags: list[str] | None = None,
+    managed_tags: list[str] | None = None,
 ) -> tuple[bool, bool, bool]:
     """Добавляет торрент в qB.
 
@@ -325,7 +321,7 @@ def qb_add_torrent(
 
     tags_ok = True
     if clean_tags:
-        tags_ok = _set_torrent_tags_after_add(client, info_hash, clean_tags)
+        tags_ok = _set_torrent_tags_after_add(client, info_hash, clean_tags, managed_tags=managed_tags)
         if not tags_ok:
             logger.warning(
                 "Не удалось установить tags после add для %s (already_present=%s)",
@@ -534,15 +530,17 @@ def _ensure_torrent_tags(
     attempts: int = 6,
     delay_sec: float = 0.3,
     require_present: bool = False,
+    managed_tags: list[str] | None = None,
 ) -> bool:
     """Reconcile genre tags: addTags для недостающих + removeTags для лишних.
 
     True только если tags реально менялись и итог совпал с desired.
     Уже совпадающий набор — False (no-op), как у ensure_torrent_rename.
-    Пустой desired — True (не сносим теги, когда жанры неизвестны).
+    Пустой desired без managed_tags — True (жанры неизвестны).
+    С managed_tags пустой desired удаляет только ранее управляемые жанры.
     """
     desired = _normalize_tags(tags)
-    if not desired:
+    if not desired and managed_tags is None:
         return True
     try:
         safe_hash = sanitize_info_hash(info_hash)
@@ -565,7 +563,11 @@ def _ensure_torrent_tags(
             current_list = _read_torrent_tag_list(client, safe_hash)
             current_keys = {t.casefold() for t in current_list}
             to_add = [t for t in desired if t.casefold() not in current_keys]
-            to_remove = [t for t in current_list if t.casefold() not in desired_keys]
+            from app.services.torrent_policy import SOURCE_TAGS
+            # Жанры не управляют метками источника: их отдельно reconcile-ит source policy.
+            to_remove = [t for t in current_list if t.casefold() not in desired_keys
+                         and t.casefold() not in SOURCE_TAGS
+                         and (managed_tags is None or t.casefold() in {v.casefold() for v in managed_tags})]
             if not to_add and not to_remove:
                 # Уже совпадает: no-op на первом заходе; True если писали ранее в этом вызове.
                 return changed_any
@@ -576,7 +578,8 @@ def _ensure_torrent_tags(
                 client.torrents_remove_tags(tags=to_remove, torrent_hashes=safe_hash)
                 changed_any = True
             current = _read_torrent_tags(client, safe_hash)
-            if current == desired_keys:
+            if (current == desired_keys if managed_tags is None else
+                desired_keys.issubset(current) and not (current & {v.casefold() for v in managed_tags} - desired_keys - SOURCE_TAGS)):
                 return True
             last_exc = RuntimeError(f"tags не совпали (сейчас={sorted(current)!r})")
         except (
@@ -610,6 +613,7 @@ def _set_torrent_tags_after_add(
     client: qbittorrentapi.Client,
     info_hash: str,
     tags: list[str],
+    *, managed_tags: list[str] | None = None,
 ) -> bool:
     """После add/Conflict ждёт торрент и ставит genre tags."""
     desired = _normalize_tags(tags)
@@ -623,9 +627,13 @@ def _set_torrent_tags_after_add(
         except ValueError:
             return False
     for candidate in candidates:
-        if _read_torrent_tags(client, candidate) == desired_keys:
+        current = _read_torrent_tags(client, candidate)
+        from app.services.torrent_policy import SOURCE_TAGS
+        managed = {t.casefold() for t in managed_tags} if managed_tags is not None else None
+        if (current == desired_keys if managed is None else
+            desired_keys.issubset(current) and not ((current & managed) - desired_keys - SOURCE_TAGS)):
             return True
-        if _ensure_torrent_tags(client, candidate, desired, attempts=6, delay_sec=0.25):
+        if _ensure_torrent_tags(client, candidate, desired, attempts=6, delay_sec=0.25, managed_tags=managed_tags):
             return True
     return False
 

@@ -203,6 +203,7 @@ def test_upsert_tracked_release_creates_and_updates() -> None:
 
 def test_enqueue_skipped_when_not_tracked() -> None:
     db = MagicMock()
+    db.scalar.return_value = None
     db.get.return_value = None  # TrackedRelease missing
     pipeline = SimpleNamespace(id=1, release_id=10, torrent_id=100, tg_status="skipped")
 
@@ -246,6 +247,9 @@ def test_enqueue_creates_outbox_when_tracked_and_enabled() -> None:
 
     db = MagicMock()
     db.get.side_effect = _get
+    db.scalar.return_value = None
+    db.get_bind.return_value.dialect.name = "postgresql"
+    db.execute.return_value.scalar_one_or_none.return_value = 1
     pipeline = SimpleNamespace(id=7, release_id=10, torrent_id=55, tg_status="skipped")
 
     result = enqueue_pipeline_telegram_notification(
@@ -259,17 +263,14 @@ def test_enqueue_creates_outbox_when_tracked_and_enabled() -> None:
     assert db.add.called
     from app.db.models import PipelineEvent, TelegramOutbox
 
-    outboxes = [
-        c.args[0]
-        for c in db.add.call_args_list
-        if isinstance(c.args[0], TelegramOutbox)
-    ]
-    assert len(outboxes) == 1
-    outbox = outboxes[0]
-    assert outbox.pipeline_id == 7
-    assert outbox.chat_id == "-100123"
-    assert outbox.status == OUTBOX_PENDING
-    assert "Title" in (outbox.payload_json.get("text") or "").replace("\\", "")
+    inserts = [c.args[0] for c in db.execute.call_args_list if c.args[0].is_insert]
+    assert len(inserts) == 1
+    values = inserts[0].compile().params
+    assert values["pipeline_id"] == 7
+    assert values["chat_id"] == "-100123"
+    assert values["status"] == OUTBOX_PENDING
+    assert values["dedupe_key"] == "primary_pipeline:7"
+    assert "Title" in (values["payload_json"].get("text") or "").replace("\\", "")
     events = [
         c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], PipelineEvent)
     ]
@@ -388,7 +389,7 @@ def test_send_outbox_message_omits_parse_mode_when_absent(monkeypatch: pytest.Mo
         headers = {"content-type": "application/json"}
 
         def json(self):
-            return {"ok": True}
+            return {"ok": True, "result": {"message_id": 10}}
 
     class _Client:
         def __init__(self, *args, **kwargs):
@@ -456,7 +457,7 @@ def test_send_outbox_message_forwards_inline_keyboard(
         headers = {"content-type": "application/json"}
 
         def json(self):
-            return {"ok": True}
+            return {"ok": True, "result": {"message_id": 11}}
 
     class _Client:
         def __init__(self, *args, **kwargs):
@@ -518,7 +519,11 @@ def test_each_outbox_profile_uses_its_own_token(monkeypatch: pytest.MonkeyPatch)
             return None
 
     monkeypatch.setattr(telegram_outbox, "send_outbox_message", fake_send)
-    monkeypatch.setattr(telegram_outbox, "mark_outbox_sent", lambda db, item: None)
+    monkeypatch.setattr(telegram_outbox, "recover_expired_claims", lambda db, **kw: 0)
+    monkeypatch.setattr(telegram_outbox, "renew_claim", lambda db, claim: True)
+    monkeypatch.setattr(telegram_outbox, "finalize_outbox", lambda *args, **kw: True)
+    monkeypatch.setattr(telegram_outbox, "claim_next_outbox", lambda db, *, bot_key: telegram_outbox.OutboxClaim(
+        db.item.id, "claim", bot_key, db.item.chat_id, db.item.payload_json, 1))
     primary_item = SimpleNamespace(
         id=1,
         chat_id="-1",
@@ -538,7 +543,7 @@ def test_each_outbox_profile_uses_its_own_token(monkeypatch: pytest.MonkeyPatch)
                 },
                 primary_item,
             ),
-            bot_key="primary",
+            bot_key="primary", limit=1,
         )
     )
     asyncio.run(
@@ -550,7 +555,7 @@ def test_each_outbox_profile_uses_its_own_token(monkeypatch: pytest.MonkeyPatch)
                 },
                 hevc_item,
             ),
-            bot_key="hevc",
+            bot_key="hevc", limit=1,
         )
     )
     assert sent == [("primary-token", "-1"), ("hevc-token", "-2")]

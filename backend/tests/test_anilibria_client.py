@@ -1,8 +1,22 @@
 import asyncio
 
 import httpx
+import pytest
 
 from app.providers.anilibria.client import AniLibriaClient
+
+
+def test_http_error_reports_status_without_url_or_response_secrets(monkeypatch):
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        422, request=request, json={"errors": {"limit": ["limit must not exceed 50"]}, "secret": "response-secret"}
+    ))
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport, **kw))
+    client = AniLibriaClient("https://public.test/api/v1?secret=url-secret", request_retries=1)
+    with pytest.raises(RuntimeError, match="HTTP 422") as exc:
+        asyncio.run(client.catalog_releases(page=1, limit=100))
+    assert "url-secret" not in str(exc.value)
+    assert "response-secret" not in str(exc.value)
 
 
 def test_anilibria_client_uses_fallback_after_primary_failure(monkeypatch) -> None:

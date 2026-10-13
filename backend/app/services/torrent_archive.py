@@ -97,7 +97,9 @@ class TorrentArchiveService:
             quality_json = {**quality_json, "names": {"main": main, "english": original}}
         genres = extract_release_genres(release_payload)
         if genres:
-            quality_json = {**quality_json, "genres": genres}
+            previous = quality_json.get("qb_managed_genres", quality_json.get("genres", []))
+            managed = list(dict.fromkeys((previous if isinstance(previous, list) else []) + genres))
+            quality_json = {**quality_json, "genres": genres, "qb_managed_genres": managed}
         members = extract_release_members(release_payload)
         if members:
             quality_json = {**quality_json, "members": members}
@@ -114,6 +116,9 @@ class TorrentArchiveService:
                     release_payload.get("is_blocked_by_copyrights")
                 ),
             }
+        for key in ("_source", "is_hidden"):
+            if key in release_payload:
+                quality_json = {**quality_json, key: release_payload[key]}
         return quality_json
 
     @staticmethod
@@ -307,20 +312,26 @@ class TorrentArchiveService:
         release_payload: dict[str, Any],
     ) -> TorrentArchive:
         safe_hash = sanitize_info_hash(info_hash)
+        torrent_id = int(torrent_payload["id"])
+        archive = self._find_archive_for_upsert(torrent_id, safe_hash)
+        patched = release_payload.get("_source") == "backoffice" or (archive is not None and archive.info_hash == safe_hash and getattr(archive, "backoffice_trackers", False) is True)
+        if patched:
+            from app.services.runtime_settings import resolve_anilibria_settings
+            from app.services.torrent_policy import replace_trackers
+            torrent_bytes = replace_trackers(torrent_bytes, resolve_anilibria_settings(self._db).passkey)
         self._storage_root.mkdir(parents=True, exist_ok=True)
         relative_path = Path("data") / "torrents" / f"{safe_hash}.torrent"
         absolute_path = self._storage_root / f"{safe_hash}.torrent"
         absolute_path.write_bytes(torrent_bytes)
 
-        torrent_id = int(torrent_payload["id"])
         torrent_description = self._extract_torrent_description(torrent_payload)
         torrent_type = self._extract_torrent_type(torrent_payload)
         api_created_at = self._extract_api_created_at(torrent_payload)
         quality_json = self._attach_release_names(
-            self._build_quality_json(torrent_payload),
+            {**(archive.quality_json if archive is not None and archive.info_hash == safe_hash and isinstance(archive.quality_json, dict) else {}),
+             **self._build_quality_json(torrent_payload)},
             release_payload,
         )
-        archive = self._find_archive_for_upsert(torrent_id, safe_hash)
         if archive is not None and (archive.info_hash or "").strip().lower() != safe_hash.lower():
             # Новая версия того же torrent_id — старую оставляем в истории релиза.
             archive.superseded = True
@@ -374,6 +385,9 @@ class TorrentArchiveService:
             # Новая версия (supersede выше) создаёт строку с ignore_hevc=False.
 
         # Карточка релиза (состав/блокировки/жанры) — source of truth рядом с dual-write в quality_json.
+        archive.backoffice_trackers = bool(patched)
+        if release_payload.get("_notification_baseline") is True:
+            archive.notification_baseline = True
         if isinstance(release_payload, dict) and release_payload:
             from app.services.release_meta import upsert_release_meta
 

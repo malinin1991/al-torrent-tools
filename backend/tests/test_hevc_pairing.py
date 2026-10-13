@@ -2727,3 +2727,54 @@ def test_type_mismatch_not_in_overdue_filter_bucket() -> None:
     assert mismatch.status == "type_mismatch"
     assert mismatch.overdue is False
     assert mismatch.type_mismatch is True
+
+
+@pytest.mark.parametrize("include_ignored", [False, True])
+@pytest.mark.parametrize("sla_hours", [24, 48])
+def test_pairing_projections_preserve_history_file_keys_and_custom_sla(
+    monkeypatch: pytest.MonkeyPatch, include_ignored: bool, sla_hours: int,
+) -> None:
+    from app.services import hevc_pairing
+
+    now = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
+    rows = [
+        _row(archive_id=1, release_id=10, torrent_id=100, episodes="1-8", codec="AVC",
+             api_created_at=now - timedelta(hours=60), superseded=True, ignore_hevc=True),
+        _row(archive_id=2, release_id=10, torrent_id=110, episodes="1-9", codec="AVC",
+             api_created_at=now - timedelta(hours=1)),
+        _row(archive_id=3, release_id=10, torrent_id=105, episodes="1-8", codec="HEVC",
+             api_created_at=now - timedelta(hours=70)),
+        _row(archive_id=4, release_id=11, episodes="1-2", codec="AVC",
+             api_created_at=now - timedelta(hours=80)),
+        _row(archive_id=5, release_id=12, torrent_id=120, episodes="1-2", codec="AVC",
+             rip_type="WEBRip", api_created_at=now - timedelta(hours=60)),
+        _row(archive_id=6, release_id=12, torrent_id=121, episodes="1-2", codec="HEVC",
+             rip_type="WEB-DL", api_created_at=now - timedelta(hours=60)),
+        _row(archive_id=7, release_id=13, torrent_id=130, episodes="1-5", codec="AVC",
+             api_created_at=now - timedelta(hours=50), ignore_hevc=True),
+        _row(archive_id=8, release_id=13, torrent_id=131, episodes="1-4", codec="HEVC",
+             api_created_at=now - timedelta(hours=70)),
+    ]
+    same_video_keys = frozenset(f"{i:02}.mkv" for i in range(1, 10))
+    keys = {1: same_video_keys, 2: same_video_keys}
+    kwargs = dict(now=now, sla_hours=sla_hours, include_ignored=include_ignored,
+                  file_keys_by_archive_id=keys)
+    unpaired = find_unpaired_avc(rows, **kwargs)
+    overdue_ids = {10, 13} if include_ignored else {10}
+    hours = {10: 60 - sla_hours}
+    if include_ignored:
+        hours[13] = 50 - sla_hours
+    assert hevc_pairing.max_overdue_hours_by_release_id(rows, **kwargs) == hours
+    for filter_name, expected in (("overdue", overdue_ids), ("missing", {11}),
+                                  ("type_mismatch", {12}), ("", set())):
+        assert release_ids_matching_hevc_filter(rows, hevc_filter=filter_name, **kwargs) == expected
+
+    def unexpected_recalculation(*args, **kwargs):
+        raise AssertionError("Projection must use the evaluated pairing, not source rows")
+
+    monkeypatch.setattr(hevc_pairing, "find_unpaired_avc", unexpected_recalculation)
+    for filter_name, expected in (("overdue", overdue_ids), ("missing", {11}),
+                                  ("type_mismatch", {12}), ("", set())):
+        assert hevc_pairing.release_ids_from_unpaired(unpaired, hevc_filter=filter_name) == expected
+    assert hevc_pairing.max_overdue_hours_from_unpaired(unpaired, sla_hours=sla_hours) == hours
+    assert release_ids_matching_hevc_filter(rows, hevc_filter="", **kwargs) == set()

@@ -13,6 +13,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.db.models import TrackedRelease
+from app.services.release_source import release_is_offsite
+from app.utils.release_ref import parse_release_ref, ReleaseRefParseError
 from app.db.session import SessionLocal
 from app.services.runtime_settings import build_anilibria_client, get_setting_value
 from app.services.telegram_notify import (
@@ -20,6 +22,7 @@ from app.services.telegram_notify import (
     build_torrent_notification_text,
     disable_tracked_by_alias,
     escape_markdown_v2,
+    find_tracked_release,
     list_enabled_tracked_releases,
     normalize_torrents_payload,
     pick_latest_codec_torrents,
@@ -54,6 +57,11 @@ async def check_access(update: Update) -> bool:
 
 
 def extract_alias(text: str) -> str:
+    try:
+        ref = parse_release_ref(text)
+        return str(ref.release_id) if ref.release_id is not None else ref.alias
+    except ReleaseRefParseError:
+        pass
     match = re.search(r"/release/([^/\s?#]+)", text or "")
     if not match:
         return (text or "").strip().lower()
@@ -66,8 +74,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🚀 AL Torrent Tools Bot\n\n"
         "Команды:\n"
-        "/add <url|alias> — добавить релиз в отслеживание\n"
-        "/del <url|alias> — отключить отслеживание\n"
+        "/add <url|alias|id> — добавить релиз в отслеживание\n"
+        "/del <url|alias|id> — отключить отслеживание\n"
         "/list — список отслеживаемых\n"
         "/update — последние AVC/HEVC/AV1 по каждому релизу\n"
         "/help — помощь"
@@ -88,15 +96,10 @@ async def add_alias(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         with SessionLocal() as db:
-            existing = db.scalar(
-                select(TrackedRelease).where(TrackedRelease.release_alias.ilike(alias)).limit(1)
-            )
+            existing = find_tracked_release(db, alias)
             if existing is not None and existing.enabled:
-                title = existing.title or existing.release_alias
                 await update.message.reply_text(
-                    f"⚠️ [{escape_markdown_v2(title)}]"
-                    f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(existing.release_alias)}) "
-                    "уже отслеживается\\!",
+                    f"⚠️ {_release_title(db, existing)} уже отслеживается\\!",
                     parse_mode="MarkdownV2",
                     disable_web_page_preview=True,
                 )
@@ -161,8 +164,7 @@ async def list_aliases(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await update.message.reply_text("📭 Список пуст")
                 return
             lines = [
-                f"▫️ [{escape_markdown_v2(a.title or a.release_alias)}]"
-                f"(https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(a.release_alias)})"
+                f"▫️ {_release_title(db, a)}"
                 for a in rows
             ]
             await update.message.reply_text(
@@ -191,7 +193,6 @@ async def update_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 }
                 for row in tracked
             ]
-            client = build_anilibria_client(db)
 
         if not rows:
             await update.message.reply_text("📭 Нет отслеживаемых релизов")
@@ -205,26 +206,27 @@ async def update_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             title = row["title"] or row["release_alias"] or str(row["release_id"])
             alias = row["release_alias"] or str(row["release_id"])
             try:
-                payload = await client.get_torrents_for_release(
-                    row["release_id"],
-                    include=[
-                        "id",
-                        "hash",
-                        "label",
-                        "description",
-                        "codec",
-                        "quality",
-                        "type",
-                        "updated_at",
-                        "created_at",
-                    ],
-                )
-                selected = pick_latest_codec_torrents(normalize_torrents_payload(payload))
-                text = build_torrent_notification_text(
-                    title=title,
-                    alias=alias,
-                    torrents=selected,
-                )
+                with SessionLocal() as release_db:
+                    client = build_anilibria_client(release_db)
+                    payload = await client.get_torrents_for_release(
+                        row["release_id"],
+                        include=[
+                            "id",
+                            "hash",
+                            "label",
+                            "description",
+                            "codec",
+                            "quality",
+                            "type",
+                            "updated_at",
+                            "created_at",
+                        ],
+                    )
+                    selected = pick_latest_codec_torrents(normalize_torrents_payload(payload))
+                    text = build_torrent_notification_text(
+                        title=title, alias=alias, torrents=selected,
+                        offsite=release_is_offsite(release_db, row["release_id"]),
+                    )
                 await update.message.reply_text(
                     text,
                     parse_mode="MarkdownV2",
@@ -243,6 +245,13 @@ async def update_tracked(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as exc:
         logger.exception("Ошибка /update")
         await update.message.reply_text(f"❌ Ошибка: {exc}")
+
+
+def _release_title(db, row) -> str:
+    title = escape_markdown_v2(row.title or row.release_alias)
+    if release_is_offsite(db, row.release_id):
+        return title + " · Нет на сайте"
+    return f"[{title}](https://aniliberty\\.top/anime/releases/release/{escape_markdown_v2(row.release_alias)})"
 
 
 def _title_from_release(data: dict[str, Any]) -> str:

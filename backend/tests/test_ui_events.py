@@ -19,9 +19,9 @@ def test_parse_channels_filters_and_dedupes() -> None:
     ]
 
 
-def _jobs_db(*, max_job: int, max_log: int, active: int = 0) -> MagicMock:
+def _jobs_db(*, max_job: int, max_log: int, active: int = 0, result_updated=None) -> MagicMock:
     db = MagicMock()
-    scalars = iter([max_job, max_log, active])
+    scalars = iter([max_job, max_log, active, result_updated])
 
     def _scalar(_stmt):  # noqa: ANN001
         return next(scalars)

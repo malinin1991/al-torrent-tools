@@ -1,0 +1,18 @@
+<p>Готово сейчас: {{ summary.ready }} · Ожидают повтора: {{ summary.deferred }} · Отправляются: {{ summary.sending }} · Требуют внимания: {{ summary.failed }}{% if summary.unknown %} (доставка неизвестна: {{ summary.unknown }}){% endif %}</p>
+<p class="muted">Записей: {{ total }} · Страница {{ page }} из {{ pages }} · live</p>
+<div style="overflow-x:auto;">
+<table><thead><tr><th>ID / профиль</th><th>Получатель / событие</th><th>Состояние</th><th>Попытки и время</th><th>Причина / действие</th></tr></thead><tbody>
+{% for item in items %}
+<tr data-sse-key="outbox-{{ item.id }}">
+  <td>#{{ item.id }} · {{ item.bot_key }}<div><time class="local-time" datetime="{{ item.created_at }}">{{ item.created_at }}</time></div></td>
+  <td><code>{{ item.chat_id }}</code><div>{{ item.event_kind }}{% if item.release_id %} · <a href="/releases?search={{ item.release_id }}">Релиз {{ item.release_id }}</a>{% endif %}</div>{% if item.pipeline_id %}<a href="/pipeline/{{ item.pipeline_id }}">Pipeline #{{ item.pipeline_id }}</a>{% endif %}</td>
+  <td><span class="job-status job-status-{{ 'failed' if item.delivery_unknown else item.status }}">{{ item.status_label }}</span>{% if item.telegram_message_id %}<div class="muted">Message ID {{ item.telegram_message_id }}</div>{% endif %}</td>
+  <td>{{ item.attempts }}{% if item.last_attempt_at %}<div>Последняя: <time class="local-time" datetime="{{ item.last_attempt_at }}">{{ item.last_attempt_at }}</time></div>{% endif %}{% if item.status == 'pending' and item.next_attempt_at %}<div>Не раньше: <time class="local-time" datetime="{{ item.next_attempt_at }}">{{ item.next_attempt_at }}</time></div>{% endif %}{% if item.status == 'sending' and item.lease_until %}<div>Владение до: <time class="local-time" datetime="{{ item.lease_until }}">{{ item.lease_until }}</time></div>{% endif %}</td>
+  <td>{% if item.last_error %}<details data-sse-key="outbox-error-{{ item.id }}"><summary>{{ 'Доставка неизвестна' if item.delivery_unknown else 'Последняя ошибка' }}</summary><p style="overflow-wrap:anywhere;">{{ item.last_error }}</p></details>{% endif %}
+    {% if item.delivery_unknown %}<p class="badge badge-warn">Проверьте Telegram: повтор может создать дубль.</p>{% endif %}
+    {% if item.can_retry %}<button class="btn btn-secondary" type="button" data-outbox-retry="{{ item.id }}" data-bot-key="{{ item.bot_key }}" data-delivery-unknown="{{ '1' if item.delivery_unknown else '0' }}">{{ 'Проверил, повторить' if item.delivery_unknown else 'Повторить после исправления' }}</button>{% endif %}
+  </td>
+</tr>
+{% else %}<tr><td colspan="5" class="muted">По выбранным условиям сообщений нет.</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="row" style="margin-top:12px;">{% if page > 1 %}<a href="/telegram-outbox?bot_key={{ (bot_key or '')|urlencode }}&amp;status={{ (status or '')|urlencode }}&amp;page={{ page - 1 }}">Назад</a>{% endif %}{% if page < pages %}<a href="/telegram-outbox?bot_key={{ (bot_key or '')|urlencode }}&amp;status={{ (status or '')|urlencode }}&amp;page={{ page + 1 }}">Далее</a>{% endif %}</div>

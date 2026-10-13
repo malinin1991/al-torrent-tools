@@ -168,7 +168,7 @@
       </td>
     </tr>
     <tr><th>Отслеживаемых</th><td>{{ status.telegram.tracked_count }}</td></tr>
-    <tr><th>Очередь TG</th><td>{{ status.telegram.pending_outbox }} pending</td></tr>
+    <tr><th>Очередь TG</th><td><a href="/telegram-outbox?bot_key=primary">{{ status.telegram.pending_outbox }} pending</a>{% if status.telegram.outbox %}<div>Готовы: {{ status.telegram.outbox.ready }} · Отложены: {{ status.telegram.outbox.deferred }} · Отправляются: {{ status.telegram.outbox.sending }} · Требуют внимания: {{ status.telegram.outbox.failed }}</div>{% endif %}</td></tr>
   </table>
 </section>
 
@@ -208,7 +208,7 @@
       </td>
     </tr>
     <tr><th>Одобренных групп</th><td>{{ status.telegram_hevc.approved_groups }}</td></tr>
-    <tr><th>Очередь TG</th><td>{{ status.telegram_hevc.pending_outbox }} pending</td></tr>
+    <tr><th>Очередь TG</th><td><a href="/telegram-outbox?bot_key=hevc">{{ status.telegram_hevc.pending_outbox }} pending</a>{% if status.telegram_hevc.outbox %}<div>Готовы: {{ status.telegram_hevc.outbox.ready }} · Отложены: {{ status.telegram_hevc.outbox.deferred }} · Отправляются: {{ status.telegram_hevc.outbox.sending }} · Требуют внимания: {{ status.telegram_hevc.outbox.failed }}</div>{% endif %}</td></tr>
   </table>
 </section>
 

@@ -15,7 +15,7 @@
           >{{ job.id }}</a>
         </td>
         <td>{{ job.type }}</td>
-        <td><span class="job-status job-status-{{ job.status }}">{{ job.status }}</span></td>
+        <td><span class="job-status job-status-{{ job.status }}">{{ 'Завершено с ошибками' if job.status == 'partial' else job.status }}</span></td>
       </tr>
       {% else %}
       <tr><td colspan="3" class="muted">Нет записей</td></tr>

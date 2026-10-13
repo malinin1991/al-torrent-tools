@@ -1360,7 +1360,7 @@ def test_releases_html_show_hidden_members_and_blocks() -> None:
     ).body.decode("utf-8")
 
     assert 'name="show_hidden"' in html
-    assert "Отображать скрытое" in html
+    assert "Включать AVC с игнором HEVC" in html
     assert "Сортировка — по длительности просрочки" in html
     assert 'name="show_hidden" value="on"' in html and "checked" in html
     assert "Геоблок" in html and "Копирасты" in html
@@ -1422,3 +1422,102 @@ def test_releases_page_passes_show_hidden(monkeypatch: pytest.MonkeyPatch) -> No
     )
     assert captured["show_hidden"] is True
     assert captured["hevc_filter"] == "missing"
+
+
+def test_overdue_request_pairs_full_archive_once_and_keeps_pagination_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import hevc_pairing, releases_view
+
+    now = datetime(2026, 10, 13, 12)
+    monkeypatch.setattr(hevc_pairing, "utcnow", lambda: now)
+    rows = []
+    for release_id, age in ((10, 26), (20, 26), (30, 29)):
+        rows.extend([
+            _archive(
+                archive_id=release_id, release_id=release_id,
+                torrent_id=release_id * 10, episodes="1-12", codec="AVC",
+                created_at=now - timedelta(hours=age),
+            ),
+            _archive(
+                archive_id=release_id + 1, release_id=release_id,
+                torrent_id=release_id * 10 + 1, episodes="1-11", codec="HEVC",
+                created_at=now,
+            ),
+        ])
+    stats = [
+        SimpleNamespace(release_id=30, last_updated=now, torrent_count=2),
+        SimpleNamespace(release_id=10, last_updated=now - timedelta(hours=1), torrent_count=2),
+        SimpleNamespace(release_id=20, last_updated=now, torrent_count=2),
+    ]
+    db = _setup_list_db(
+        pairing_rows=rows, page_archives=rows[:4], stats_rows=stats, total=3
+    )
+    original_pairing = hevc_pairing.find_unpaired_avc
+    pairing_inputs = []
+
+    def counted_pairing(archives, **kwargs):
+        pairing_inputs.append(tuple(row.id for row in archives))
+        return original_pairing(archives, **kwargs)
+
+    monkeypatch.setattr(hevc_pairing, "find_unpaired_avc", counted_pairing)
+    monkeypatch.setattr(releases_view, "find_unpaired_avc", counted_pairing)
+    result = list_release_groups(db, hevc_filter="overdue", per_page=2)
+
+    # Same overdue hours: last_updated DESC breaks the tie before pagination.
+    assert [group.release_id for group in result["groups"]] == [20, 10]
+    assert (result["total"], result["total_pages"]) == (3, 2)
+    full_input = tuple(row.id for row in rows)
+    assert pairing_inputs.count(full_input) == 1
+    # Badge calculation keeps its own page rows/ignore semantics.
+    assert len(pairing_inputs) == 3
+    # UI contract: this field is hours beyond SLA, not total upload age.
+    assert {group.torrents[0].hevc_pair_age_hours for group in result["groups"]} == {2}
+
+
+def test_hevc_request_ignore_changes_are_fresh_and_do_not_enable_badges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import hevc_pairing
+
+    now = datetime(2026, 10, 13, 12)
+    monkeypatch.setattr(hevc_pairing, "utcnow", lambda: now)
+    avc = _archive(
+        archive_id=1, release_id=10, torrent_id=100, episodes="1-12", codec="AVC",
+        created_at=now - timedelta(hours=30), ignore_hevc=True,
+    )
+    hevc = _archive(
+        archive_id=2, release_id=10, torrent_id=101, episodes="1-11", codec="HEVC",
+        created_at=now,
+    )
+    stats = [SimpleNamespace(release_id=10, last_updated=now, torrent_count=2)]
+
+    def request(show_hidden=False):
+        db = _setup_list_db(
+            pairing_rows=[avc, hevc], page_archives=[avc, hevc], stats_rows=stats, total=1
+        )
+        return list_release_groups(db, hevc_filter="overdue", show_hidden=show_hidden)
+
+    assert request()["groups"] == []
+    shown = request(show_hidden=True)
+    assert [group.release_id for group in shown["groups"]] == [10]
+    assert all(row.hevc_pair_status is None for row in shown["groups"][0].torrents)
+    avc.ignore_hevc = False
+    fresh = request()
+    assert fresh["groups"][0].torrents[0].hevc_pair_status == "overdue"
+
+
+@pytest.mark.parametrize("hevc_filter", [None, "", "unknown"])
+def test_empty_hevc_filter_does_not_evaluate_full_archive(
+    monkeypatch: pytest.MonkeyPatch, hevc_filter: str | None,
+) -> None:
+    def unexpected_pairing(*args, **kwargs):
+        raise AssertionError("Unfiltered request must not load/evaluate the full archive")
+
+    monkeypatch.setattr("app.services.releases_view.find_unpaired_avc", unexpected_pairing)
+    db = MagicMock()
+    db.scalar.return_value = 0
+    db.execute.return_value.all.return_value = []
+    result = list_release_groups(db, hevc_filter=hevc_filter)
+    assert result["groups"] == []
+    assert result["hevc_filter"] == ""

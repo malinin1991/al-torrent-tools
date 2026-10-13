@@ -1089,12 +1089,25 @@ def release_ids_matching_hevc_filter(
         include_ignored=include_ignored,
         file_keys_by_archive_id=file_keys_by_archive_id,
     )
+    return release_ids_from_unpaired(unmatched, hevc_filter=hevc_filter)
+
+
+def release_ids_from_unpaired(
+    unmatched: Sequence[UnpairedAvc], *, hevc_filter: HevcFilter
+) -> set[int]:
+    """Project a previously evaluated pairing; preserve its clock/ignore/file keys.
+
+    The caller owns the result for this request. No archive rows are re-read and
+    no pairing state is cached across requests.
+    """
     if hevc_filter == "overdue":
         # status==overdue: type_mismatch не попадает в «Просрочка».
         return {item.release_id for item in unmatched if item.status == "overdue"}
     if hevc_filter == "type_mismatch":
         return {item.release_id for item in unmatched if item.type_mismatch}
-    return {item.release_id for item in unmatched if item.missing}
+    if hevc_filter == "missing":
+        return {item.release_id for item in unmatched if item.missing}
+    return set()
 
 
 def max_overdue_hours_by_release_id(
@@ -1113,6 +1126,13 @@ def max_overdue_hours_by_release_id(
         include_ignored=include_ignored,
         file_keys_by_archive_id=file_keys_by_archive_id,
     )
+    return max_overdue_hours_from_unpaired(unmatched, sla_hours=sla_hours)
+
+
+def max_overdue_hours_from_unpaired(
+    unmatched: Sequence[UnpairedAvc], *, sla_hours: float = HEVC_SLA_HOURS
+) -> dict[int, float]:
+    """Project sort hours from the same pairing used to select release IDs."""
     result: dict[int, float] = {}
     for item in unmatched:
         if item.status != "overdue":

@@ -1,0 +1,59 @@
+<div data-hevc-state data-encoder-enabled="{{ '1' if video_kensetsu_enabled else '0' }}" data-hevc-live-url="{{ live_url }}">
+  <nav class="hevc-workbench-tabs" aria-label="Представления HEVC">
+    {% for key, label in views.items() %}
+    <a class="btn btn-secondary" href="{{ view_urls[key] }}" {% if key == view %}aria-current="page"{% endif %}>{{ label }} · {{ counts[key] }}</a>
+    {% endfor %}
+  </nav>
+  <p class="muted">Готовность и недоступность во всём списке — по данным последней проверки БД. На странице проверено файлов: {{ checked_count }}, доступно на диске: {{ available_count }} · <time class="local-time" datetime="{{ checked_at }}">{{ checked_at }}</time>. Прогресс master и хеширование — по данным БД.</p>
+  <p class="muted">{% if view == 'ready' %}Предварительных кандидатов по БД{% elif view == 'unavailable' %}Недоступных по последней проверке БД{% else %}Исходников{% endif %}: {{ total }} · страница {{ page }} из {{ total_pages }}.</p>
+  {% if not video_kensetsu_enabled %}<p class="badge badge-warn">Kensetsu выключен в настройках. Список доступен для просмотра.</p>{% endif %}
+  {% macro source_table(items, changed=false) %}
+  <div class="hevc-workbench-scroll"><table class="hevc-workbench-table">
+    <thead><tr><th aria-label="Выбор"></th><th>Релиз / точная версия исходника</th><th>HEVC</th><th>Исходник</th><th>Приём Kensetsu</th></tr></thead>
+    <tbody>
+    {% for row in items %}
+    <tr data-hevc-row data-source-key="{{ row.identity }}">
+      <td>{% if row.file_id %}<input type="checkbox" class="hevc-encode-check" data-file-id="{{ row.file_id }}" data-selection-key="{{ row.file_id }}:{{ row.identity }}" aria-label="Выбрать {{ row.relative_path }}" {% if not row.selectable or not video_kensetsu_enabled %}disabled{% endif %} />{% endif %}</td>
+      <td class="hevc-workbench-path">
+        <strong>{{ row.title }}</strong> · #{{ row.release_id }}
+        <div><code>{{ row.relative_path }}</code> · {{ row.size_label }}</div>
+        <div class="row" style="gap:8px;">
+          <a href="/releases?search={{ (row.alias or row.archive_title)|urlencode }}">Релиз</a>
+          <a href="/archive?search={{ row.archive_title|urlencode }}">Архив релиза</a>
+          {% if row.release_url %}<a href="{{ row.release_url }}" target="_blank" rel="noopener">На сайте</a>{% elif row.source == 'backoffice' %}<span class="muted">Нет на сайте</span>{% endif %}
+          {% if row.admin_url %}<a href="{{ row.admin_url }}" target="_blank" rel="noopener">Админка</a>{% endif %}
+        </div>
+        <details data-sse-key="hevc-file-{{ row.file_id or ('archive-' ~ row.archive_id) }}-{{ row.info_hash }}">
+          <summary>Версия и подробности</summary>
+          <div>Торрент {{ row.torrent_id }} · архив {{ row.archive_id }} · {{ row.torrent_type }} · {{ row.episodes }}</div>
+          <div>Hash: <code>{{ row.info_hash }}</code></div>
+          <div>Sticky-история: <code>{{ row.sticky_status }}</code></div>
+          <div>Путь: <code>{{ row.full_path or 'Не определён' }}</code></div>
+          {% if row.snapshot_at %}<div>Снимок файла: <time class="local-time" datetime="{{ row.snapshot_at }}">{{ row.snapshot_at }}</time></div>{% endif %}
+          {% if row.anchor_at %}<div>Якорь SLA: <time class="local-time" datetime="{{ row.anchor_at }}">{{ row.anchor_at }}</time></div>{% endif %}
+          {% if row.pair_archive_id %}<div>Парный HEVC: архив {{ row.pair_archive_id }}</div>{% endif %}
+          {% if row.pipeline[2] %}<div><a href="/pipeline/{{ row.pipeline[2] }}">Pipeline #{{ row.pipeline[2] }}</a>: {{ row.pipeline[0] }}{% if row.pipeline[1] %} · {{ row.pipeline[1] }}{% endif %}</div>{% endif %}
+        </details>
+      </td>
+      <td><span class="badge {% if row.hevc_status == 'overdue' %}badge-danger{% elif row.hevc_status %}badge-warn{% else %}badge-muted{% endif %}">{{ row.hevc_label }}</span>
+        {% if row.age_hours is not none %}<div>Возраст SLA: {{ row.age_hours }} ч</div><div class="muted">Часы: {{ 'AniLibria API' if row.age_from_api else 'локальный архив' }}</div>{% endif %}
+        {% if row.overdue_hours is not none %}<div>Сверх SLA: {{ row.overdue_hours }} ч</div>{% endif %}
+      </td>
+      <td>{% if row.reasons %}<ul class="hevc-workbench-reasons">{% for reason in row.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% elif row.fs_available %}<span class="badge badge-muted">Файл доступен</span>{% else %}<span class="muted">Доступность не подтверждена</span>{% endif %}
+        {% if row.availability_changed %}<div class="muted">Доступность отличается от снимка БД.</div>{% endif %}
+      </td>
+      <td>{% if row.receipt %}<a href="{{ row.receipt.history_url }}">{{ row.receipt.label }}</a>
+        {% if row.receipt.error %}<div>{{ row.receipt.error }}</div>{% endif %}
+        {% if row.receipt.expired %}<div class="muted">Отправка прервана; сохранённое состояние обновится при обращении к журналу.</div>{% endif %}
+        {% if row.receipt.status in ['accepted','unknown','sending'] %}<div class="muted">Проверьте журнал перед повтором.</div>{% endif %}
+        {% else %}<span class="muted">Отправок этой версии нет</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endmacro %}
+  {% if rows %}{{ source_table(rows) }}{% else %}<div class="card muted">По выбранным условиям доступных строк нет.</div>{% endif %}
+  {% if changed_rows %}<h2>Доступность изменилась при проверке</h2><p class="muted">Эти предварительные кандидаты сейчас не готовы к отправке.</p>{{ source_table(changed_rows, true) }}{% endif %}
+  <div class="row" style="gap:12px;margin-top:12px;">{% if prev_url %}<a href="{{ prev_url }}">Назад</a>{% endif %}{% if next_url %}<a href="{{ next_url }}">Далее</a>{% endif %}</div>
+</div>

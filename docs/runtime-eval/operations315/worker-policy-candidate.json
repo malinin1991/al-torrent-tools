@@ -1,0 +1,14 @@
+{
+  "changed_source_files": [
+    "app/jobs/mediainfo_sync.py",
+    "tests/test_mediainfo_workers_candidate.py"
+  ],
+  "comparison_base": "/private/tmp/altt-operation-eval-20261013/optimized-final/backend",
+  "file_count": 214,
+  "manifest_hash_encoding": "json.dumps(file_sha256,sort_keys=True,separators=(comma,colon))",
+  "manifest_sha256": "0c8a7e67d09e58463667401ea82c8d5c8e42fdb4ae5fe931b9a73b06369d186e",
+  "policy": "full and incremental default4, explicit workers unchanged",
+  "source": "/private/tmp/altt-operation-eval-20261013/mediainfo-workers-candidate/backend",
+  "status": "source_frozen_pending_test_window",
+  "tests_not_run_during_active_benchmark": true
+}

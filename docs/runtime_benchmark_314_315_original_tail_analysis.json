@@ -1,0 +1,79 @@
+{
+  "analysis_kind": "retrospective_tail_description_not_preregistered_original_gate",
+  "source_report": "runtime_benchmark_314_315_macos_arm64.json",
+  "source_report_sha256": "ab8a88338999d970e791ebd82ae72befba84fd9610d14ed6c492beeb6b3c09f1",
+  "original_unchanged_since_confirmatory_calibration": true,
+  "bootstrap": "10000 paired-index resamples, seed315314, recompute each runtime p95",
+  "metrics": {
+    "hevc_pairing": {
+      "elapsed_sec_p95": {
+        "candidate_over_baseline_p95": 1.0643013452257546,
+        "change_pct": 6.430134522575459,
+        "paired_bootstrap_95pct_ci": [
+          0.9495182814929554,
+          1.3424671689419267
+        ],
+        "allowed_noise_margin_pct": 3.0,
+        "verdict": "inconclusive"
+      },
+      "cpu_sec_p95": {
+        "candidate_over_baseline_p95": 1.0129075874214115,
+        "change_pct": 1.2907587421411515,
+        "paired_bootstrap_95pct_ci": [
+          0.951515805372748,
+          1.1384347489600466
+        ],
+        "allowed_noise_margin_pct": 3.0,
+        "verdict": "inconclusive"
+      },
+      "rss_absolute": {
+        "median_delta_bytes": 1458176.0,
+        "paired_bootstrap_95pct_ci_bytes": [
+          1310720.0,
+          1499136.0
+        ],
+        "median_delta_mib": 1.390625,
+        "paired_bootstrap_95pct_ci_mib": [
+          1.25,
+          1.4296875
+        ],
+        "measurable_increase": true
+      }
+    },
+    "blake3_cached_file_io": {
+      "elapsed_sec_p95": {
+        "candidate_over_baseline_p95": 1.0087996771114858,
+        "change_pct": 0.8799677111485771,
+        "paired_bootstrap_95pct_ci": [
+          0.9796925746911825,
+          1.0293431205096568
+        ],
+        "allowed_noise_margin_pct": 3.0,
+        "verdict": "non_regressing_within_declared_margin"
+      },
+      "cpu_sec_p95": {
+        "candidate_over_baseline_p95": 1.013033080153082,
+        "change_pct": 1.3033080153082022,
+        "paired_bootstrap_95pct_ci": [
+          0.99319455817443,
+          1.0293594306049823
+        ],
+        "allowed_noise_margin_pct": 3.0,
+        "verdict": "non_regressing_within_declared_margin"
+      },
+      "rss_absolute": {
+        "median_delta_bytes": 3104768.0,
+        "paired_bootstrap_95pct_ci_bytes": [
+          2973696.0,
+          3137536.0
+        ],
+        "median_delta_mib": 2.9609375,
+        "paired_bootstrap_95pct_ci_mib": [
+          2.8359375,
+          2.9921875
+        ],
+        "measurable_increase": true
+      }
+    }
+  }
+}

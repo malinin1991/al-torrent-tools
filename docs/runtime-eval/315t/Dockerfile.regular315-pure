@@ -1,0 +1,7 @@
+FROM altt-python-eval:315-native-20261013
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libpq5; \
+    pip uninstall -y psycopg-binary; \
+    rm -rf /var/lib/apt/lists/*; \
+    python -c "import psycopg; print(psycopg.pq.__impl__, psycopg.pq.version()); assert psycopg.pq.__impl__ == 'python'"

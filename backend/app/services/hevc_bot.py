@@ -59,6 +59,7 @@ class HevcReleaseStatus:
     items: list[UnpairedAvc] = field(default_factory=list)
     changes: list[StickyChange] = field(default_factory=list)
     changes_checking: bool = False
+    offsite: bool = False
 
     @property
     def max_overdue_hours(self) -> float:
@@ -550,6 +551,7 @@ def query_hevc_statuses(
                 items=grouped.get(rid, []),
                 changes=changes.get(rid, []),
                 changes_checking=rid in checking_release_ids,
+                offsite=release is not None and getattr(release, "source", None) == "backoffice",
             )
         )
     if kind == "overdue":
@@ -609,6 +611,7 @@ def query_release_detail(
         items=items,
         changes=changes.get(int(release_id), []),
         changes_checking=int(release_id) in checking_release_ids,
+        offsite=release is not None and getattr(release, "source", None) == "backoffice",
     )
 
 
@@ -620,6 +623,8 @@ def _html_or_dash(value: str | None) -> str:
 def _release_link(row: HevcReleaseStatus) -> str:
     title = html.escape((row.title or "").strip() or row.alias)
     alias = html.escape(row.alias, quote=True)
+    if row.offsite:
+        return title + " · Нет на сайте"
     return f'<a href="{_release_torrents_base_url()}/{alias}/torrents">{title}</a>'
 
 

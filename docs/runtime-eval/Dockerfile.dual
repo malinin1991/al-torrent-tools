@@ -1,0 +1,7 @@
+FROM altt-python-eval:314-20261013 AS baseline
+FROM altt-python-eval:315-native-20261013
+COPY --from=baseline /usr/local /opt/python314
+COPY run314.sh /opt/python314/run314.sh
+RUN chmod 755 /opt/python314/run314.sh \
+    && /opt/python314/run314.sh -c 'import sys, _decimal, yaml; assert sys.prefix == "/opt/python314"; assert yaml.__with_libyaml__; print(sys.version, sys.prefix, _decimal.__libmpdec_version__)' \
+    && python -c 'import sys, _decimal, yaml; assert yaml.__with_libyaml__; print(sys.version, sys.prefix, _decimal.__libmpdec_version__)'

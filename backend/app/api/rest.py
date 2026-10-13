@@ -1,27 +1,37 @@
 from typing import Any
+from pathlib import Path
+import json
+import asyncio
+
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.models import CleanupRule, ExtraUrl, Job, JobLog, QbClient, Setting, TorrentFile
 from app.db.session import get_db
 from app.jobs.cleanup import run_cleanup
 from app.jobs.cleanup_logs import run_cleanup_logs
 from app.jobs.full_sync import run_full_sync
+from app.jobs.backoffice_sync import run_backoffice_sync
 from app.jobs.hash_backfill import run_hash_backfill
 from app.jobs.hash_torrent import run_hash_torrent
 from app.jobs.mediainfo_sync import run_mediainfo_sync
 from app.jobs.force_release_sync import run_force_release_sync
 from app.jobs.meta_sync import run_full_meta_sync, run_meta_sync
 from app.jobs.ongoing import run_ongoing
+from app.jobs.retry_sync_failures import run_retry_sync_failures
 from app.jobs.orphan_cleanup import run_orphan_cleanup
 from app.jobs.pipeline_reconcile import load_torrent_bytes_with_fallback, run_pipeline_reconcile
 from app.jobs.pipeline_resume_cancelled import run_pipeline_resume_cancelled
 from app.jobs.waiting_master_retry import run_waiting_master_retry
 from app.jobs.waiting_slave_retry import run_waiting_slave_retry
+from app.services import encoder_history
+from app.services.sync_outcomes import validate_retry_request
 from app.services.anilibria_auth import login_and_store_token
 from app.services.db_maintenance import purge_false_orphan_events, reset_full, reset_operational_state
 from app.services.file_hasher import normalize_file_hash_workers_setting
@@ -29,6 +39,7 @@ from app.services.job_runner import JobAlreadyRunningError, JobRunner, UnknownJo
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import qb_client_wait_message, sanitize_info_hash, should_wait_for_qb, test_qb_connection
 from app.services.releases_view import (
+    _info_hashes_with_active_hash_job,
     probe_torrent_media_files,
     probe_torrents_media_files,
     resolve_media_file_for_download,
@@ -56,7 +67,9 @@ from app.utils.datetime_fmt import as_utc_iso
 router = APIRouter(prefix="/api")
 job_runner = JobRunner()
 job_runner.register("ongoing", run_ongoing)
+job_runner.register("retry_sync_failures", run_retry_sync_failures)
 job_runner.register("full_sync", run_full_sync)
+job_runner.register("backoffice_sync", run_backoffice_sync)
 job_runner.register("meta_sync", run_meta_sync)
 job_runner.register("full_meta_sync", run_full_meta_sync)
 job_runner.register("force_release_sync", run_force_release_sync)
@@ -131,11 +144,12 @@ def list_jobs(
     if status:
         query = query.where(Job.status == status)
     jobs = db.scalars(query.order_by(Job.id.desc()).limit(200)).all()
-    return [{"id": item.id, "type": item.type, "status": item.status, "error": item.error} for item in jobs]
+    return [{"id": item.id, "type": item.type, "status": item.status, "error": item.error,
+             "result": getattr(item, "result_json", None)} for item in jobs]
 
 
 @router.post("/jobs")
-def create_job(payload: JobCreateIn, db: Session = Depends(get_db)) -> dict:
+async def create_job(payload: JobCreateIn, db: Session = Depends(get_db)) -> dict:
     job_type = payload.type
     params = dict(payload.params or {})
     # Legacy: type=cleanup → cleanup_master.
@@ -146,6 +160,11 @@ def create_job(payload: JobCreateIn, db: Session = Depends(get_db)) -> dict:
         params.setdefault("target_role", "master")
     elif job_type == "cleanup_slave":
         params.setdefault("target_role", "slave")
+    if job_type == "retry_sync_failures":
+        try:
+            params = validate_retry_request(db, params)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         job = job_runner.create_job(db, job_type, params)
     except UnknownJobTypeError as exc:
@@ -173,6 +192,7 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> dict:
         "type": job.type,
         "status": job.status,
         "error": job.error,
+        "result": getattr(job, "result_json", None),
         "logs": [
             {
                 "level": line.level,
@@ -514,13 +534,14 @@ class SendToEncoderIn(BaseModel):
     video_id: str
     audio_id: str
     audio_downmix: str = "none"
+    request_id: str | None = Field(default=None, min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    retry_of: int | None = Field(default=None, ge=1)
+    allow_repeat: bool = False
+    acknowledge_unknown: bool = False
 
 
-class SendToEncoderBatchIn(BaseModel):
+class SendToEncoderBatchIn(SendToEncoderIn):
     file_ids: list[int] = Field(default_factory=list, max_length=ENCODE_BATCH_MAX_FILES)
-    video_id: str
-    audio_id: str
-    audio_downmix: str = "none"
 
 
 def _require_video_kensetsu_base_url(db: Session) -> str:
@@ -540,6 +561,8 @@ def _resolve_encode_path_for_file(
     row = db.get(TorrentFile, file_id)
     if row is None:
         return None, "Файл не найден"
+    if getattr(row, "is_checking", False) is True:
+        return None, "Файл проверяется; дождитесь завершения проверки"
     if not torrent_allows_media_download(db, row.info_hash or ""):
         return None, "Файл недоступен для кодирования"
     resolved = resolve_media_file_for_download(row)
@@ -555,8 +578,8 @@ def _map_encoder_exception(exc: Exception) -> HTTPException:
     """Пробрасывает 400/403/(404) от энкодера; остальное → 502 с текстом."""
     if isinstance(exc, VideoKensetsuHttpError):
         status = exc.status_code if exc.status_code in (400, 403, 404, 409, 422) else 502
-        return HTTPException(status_code=status, detail=exc.message)
-    return HTTPException(status_code=502, detail=f"Ошибка кодировщика: {exc}")
+        return HTTPException(status_code=status, detail=str(encoder_history.safe_json(exc.message)))
+    return HTTPException(status_code=502, detail=f"Ошибка кодировщика: {encoder_history.safe_json(exc)}")
 
 
 def _match_encoder_error_file_id(
@@ -618,7 +641,7 @@ async def _resolve_encoder_layers(
     video_id: str,
     audio_id: str,
     audio_downmix: str = "none",
-) -> dict[str, str]:
+) -> dict[str, Any]:
     cleaned_video = (video_id or "").strip()
     cleaned_audio = (audio_id or "").strip()
     if not cleaned_video:
@@ -657,6 +680,7 @@ async def _resolve_encoder_layers(
         "video_id": cleaned_video,
         "audio_id": cleaned_audio,
         "audio_downmix": cleaned_downmix,
+        "preset_snapshot": {"video": video, "audio": audio},
     }
 
 
@@ -708,151 +732,175 @@ async def video_kensetsu_presets(db: Session = Depends(get_db)) -> dict:
     }
 
 
-@router.post("/torrent-files/send-to-encoder")
-async def send_torrent_files_to_encoder_batch(
-    body: SendToEncoderBatchIn,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Пакетная отправка media-файлов в Video Kensetsu."""
-    base_url = _require_video_kensetsu_base_url(db)
-    layers = await _resolve_encoder_layers(
-        base_url,
-        video_id=body.video_id,
-        audio_id=body.audio_id,
-        audio_downmix=body.audio_downmix,
-    )
+def _encoder_receipt_response(group) -> JSONResponse:
+    result = encoder_history.serialize(group)
+    result["created"] = _normalize_created_count(group.response_json or {}, group.http_status or 200)
+    code = 202 if group.finished_at is None else 200 if result["ok"] else 207
+    return JSONResponse(content=result, status_code=code)
 
-    file_ids = list(dict.fromkeys(int(fid) for fid in (body.file_ids or [])))
-    if not file_ids:
-        raise HTTPException(status_code=400, detail="Не переданы file_ids")
-    if len(file_ids) > ENCODE_BATCH_MAX_FILES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Слишком много файлов за раз (макс. {ENCODE_BATCH_MAX_FILES})",
-        )
 
-    paths: list[str] = []
-    path_file_ids: list[int] = []
-    local_errors: list[dict[str, Any]] = []
-    for file_id in file_ids:
-        encode_path, error = _resolve_encode_path_for_file(db, file_id)
-        if error or not encode_path:
-            local_errors.append({"file_id": file_id, "error": error or "Файл недоступен"})
-            continue
-        paths.append(encode_path)
-        path_file_ids.append(file_id)
-
-    if not paths:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Нет файлов для отправки в кодировщик",
-                "local_errors": local_errors,
-            },
-        )
-
+async def _submit_encoder_files(file_ids: list[int], body: SendToEncoderIn, db: Session, *, single: bool = False) -> JSONResponse:
+    ids = list(dict.fromkeys(file_ids))
+    if not ids or any(fid <= 0 or fid > 2_147_483_647 for fid in ids):
+        raise HTTPException(status_code=400, detail="Не переданы корректные file_ids")
+    if len(ids) > ENCODE_BATCH_MAX_FILES:
+        raise HTTPException(status_code=400, detail="Слишком много файлов")
     try:
-        encoded = await video_kensetsu_encode(
-            base_url,
-            paths=paths,
-            video_id=layers["video_id"],
-            audio_id=layers["audio_id"],
-            audio_downmix=layers["audio_downmix"],
-            timeout_sec=encode_timeout_for_paths(len(paths)),
+        downmix = normalize_audio_downmix(body.audio_downmix)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    digest = encoder_history.request_digest(ids, body.video_id, body.audio_id, downmix, body.retry_of)
+    try:
+        if body.request_id:
+            encoder_history.recover_expired(db)
+            old = encoder_history.replay(db, body.request_id, digest)
+            if old is not None:
+                return _encoder_receipt_response(old)
+        base_url = _require_video_kensetsu_base_url(db)
+        if body.retry_of is not None:
+            parent = encoder_history.get_submission(db, body.retry_of)
+            if parent is None:
+                raise HTTPException(status_code=404, detail="Предыдущая отправка не найдена")
+            originals = {i.file_id: i for i in parent.items}
+            for fid in ids:
+                original = originals.get(fid)
+                current = db.get(TorrentFile, fid)
+                if original is None or current is None or (current.info_hash, current.relative_path) != (original.info_hash, original.relative_path):
+                    raise HTTPException(status_code=409, detail="Исходная версия файла больше недоступна; выберите текущую версию в релизе")
+        group, owner = encoder_history.claim(
+            db, file_ids=ids, request_id=body.request_id, digest=digest, base_url=base_url,
+            video_id=body.video_id.strip(), audio_id=body.audio_id.strip(), downmix=downmix,
+            retry_of=body.retry_of, allow_repeat=body.allow_repeat, acknowledge_unknown=body.acknowledge_unknown,
         )
-    except HTTPException:
+    except encoder_history.SubmissionConflict as exc:
+        raise HTTPException(status_code=409, detail={"message": str(exc), "previous": exc.previous}) from exc
+    if not owner:
+        return _encoder_receipt_response(group)
+    submission_id = group.id
+    started = False
+    try:
+        paths = []
+        active_hashes = _info_hashes_with_active_hash_job(db, [item.info_hash for item in group.items])
+        for item in group.items:
+            if item.status == "not_sent":
+                continue
+            path, error = _resolve_encode_path_for_file(db, item.file_id)
+            if item.info_hash.lower() in active_hashes:
+                error = "Идёт проверка хешей исходника; дождитесь завершения"
+            if not error and path in paths:
+                error = "Этот путь уже включён в отправку другим выбранным файлом"
+            if error or not path:
+                item.status = "not_sent"
+                item.error = error or "Файл недоступен"
+                continue
+            try:
+                encoder_history.capture_path(db, item, path)
+            except OSError:
+                item.status = "not_sent"
+                item.error = "Файл исчез или недоступен перед отправкой"
+                continue
+            paths.append(path)
+        if not paths:
+            if single:
+                raise HTTPException(status_code=404, detail=group.items[0].error or "Файл недоступен для кодирования")
+            raise HTTPException(status_code=400, detail={"message": "Нет файлов для отправки в кодировщик", "local_errors": [{"file_id": i.file_id, "error": i.error} for i in group.items]})
+        layers = await _resolve_encoder_layers(base_url, video_id=body.video_id, audio_id=body.audio_id, audio_downmix=downmix)
+        group.presets_json = encoder_history.safe_json(layers.get("preset_snapshot", {}))
+        db.commit()  # expire cached source rows after the asynchronous preflight
+        paths = []
+        active_hashes = _info_hashes_with_active_hash_job(db, [item.info_hash for item in group.items])
+        for item in group.items:
+            if item.status != "sending":
+                continue
+            current = db.get(TorrentFile, item.file_id)
+            path, error = _resolve_encode_path_for_file(db, item.file_id)
+            if item.info_hash.lower() in active_hashes:
+                error = "Идёт проверка хешей исходника; дождитесь завершения"
+            try:
+                stat = Path(path).stat() if path else None
+            except OSError:
+                stat = None
+            if (error or current is None or path != item.full_path or stat is None
+                    or current.info_hash != item.info_hash
+                    or (getattr(current, "relative_path", "") or "") != item.relative_path
+                    or stat.st_size != item.source_json.get("size")
+                    or stat.st_mtime_ns != item.source_json.get("mtime_ns")):
+                item.status = "not_sent"
+                item.error = "Исходник изменился или стал недоступен во время подготовки; выберите актуальную версию"
+            else:
+                paths.append(path)
+        if not paths:
+            raise HTTPException(status_code=409, detail="Исходники изменились во время подготовки; отправка не выполнялась")
+        group.request_started_at = encoder_history.utcnow()
+        group.updated_at = group.request_started_at
+        db.commit()  # durable intent before an uncertain external side effect
+        started = True
+        encoded = await video_kensetsu_encode(
+            base_url, paths=paths, video_id=layers["video_id"], audio_id=layers["audio_id"],
+            audio_downmix=layers["audio_downmix"], timeout_sec=encode_timeout_for_paths(len(paths)),
+        )
+        encoder_history.settle_response(group, int(encoded.get("status_code") or 200), encoded.get("body"))
+        db.commit()
+        return _encoder_receipt_response(group)
+    except asyncio.CancelledError:
+        encoder_history.finish_failure(db, group, "Отправка прервана; проверьте историю Kensetsu", started=started)
         raise
     except Exception as exc:
-        raise _map_encoder_exception(exc) from exc
+        if isinstance(exc, SQLAlchemyError):
+            db.rollback()
+            group = encoder_history.get_submission(db, submission_id)
+            if group is None:
+                raise
+        status = exc.status_code if isinstance(exc, VideoKensetsuHttpError) else None
+        group.http_status = status
+        # A documented validation refusal is different from a 5xx/timeout.
+        if started and status in (400, 403, 404, 422):
+            for item in group.items:
+                if item.status == "sending":
+                    item.status = "rejected"
+                    item.error = str(encoder_history.safe_json(exc))
+        definitely_unsent = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        encoder_history.finish_failure(db, group, detail, started=started and not definitely_unsent)
+        error = exc if isinstance(exc, HTTPException) else _map_encoder_exception(exc)
+        error.headers = {**(error.headers or {}), "X-Encoder-Submission-Id": str(group.id)}
+        raise error
 
-    status_code = int(encoded.get("status_code") or 200)
-    encoder_body = encoded.get("body")
-    encoder_payload = encoder_body if isinstance(encoder_body, dict) else {"result": encoder_body}
-    created = _normalize_created_count(encoder_payload, status_code)
 
-    enriched_errors, failed_ids = _enrich_encoder_errors(
-        encoder_payload.get("errors"),
-        paths,
-        path_file_ids,
-    )
-    accepted_file_ids = [fid for fid in path_file_ids if fid not in failed_ids]
-    partial = status_code == 207 or bool(local_errors) or bool(enriched_errors)
-
-    response_body: dict[str, Any] = {
-        "ok": not partial,
-        "partial": partial,
-        "video_id": layers["video_id"],
-        "audio_id": layers["audio_id"],
-        "audio_downmix": layers["audio_downmix"],
-        "created": created,
-        "file_ids": accepted_file_ids,
-        "jobs": encoder_payload.get("jobs"),
-        "job": encoder_payload.get("job"),
-        "errors": enriched_errors,
-        "local_errors": local_errors or None,
-        "result": encoder_payload,
-    }
-    http_status = 207 if partial else 200
-    return JSONResponse(content=response_body, status_code=http_status)
+@router.post("/torrent-files/send-to-encoder")
+async def send_torrent_files_to_encoder_batch(body: SendToEncoderBatchIn, db: Session = Depends(get_db)) -> JSONResponse:
+    return await _submit_encoder_files(body.file_ids, body, db)
 
 
 @router.post("/torrent-files/{file_id}/send-to-encoder")
-async def send_torrent_file_to_encoder(
-    file_id: int,
-    body: SendToEncoderIn,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """Отправить media-файл в Video Kensetsu с выбранными слоями пресетов."""
-    base_url = _require_video_kensetsu_base_url(db)
+async def send_torrent_file_to_encoder(file_id: int, body: SendToEncoderIn, db: Session = Depends(get_db)) -> JSONResponse:
+    response = await _submit_encoder_files([file_id], body, db, single=True)
+    payload = json.loads(response.body)
+    payload["file_id"] = file_id
+    return JSONResponse(payload, status_code=response.status_code)
 
-    encode_path, error = _resolve_encode_path_for_file(db, file_id)
-    if error or not encode_path:
-        raise HTTPException(status_code=404, detail=error or "Файл недоступен для кодирования")
 
-    layers = await _resolve_encoder_layers(
-        base_url,
-        video_id=body.video_id,
-        audio_id=body.audio_id,
-        audio_downmix=body.audio_downmix,
-    )
+@router.get("/encoder-submissions")
+def encoder_submissions(page: int = Query(default=1, ge=1), search: str = "", status: str = "", release_id: int | None = None, db: Session = Depends(get_db)) -> dict:
+    return encoder_history.history_page(db, page=page, search=search, status=status, release_id=release_id)
 
-    try:
-        encoded = await video_kensetsu_encode(
-            base_url,
-            paths=[encode_path],
-            video_id=layers["video_id"],
-            audio_id=layers["audio_id"],
-            audio_downmix=layers["audio_downmix"],
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise _map_encoder_exception(exc) from exc
 
-    status_code = int(encoded.get("status_code") or 200)
-    encoder_body = encoded.get("body")
-    encoder_payload = encoder_body if isinstance(encoder_body, dict) else {"result": encoder_body}
-    errors = encoder_payload.get("errors") if isinstance(encoder_payload, dict) else None
-    if isinstance(errors, list) and not errors:
-        errors = None
-    partial = status_code == 207 or bool(errors)
-    created = _normalize_created_count(encoder_payload, status_code)
+@router.get("/encoder-submissions/{submission_id}")
+def encoder_submission_detail(submission_id: int, db: Session = Depends(get_db)) -> dict:
+    encoder_history.recover_expired(db)
+    group = encoder_history.get_submission(db, submission_id)
+    if group is None:
+        raise HTTPException(status_code=404, detail="Отправка не найдена")
+    return encoder_history.serialize(group)
 
-    result: dict[str, Any] = {
-        "ok": not partial,
-        "partial": partial,
-        "file_id": file_id,
-        "video_id": layers["video_id"],
-        "audio_id": layers["audio_id"],
-        "audio_downmix": layers["audio_downmix"],
-        "created": created,
-        "result": encoder_body,
-        "errors": errors,
-        "job": encoder_payload.get("job") if isinstance(encoder_payload, dict) else None,
-        "jobs": encoder_payload.get("jobs") if isinstance(encoder_payload, dict) else None,
-        "status_code": status_code,
-    }
-    return JSONResponse(content=result, status_code=207 if partial else 200)
+
+class EncoderReceiptsIn(BaseModel):
+    file_ids: list[int] = Field(default_factory=list, max_length=ENCODE_BATCH_MAX_FILES)
+
+
+@router.post("/encoder-submissions/receipts")
+def encoder_file_receipts(body: EncoderReceiptsIn, db: Session = Depends(get_db)) -> dict:
+    return {"receipts": encoder_history.latest_receipts(db, body.file_ids)}
 
 
 @router.get("/torrent-files/{file_id}/mediainfo")

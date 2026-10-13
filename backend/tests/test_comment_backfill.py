@@ -7,6 +7,7 @@ from app.services.torrent_processor import TorrentProcessor
 def test_backfill_qb_comments_from_archive_sets_present_only(monkeypatch) -> None:
     db = MagicMock()
     archive = SimpleNamespace(
+        release_id=1,
         info_hash="a" * 40,
         release_alias="lets-go-kaiki-gumi",
         quality_json={},

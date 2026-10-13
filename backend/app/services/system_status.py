@@ -44,6 +44,7 @@ from app.services.video_kensetsu import (
     resolve_video_kensetsu_base_url,
     store_health_cache as video_kensetsu_store_health_cache,
 )
+from app.services.telegram_outbox import outbox_summary
 
 _APP_PACKAGES = (
     "fastapi",
@@ -262,6 +263,7 @@ async def _probe_telegram(db: Session) -> dict[str, Any]:
         "base_url": base_url,
         "tracked_count": int(tracked_count),
         "pending_outbox": int(pending_outbox),
+        "outbox": outbox_summary(db, bot_key="primary"),
         "bot": {
             "ok": bot_ok,
             "detail": bot_detail,
@@ -325,6 +327,7 @@ async def _probe_hevc_telegram(db: Session) -> dict[str, Any]:
         "base_url": base_url,
         "approved_groups": int(approved_groups),
         "pending_outbox": int(pending_outbox),
+        "outbox": outbox_summary(db, bot_key=HEVC_BOT_KEY),
         "bot": {
             "ok": ok,
             "detail": detail,

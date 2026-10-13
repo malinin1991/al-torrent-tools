@@ -1,0 +1,21 @@
+{
+  "runtime": "ordinary CPython3.15.0",
+  "gil": true,
+  "jit": false,
+  "working_mediainfo_incremental_default_workers": 4,
+  "explicit_workers1_preserved": true,
+  "policy_basis": "proven median wall gain; p95 nonregression inconclusive explicitly accepted under typical-latency priority",
+  "production_app_files_equal_validated_workers_candidate": true,
+  "production_app_manifest_sha256": "948b338e631b0c75160eea5dfbb4dd77e75b065cda1a950e3dff63f309218c8c",
+  "production_app_files": 106,
+  "hevc_pool": "experiment only; not enabled",
+  "free_threaded_runtime": "experiment only; not enabled",
+  "workers_tests": "1041passed0skipped in each normalized regular/t-on/t-off and regular binary",
+  "source_versions": {
+    "original": "source-baseline-manifest.json",
+    "batch_worker1": "source-optimized-manifest.json",
+    "hevc_pool_experiment": "source-pool-candidate-manifest.json",
+    "batch_worker4_working": "source-workers-candidate-manifest.json"
+  },
+  "performance_boundary": "Linux ARM64 DockerDesktop; common46deps/purepsycopg; not native Unraid AMD64 or production binary backend performance"
+}

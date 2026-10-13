@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import Counter
 import logging
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -125,20 +124,17 @@ async def run_hash_torrent(db: Session, job_id: int, params: dict[str, Any]) -> 
         if getattr(change, "kind", None) in ("added", "modified") and fp:
             media_paths.add(str(fp))
 
-    mediainfo_updated = 0
-    from app.services.mediainfo import is_media_filename, upsert_file_mediainfo
+    from app.services.mediainfo import mediainfo_paths_parallel
 
-    for mp in media_paths:
-        if is_stop_requested(db, job_id):
-            _add_log(db, job_id, "hash_torrent: остановка по запросу", "warning")
-            raise JobStopRequested()
-        p = Path(mp)
-        if p.is_file() and is_media_filename(p):
-            try:
-                if upsert_file_mediainfo(db, mp, force=False) is not None:
-                    mediainfo_updated += 1
-            except Exception as mi_exc:
-                logger.warning("hash_torrent: сбой mediainfo для %s: %s", mp, mi_exc)
+    media_stats = mediainfo_paths_parallel(
+        db, sorted(media_paths), force=False,
+        should_stop=lambda: is_stop_requested(db, job_id),
+    )
+    if media_stats["stopped"]:
+        _add_log(db, job_id, "hash_torrent: остановка по запросу", "warning")
+        raise JobStopRequested()
+    # The previous single-file API counted a valid cached report as available.
+    mediainfo_updated = media_stats["updated"] + media_stats["skipped"]
 
     if mediainfo_updated > 0:
         _add_log(db, job_id, f"hash_torrent: заполнено MediaInfo для {mediainfo_updated} файлов")

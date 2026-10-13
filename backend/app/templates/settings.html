@@ -12,10 +12,14 @@
       <label>Резервный URL API
         <input class="input" name="anilibria_fallback_base_url" value="{{ settings_map.get('anilibria_fallback_base_url', '') }}" />
       </label>
+      <label>URL админки
+        <input class="input" name="anilibria_admin_base_url" value="{{ settings_map.get('anilibria_admin_base_url', '') }}" placeholder="https://adminka.example" />
+      </label>
+      <p class="muted" style="grid-column:1/-1;margin:0;">Один адрес без fallback, например <code>https://adminka.example</code>. Включает источник для скрытых и заблокированных по правообладателю релизов. Для входа используются логин и пароль ниже. Пустое поле отключает источник.</p>
       <label>Шаблон URL админки релиза
         <input class="input" name="anilibria_admin_url_template" value="{{ settings_map.get('anilibria_admin_url_template', '') }}" placeholder="URL с переменной {release_id}" />
       </label>
-      <p class="muted" style="grid-column:1/-1;margin:0;">В шаблоне подставляется переменная <code>{release_id}</code> (ID релиза). Пустое поле — ссылка «В админке» на странице релизов не показывается.</p>
+      <p class="muted" style="grid-column:1/-1;margin:0;">Ссылка на карточку релиза: <code>{release_id}</code> заменяется ID. Пустое поле скрывает ссылки на админку.</p>
       <label>Логин
         <input class="input" name="anilibria_login" value="{{ settings_map.get('anilibria_login', '') }}" autocomplete="username" />
       </label>
@@ -200,6 +204,9 @@
       </label>
       <label>Интервал ongoing, сек
         <input class="input" name="ongoing_interval_sec" value="{{ settings_map.get('ongoing_interval_sec', '120') }}" />
+      </label>
+      <label>Интервал проверки админки (сек., минимум 60)
+        <input class="input" type="number" min="60" name="backoffice_interval_sec" value="{{ settings_map.get('backoffice_interval_sec', '900') }}" />
       </label>
       <label>Интервал cleanup, сек
         <input class="input" name="cleanup_interval_sec" value="{{ settings_map.get('cleanup_interval_sec', '3600') }}" />

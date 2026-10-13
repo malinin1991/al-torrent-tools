@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -236,19 +236,17 @@ def _enqueue_approval_welcome(db: Session, row: TelegramBotAccess) -> bool:
 
 
 def cancel_pending_hevc_outbox(db: Session, telegram_id: int) -> int:
-    """Снимает pending HEVC-сообщения этому telegram_id / chat_id."""
-    rows = list(
-        db.scalars(
-            select(TelegramOutbox).where(
-                TelegramOutbox.bot_key == HEVC_BOT_KEY,
-                TelegramOutbox.chat_id == str(int(telegram_id)),
-                TelegramOutbox.status == OUTBOX_PENDING,
-            )
-        ).all()
-    )
+    """Invalidate pending and in-flight claims in the ACL decision transaction."""
+    rows = db.execute(update(TelegramOutbox).where(
+        TelegramOutbox.bot_key == HEVC_BOT_KEY,
+        TelegramOutbox.chat_id == str(int(telegram_id)),
+        TelegramOutbox.status.in_((OUTBOX_PENDING, "sending")),
+    ).values(status=OUTBOX_CANCELLED, last_error="acl_rejected", last_error_kind="acl_rejected",
+             claim_token=None, lease_until=None, next_attempt_at=None, updated_at=utcnow())
+        .returning(TelegramOutbox.id, TelegramOutbox.pipeline_id, TelegramOutbox.bot_key, TelegramOutbox.chat_id)).all()
+    from app.services.telegram_outbox import _audit_outcome
     for row in rows:
-        row.status = OUTBOX_CANCELLED
-        row.last_error = "acl_rejected"
+        _audit_outcome(db, row, OUTBOX_CANCELLED, error_kind="acl_rejected")
     return len(rows)
 
 
