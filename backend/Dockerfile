@@ -64,4 +64,4 @@ FROM base AS runtime
 COPY alembic.ini worker.py /app/
 COPY alembic /app/alembic
 COPY app /app/app
-COPY scripts/entrypoint.sh scripts/migrate_with_lock.py scripts/healthcheck_worker.py scripts/healthcheck_telegram.py scripts/profile_runtime.py /app/scripts/
+COPY scripts/entrypoint.sh scripts/migrate_with_lock.py scripts/healthcheck_worker.py scripts/healthcheck_telegram.py scripts/profile_runtime.py scripts/repair_encoder_receipts.py /app/scripts/

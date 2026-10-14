@@ -1,8 +1,10 @@
-"""Durable Kensetsu receipts, not a job queue or an encoding-status tracker.
+"""Durable Kensetsu receipts with separately observed remote execution.
 
 "sending" is committed before the external POST. A request_id is consumed
 once even if the response is lost. No retry of an uncertain external side
-effect is automatic. Snapshot identities never use basename matching.
+effect is automatic. Snapshot identities never use basename matching. A legacy
+single-file response may echo only its exact filename inside that one request;
+batch responses still require an exact path to associate a source with a job.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from sqlalchemy import Text, and_, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.db.models import DiskFileHash, EncoderSubmission, EncoderSubmissionItem, Release, TorrentArchive, TorrentFile
+from app.db.models import DiskFileHash, EncoderJob, EncoderSubmission, EncoderSubmissionItem, Release, TorrentArchive, TorrentFile
 from app.logging_filters import redact_secrets
 from app.utils.datetime_fmt import as_utc_iso, utcnow
 
@@ -34,6 +36,7 @@ LABELS = {
 }
 ATTENTION = ("not_sent", "rejected", "unknown")
 _SENSITIVE = re.compile(r"token|password|secret|authorization|cookie|passkey|api[_-]?key", re.I)
+_UNCONFIRMED_RECEIPT = "Ответ не подтверждает приём именно этого файла"
 
 
 class SubmissionConflict(ValueError):
@@ -77,11 +80,11 @@ def request_digest(file_ids: list[int], video_id: str, audio_id: str, downmix: s
 
 
 def get_submission(db: Session, submission_id: int) -> EncoderSubmission | None:
-    return db.scalar(select(EncoderSubmission).where(EncoderSubmission.id == submission_id).options(selectinload(EncoderSubmission.items)))
+    return db.scalar(select(EncoderSubmission).where(EncoderSubmission.id == submission_id).options(selectinload(EncoderSubmission.items).selectinload(EncoderSubmissionItem.encoding_jobs)))
 
 
 def replay(db: Session, request_id: str, digest: str) -> EncoderSubmission | None:
-    row = db.scalar(select(EncoderSubmission).where(EncoderSubmission.request_id == request_id).options(selectinload(EncoderSubmission.items)))
+    row = db.scalar(select(EncoderSubmission).where(EncoderSubmission.request_id == request_id).options(selectinload(EncoderSubmission.items).selectinload(EncoderSubmissionItem.encoding_jobs)))
     if row is not None and row.request_digest != digest:
         raise SubmissionConflict("Этот request_id уже использован с другими файлами или параметрами")
     return row
@@ -219,6 +222,16 @@ def settle_response(group: EncoderSubmission, status_code: int, body: Any) -> No
         matches = [i for i in sent if marker and i.full_path == marker]
         if len(matches) == 1:
             return matches[0]
+        # Current Kensetsu single-file replies contain job.filename, not the
+        # requested path. Bind only to the sole actually posted source, with an
+        # exact filename echo and no conflicting explicit path. Never infer a
+        # batch mapping from basenames or response order.
+        if (len(sent) == 1 and isinstance(value, dict)
+                and not value.get("path") and not value.get("input_path")
+                and isinstance(value.get("filename"), str)
+                and sent[0].full_path
+                and value["filename"] == Path(sent[0].full_path).name):
+            return sent[0]
         if not marker and len(sent) == 1:
             return sent[0]
         return None
@@ -265,11 +278,47 @@ def settle_response(group: EncoderSubmission, status_code: int, body: Any) -> No
     for item in sent:
         if item.status == "sending":
             item.status = "unknown"
-            item.error = "Ответ не подтверждает приём именно этого файла"
+            item.error = _UNCONFIRMED_RECEIPT
     group.http_status = status_code
     group.response_json = safe_json(payload)
     group.finished_at = utcnow()
     group.updated_at = group.finished_at
+    from app.services.encoder_tracking import ensure_item_jobs
+    for item in sent:
+        ensure_item_jobs(item)
+
+
+def repair_saved_receipt(group: EncoderSubmission) -> list[int]:
+    """Reparse a saved positive acknowledgement without contacting Kensetsu.
+
+    Only parser-produced unknowns can be repaired. Reconstruct the whole posted
+    scope so a partly successful batch never becomes a single-file request.
+    Callers own the transaction and may roll it back for a dry run.
+    """
+    if (group.finished_at is None or group.request_started_at is None
+            or group.http_status not in (200, 207) or not isinstance(group.response_json, dict)):
+        return []
+    eligible = {i.id for i in group.items if i.status == "unknown" and i.error == _UNCONFIRMED_RECEIPT}
+    if not eligible:
+        return []
+    posted = [i for i in group.items if i.status != "not_sent"]
+    probe = EncoderSubmission(items=[EncoderSubmissionItem(
+        file_id=i.file_id, full_path=i.full_path, relative_path=i.relative_path,
+        status="sending", external_job_ids=[],
+    ) for i in posted])
+    settle_response(probe, group.http_status, group.response_json)
+    repaired = []
+    for original, parsed in zip(posted, probe.items):
+        if original.id in eligible and parsed.status == "accepted" and parsed.external_job_ids:
+            original.status = "accepted"
+            original.external_job_ids = parsed.external_job_ids
+            original.error = None
+            from app.services.encoder_tracking import ensure_item_jobs
+            ensure_item_jobs(original)
+            repaired.append(original.file_id)
+    if repaired:
+        group.updated_at = utcnow()
+    return repaired
 
 
 def finish_failure(db: Session, group: EncoderSubmission, error: Any, *, started: bool) -> None:
@@ -284,6 +333,7 @@ def finish_failure(db: Session, group: EncoderSubmission, error: Any, *, started
 
 
 def serialize(group: EncoderSubmission) -> dict:
+    from app.services.encoder_tracking import serialize_job
     counts = dict(Counter(i.status for i in group.items))
     payload = group.response_json or {}
     result = {
@@ -294,6 +344,7 @@ def serialize(group: EncoderSubmission) -> dict:
         "retry_of_id": group.retry_of_id, "video_id": group.video_id, "audio_id": group.audio_id,
         "audio_downmix": group.audio_downmix, "presets": group.presets_json,
         "counts": counts, "ok": bool(group.items) and counts.get("accepted", 0) == len(group.items),
+        "ready_count": sum(any(j.status == "done" and j.output_available is True and j.poll_error_kind != "not_found" for j in i.encoding_jobs) for i in group.items),
         "partial": any(i.status != "accepted" for i in group.items),
         "file_ids": [i.file_id for i in group.items if i.status == "accepted"],
         "created": payload.get("created"), "job": payload.get("job"), "jobs": payload.get("jobs"),
@@ -301,23 +352,35 @@ def serialize(group: EncoderSubmission) -> dict:
         "items": [{"id": i.id, "file_id": i.file_id, "release_id": i.release_id, "torrent_id": i.torrent_id,
                    "info_hash": i.info_hash, "relative_path": i.relative_path, "full_path": i.full_path,
                    "source": i.source_json, "status": i.status, "label": LABELS[i.status],
-                   "error": i.error, "external_job_ids": i.external_job_ids} for i in group.items],
+                   "error": i.error, "external_job_ids": i.external_job_ids,
+                   "encoding_jobs": [serialize_job(j, group.base_url) for j in i.encoding_jobs]} for i in group.items],
     }
     result["local_errors"] = [{"file_id": i.file_id, "error": i.error} for i in group.items if i.status == "not_sent"] or None
     result["errors"] = [{"file_id": i.file_id, "error": i.error} for i in group.items if i.status in ("rejected", "unknown")] or None
     return result
 
 
-def history_page(db: Session, *, page: int = 1, search: str = "", status: str = "", release_id: int | None = None, submission_id: int | None = None) -> dict:
+def history_page(db: Session, *, page: int = 1, search: str = "", status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None) -> dict:
     recover_expired(db)
     query = select(EncoderSubmission)
     conditions = []
     if status == "attention":
-        conditions.append(EncoderSubmissionItem.status.in_(ATTENTION))
+        conditions.append(or_(EncoderSubmissionItem.status.in_(ATTENTION), EncoderSubmissionItem.encoding_jobs.any(or_(
+            EncoderJob.status.in_(("error", "cancelled")), EncoderJob.poll_error.is_not(None),
+            and_(EncoderJob.status == "done", EncoderJob.output_available.is_(False)),
+        ))))
     elif status in LABELS:
         conditions.append(EncoderSubmissionItem.status == status)
     if release_id is not None:
         conditions.append(EncoderSubmissionItem.release_id == release_id)
+    execution_filters = {
+        "active": EncoderJob.status.in_(("unknown", "planned", "in_progress")),
+        "ready": and_(EncoderJob.status == "done", EncoderJob.output_available.is_(True), or_(EncoderJob.poll_error_kind.is_(None), EncoderJob.poll_error_kind != "not_found")),
+        "error": EncoderJob.status.in_(("error", "cancelled")),
+        "unavailable": or_(EncoderJob.poll_error.is_not(None), and_(EncoderJob.status == "done", EncoderJob.output_available.is_(False))),
+    }
+    if encoding_state in execution_filters:
+        conditions.append(EncoderSubmissionItem.encoding_jobs.any(execution_filters[encoding_state]))
     if search:
         term = f"%{search[:200]}%"
         conditions.append(or_(EncoderSubmissionItem.relative_path.ilike(term), EncoderSubmissionItem.source_json.cast(Text).ilike(term), EncoderSubmissionItem.external_job_ids.cast(Text).ilike(term)))
@@ -328,9 +391,9 @@ def history_page(db: Session, *, page: int = 1, search: str = "", status: str = 
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     pages = max(1, (total + 19) // 20)
     page = min(max(1, page), pages)
-    groups = db.scalars(query.order_by(EncoderSubmission.id.desc()).offset((page - 1) * 20).limit(20).options(selectinload(EncoderSubmission.items))).all()
+    groups = db.scalars(query.order_by(EncoderSubmission.id.desc()).offset((page - 1) * 20).limit(20).options(selectinload(EncoderSubmission.items).selectinload(EncoderSubmissionItem.encoding_jobs))).all()
     return {"submissions": [serialize(g) for g in groups], "total": total, "page": page, "total_pages": pages,
-            "search": search, "status_filter": status, "release_id": release_id, "submission_id": submission_id, "encoder_labels": LABELS}
+            "search": search, "status_filter": status, "encoding_state": encoding_state, "release_id": release_id, "submission_id": submission_id, "encoder_labels": LABELS}
 
 
 def latest_receipts(db: Session, file_ids: list[int]) -> dict:

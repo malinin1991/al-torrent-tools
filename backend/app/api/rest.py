@@ -881,8 +881,8 @@ async def send_torrent_file_to_encoder(file_id: int, body: SendToEncoderIn, db: 
 
 
 @router.get("/encoder-submissions")
-def encoder_submissions(page: int = Query(default=1, ge=1), search: str = "", status: str = "", release_id: int | None = None, db: Session = Depends(get_db)) -> dict:
-    return encoder_history.history_page(db, page=page, search=search, status=status, release_id=release_id)
+def encoder_submissions(page: int = Query(default=1, ge=1), search: str = "", status: str = "", encoding_state: str = "", release_id: int | None = None, db: Session = Depends(get_db)) -> dict:
+    return encoder_history.history_page(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id)
 
 
 @router.get("/encoder-submissions/{submission_id}")

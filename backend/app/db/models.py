@@ -444,12 +444,50 @@ class EncoderSubmissionItem(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_job_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     submission: Mapped[EncoderSubmission] = relationship(back_populates="items")
+    encoding_jobs: Mapped[list["EncoderJob"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan", order_by="EncoderJob.id"
+    )
     __table_args__ = (
         UniqueConstraint("submission_id", "file_id", name="uq_encoder_submission_file"),
         CheckConstraint(
             "status IN ('sending', 'accepted', 'not_sent', 'rejected', 'unknown')",
             name="ck_encoder_item_status",
         ),
+    )
+
+
+class EncoderJob(Base):
+    """Observed remote execution, independent of the immutable POST receipt."""
+
+    __tablename__ = "encoder_jobs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("encoder_submission_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    external_job_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    progress: Mapped[float | None] = mapped_column(Float, nullable=True)
+    output_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_available: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    output_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    remote_created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    remote_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    remote_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    poll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    poll_error_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    poll_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    output_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_poll_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    item: Mapped[EncoderSubmissionItem] = relationship(back_populates="encoding_jobs")
+    __table_args__ = (
+        UniqueConstraint("item_id", "external_job_id", name="uq_encoder_job_item_external"),
+        CheckConstraint("status IN ('unknown','planned','in_progress','done','error','cancelled')", name="ck_encoder_job_status"),
+        Index("ix_encoder_jobs_due", "next_poll_at", "lease_until", "id"),
     )
 
 

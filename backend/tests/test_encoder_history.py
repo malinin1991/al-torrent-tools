@@ -336,6 +336,156 @@ def test_partial_response_accepts_exact_evidence_and_keeps_unmatched_error_unkno
     assert states == {a.id: "accepted", b.id: "unknown"}
 
 
+def test_kensetsu_planned_single_filename_receipt_is_accepted(api, db, tmp_path, monkeypatch):
+    file, _ = source(db, tmp_path, relative_path="Hotaru no Yomeiri/Hotaru_no_Yomeiri_[01] .mkv")
+    external_id = "2ce50252-10ed-4382-839b-5a3e96b3df16"
+
+    async def encode(*args, **kwargs):
+        return {"status_code": 200, "body": {
+            "created": True, "queued": True, "encoding_started": False,
+            "job": {"id": external_id, "filename": "Hotaru_no_Yomeiri_[01] .mkv",
+                    "status": "planned", "progress": 0.0, "completed_at": None},
+        }}
+
+    monkeypatch.setattr(api, "video_kensetsu_encode", encode)
+    response = submit(api, db, [file])
+    data = payload(response)
+    assert response.status_code == 200
+    assert data["counts"] == {"accepted": 1}
+    assert data["items"][0]["external_job_ids"] == [external_id]
+    assert data["items"][0]["error"] is None
+    assert data["result"]["job"]["status"] == "planned"
+
+
+@pytest.mark.parametrize("filename", ["other.mkv", "episode [01] .mkv", "Episode [01].mkv", "Other/Episode [01] .mkv"])
+def test_single_filename_receipt_requires_exact_filename(db, tmp_path, filename):
+    file, _ = source(db, tmp_path, relative_path="Show/Episode [01] .mkv")
+    group, _ = claim(db, [file])
+    history.settle_response(group, 200, {"created": True, "job": {"id": "job", "filename": filename}})
+    assert group.items[0].status == "unknown"
+    assert group.items[0].external_job_ids == []
+
+
+@pytest.mark.parametrize("key", ["path", "input_path"])
+def test_single_filename_does_not_override_conflicting_full_path(db, tmp_path, key):
+    file, _ = source(db, tmp_path)
+    group, _ = claim(db, [file])
+    history.settle_response(group, 200, {"created": True, "job": {
+        "id": "job", "filename": Path(file.full_path).name, key: "/different/episode-01.mkv",
+    }})
+    assert group.items[0].status == "unknown"
+    assert group.items[0].external_job_ids == []
+
+
+def test_unique_batch_filenames_still_require_exact_paths(db, tmp_path):
+    a, _ = source(db, tmp_path, relative_path="A/a.mkv")
+    b, _ = source(db, tmp_path, relative_path="B/b.mkv")
+    group, _ = claim(db, [a, b])
+    history.settle_response(group, 200, {"created": 2, "jobs": [
+        {"filename": "a.mkv", "id": "job-a"}, {"filename": "b.mkv", "id": "job-b"},
+    ]})
+    assert [i.status for i in group.items] == ["unknown", "unknown"]
+    assert all(not i.external_job_ids for i in group.items)
+
+
+def test_single_actual_post_with_local_unsent_item_accepts_filename(db, tmp_path):
+    a, _ = source(db, tmp_path, relative_path="A/episode.mkv")
+    b, _ = source(db, tmp_path, relative_path="B/episode.mkv")
+    group, _ = claim(db, [a, b])
+    group.items[1].status = "not_sent"
+    history.settle_response(group, 200, {"created": True, "job": {"filename": "episode.mkv", "id": "job-a"}})
+    assert [i.status for i in group.items] == ["accepted", "not_sent"]
+    assert group.items[0].external_job_ids == ["job-a"]
+
+
+def _saved_unconfirmed_receipt(db, files, response):
+    group, _ = claim(db, files)
+    group.request_started_at = utcnow()
+    group.http_status = 200
+    group.response_json = response
+    group.finished_at = utcnow()
+    group.updated_at = group.finished_at
+    for item in group.items:
+        item.status = "unknown"
+        item.error = "Ответ не подтверждает приём именно этого файла"
+    db.commit()
+    return group
+
+
+def test_saved_single_receipt_can_be_repaired_without_source_or_resend(db, tmp_path):
+    file, _ = source(db, tmp_path)
+    body = {"created": True, "job": {"id": "saved-job", "filename": Path(file.full_path).name, "status": "planned"}}
+    group = _saved_unconfirmed_receipt(db, [file], body)
+    original_finished = group.finished_at
+    original_request = group.request_id
+    original_source = dict(group.items[0].source_json)
+    Path(file.full_path).unlink()
+    assert history.repair_saved_receipt(group) == [file.id]
+    db.commit()
+    assert group.items[0].status == "accepted"
+    assert group.items[0].external_job_ids == ["saved-job"]
+    assert group.items[0].error is None
+    assert group.finished_at == original_finished
+    assert group.request_id == original_request
+    assert group.response_json == body
+    assert group.items[0].source_json == original_source
+    assert db.scalar(select(func.count()).select_from(EncoderSubmission)) == 1
+    assert history.repair_saved_receipt(group) == []
+
+
+@pytest.mark.parametrize("error", ["response lost", "Противоречивый ответ: для файла получены и задание, и ошибка"])
+def test_saved_receipt_repair_does_not_change_other_unknown_causes(db, tmp_path, error):
+    file, _ = source(db, tmp_path)
+    group = _saved_unconfirmed_receipt(db, [file], {"created": True, "job": {"id": "job", "filename": Path(file.full_path).name}})
+    group.items[0].error = error
+    assert history.repair_saved_receipt(group) == []
+    assert group.items[0].status == "unknown"
+
+
+@pytest.mark.parametrize("status", [None, 500])
+def test_saved_receipt_repair_requires_successful_http_response(db, tmp_path, status):
+    file, _ = source(db, tmp_path)
+    group = _saved_unconfirmed_receipt(db, [file], {"created": True, "job": {"id": "job", "filename": Path(file.full_path).name}})
+    group.http_status = status
+    assert history.repair_saved_receipt(group) == []
+    assert group.items[0].status == "unknown"
+
+
+def test_saved_partial_batch_repair_preserves_original_posted_scope(db, tmp_path):
+    a, _ = source(db, tmp_path, relative_path="A/episode.mkv")
+    b, _ = source(db, tmp_path, relative_path="B/episode.mkv")
+    group = _saved_unconfirmed_receipt(db, [a, b], {"created": 2, "jobs": [
+        {"id": "job-a", "path": a.full_path}, {"id": "job-b", "filename": "episode.mkv"},
+    ]})
+    group.items[0].status = "accepted"
+    group.items[0].error = None
+    group.items[0].external_job_ids = ["job-a"]
+    db.commit()
+    assert history.repair_saved_receipt(group) == []
+    assert [i.status for i in group.items] == ["accepted", "unknown"]
+    assert group.items[1].external_job_ids == []
+
+
+def test_receipt_repair_cli_is_dry_run_by_default_and_apply_is_idempotent(db, tmp_path, capsys):
+    from scripts.repair_encoder_receipts import main
+    from sqlalchemy.orm import sessionmaker
+
+    file, _ = source(db, tmp_path)
+    group = _saved_unconfirmed_receipt(db, [file], {"created": True, "job": {"id": "saved-job", "filename": Path(file.full_path).name}})
+    factory = sessionmaker(bind=db.get_bind())
+    arguments = ["--submission-id", str(group.id)]
+    assert main(arguments, session_factory=factory) == 0
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+    db.expire_all()
+    assert group.items[0].status == "unknown"
+    assert main([*arguments, "--apply"], session_factory=factory) == 0
+    assert json.loads(capsys.readouterr().out)["repaired_file_ids"] == [file.id]
+    db.expire_all()
+    assert group.items[0].status == "accepted"
+    assert main([*arguments, "--apply"], session_factory=factory) == 0
+    assert json.loads(capsys.readouterr().out)["repaired_file_ids"] == []
+
+
 def test_same_basename_does_not_attach_error_to_arbitrary_source(db, tmp_path):
     a, _ = source(db, tmp_path, relative_path="A/episode.mkv")
     b, _ = source(db, tmp_path, relative_path="B/episode.mkv")

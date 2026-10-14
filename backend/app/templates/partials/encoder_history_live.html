@@ -6,10 +6,11 @@
     <time class="local-time" datetime="{{ group.created_at }}">{{ group.created_at }}</time> ·
     {{ group.video_id }} / {{ group.audio_id }} / {{ group.audio_downmix }}
     {% for state, count in group.counts.items() %}<span class="badge {% if state == 'unknown' %}badge-warn{% elif state in ['not_sent','rejected'] %}badge-danger{% else %}badge-muted{% endif %}">{{ encoder_labels[state] }}: {{ count }}</span>{% endfor %}
+    {% if group.ready_count %}<span class="badge">Готовых файлов: {{ group.ready_count }}</span>{% endif %}
   </summary>
   <p class="muted" style="overflow-wrap:anywhere;">Сервер: {{ group.base_url }}{% if group.retry_of_id %} · повтор <a href="/encoder-history?submission_id={{ group.retry_of_id }}">#{{ group.retry_of_id }}</a>{% endif %}</p>
   <table>
-    <thead><tr><th>Релиз / исходник</th><th>Приём</th><th>Задания Kensetsu</th><th>Причина / действие</th></tr></thead>
+    <thead><tr><th>Релиз / исходник</th><th>Приём</th><th>Кодирование / результат</th><th>Причина / действие</th></tr></thead>
     <tbody>
     {% for item in group['items'] %}
     <tr data-sse-key="encoder-item-{{ item.id }}">
@@ -24,7 +25,31 @@
         </details>
       </td>
       <td>{{ item.label }}</td>
-      <td>{{ item.external_job_ids|join(', ') or 'Не получены / не сопоставлены' }}</td>
+      <td style="min-width:220px;overflow-wrap:anywhere;">
+        {% for job in item.encoding_jobs %}
+        <div data-sse-key="encoder-job-{{ job.id }}" style="margin-bottom:8px;">
+          <div><code>{{ job.external_job_id }}</code></div>
+          <div>{{ job.label }}{% if job.progress is not none %} · {{ '%.1f'|format(job.progress) }}%{% endif %}</div>
+          {% if job.status == 'in_progress' and job.progress is not none %}<progress max="100" value="{{ job.progress }}" aria-label="Прогресс кодирования" style="max-width:100%;"></progress>{% endif %}
+          {% if job.error_message %}<div class="badge-danger">{{ job.error_message }}</div>{% endif %}
+          {% if job.status == 'done' %}
+            <div>{{ job.output_filename or 'Готовый результат' }}</div>
+            {% if job.download_url %}<a href="{{ job.download_url }}" target="_blank" rel="noopener">Скачать готовый файл</a>{% if job.output_size_bytes is not none %}<span class="muted"> · {{ job.output_size_bytes }} байт</span>{% endif %}
+            {% elif job.output_available is sameas false %}<div class="badge-warn">Готовый файл отсутствует</div>
+            {% else %}<div class="muted">Доступность готового файла не подтверждена</div>{% endif %}
+          {% endif %}
+          {% if job.poll_error %}<div class="badge-warn">{{ job.poll_error }}</div>{% endif %}
+          <details><summary class="muted">Время и проверки</summary>
+            {% if job.created_at %}<div>Создано: <time class="local-time" datetime="{{ job.created_at }}">{{ job.created_at }}</time></div>{% endif %}
+            {% if job.started_at %}<div>Начато: <time class="local-time" datetime="{{ job.started_at }}">{{ job.started_at }}</time></div>{% endif %}
+            {% if job.completed_at %}<div>Завершено: <time class="local-time" datetime="{{ job.completed_at }}">{{ job.completed_at }}</time></div>{% endif %}
+            {% if job.last_checked_at %}<div>Последняя проверка: <time class="local-time" datetime="{{ job.last_checked_at }}">{{ job.last_checked_at }}</time></div>{% endif %}
+            {% if job.last_success_at %}<div>Статус получен: <time class="local-time" datetime="{{ job.last_success_at }}">{{ job.last_success_at }}</time></div>{% endif %}
+            {% if job.output_checked_at %}<div>Файл проверен: <time class="local-time" datetime="{{ job.output_checked_at }}">{{ job.output_checked_at }}</time></div>{% endif %}
+          </details>
+        </div>
+        {% else %}{{ item.external_job_ids|join(', ') or 'Задания не получены / не сопоставлены' }}{% endfor %}
+      </td>
       <td style="overflow-wrap:anywhere;">
         {% if item.error %}<div>{{ item.error }}</div>{% endif %}
         {% if item.status in ['not_sent','rejected','unknown','accepted'] %}
@@ -55,6 +80,6 @@
 <div class="card muted">Отправок по выбранным условиям пока нет.</div>
 {% endfor %}
 <div class="row">
-{% if page > 1 %}<a href="/encoder-history?page={{ page-1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Назад</a>{% endif %}
-{% if page < total_pages %}<a href="/encoder-history?page={{ page+1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Далее</a>{% endif %}
+{% if page > 1 %}<a href="/encoder-history?page={{ page-1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Назад</a>{% endif %}
+{% if page < total_pages %}<a href="/encoder-history?page={{ page+1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Далее</a>{% endif %}
 </div>

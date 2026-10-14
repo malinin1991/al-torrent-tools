@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+from datetime import datetime, timezone
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,6 +23,7 @@ from app.services.job_runner import (
 )
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import qb_client_wait_message, should_wait_for_qb
+from app.services.encoder_tracking import poll_encoder_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +223,10 @@ async def main() -> None:
         "pipeline_reconcile_interval_sec", settings.pipeline_reconcile_interval_sec
     )
     scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        poll_encoder_jobs, "interval", seconds=30, id="encoder_tracking",
+        max_instances=1, coalesce=True, next_run_time=datetime.now(timezone.utc),
+    )
     scheduler.add_job(
         _run_by_type, "interval", seconds=max(60, _setting_int("backoffice_interval_sec", settings.backoffice_interval_sec)),
         args=["backoffice_sync"], id="backoffice_sync", max_instances=1, coalesce=True,

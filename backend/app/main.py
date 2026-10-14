@@ -1379,20 +1379,20 @@ def archive_page(
 @app.get("/encoder-history", response_class=HTMLResponse)
 def encoder_history_page(
     request: Request, page: int = Query(default=1, ge=1), search: str = "",
-    status: str = "", release_id: int | None = None, submission_id: int | None = None,
+    status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = encoder_history_page_context(db, page=page, search=search, status=status, release_id=release_id, submission_id=submission_id)
+    context = encoder_history_page_context(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id, submission_id=submission_id)
     return templates.TemplateResponse(request, "encoder_history.html", context)
 
 
 @app.get("/encoder-history/live", response_class=HTMLResponse)
 def encoder_history_live(
     request: Request, page: int = Query(default=1, ge=1), search: str = "",
-    status: str = "", release_id: int | None = None, submission_id: int | None = None,
+    status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = encoder_history_page_context(db, page=page, search=search, status=status, release_id=release_id, submission_id=submission_id)
+    context = encoder_history_page_context(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id, submission_id=submission_id)
     return templates.TemplateResponse(request, "partials/encoder_history_live.html", context)
 
 
