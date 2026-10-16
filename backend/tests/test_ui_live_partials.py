@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +26,14 @@ def _templates() -> Jinja2Templates:
 
     templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
     return templates
+
+
+def test_shared_ui_uses_verified_local_htmx_distribution() -> None:
+    base = (_TEMPLATES_DIR / "base.html").read_text(encoding="utf-8")
+    assert 'src="/static/vendor/htmx-1.9.12.min.js"' in base
+    asset = _TEMPLATES_DIR.parent / "static/vendor/htmx-1.9.12.min.js"
+    digest = base64.b64encode(hashlib.sha384(asset.read_bytes()).digest()).decode()
+    assert digest == "ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2"
 
 
 def test_pipeline_detail_live_partial_renders() -> None:
@@ -192,7 +202,7 @@ def test_releases_live_url_uses_urlencode() -> None:
     assert "mi-att-nonfont" in base
     assert "Шрифты" not in base
     assert "visibilitychange" in base
-    assert "setTimeout(() => _uiSseRefreshing.delete(key), 3000)" in base
+    assert "_uiSseRefreshing.delete(key)" in base
     from app.services import ui_events
 
     assert ui_events._POLL_INTERVAL_SEC == 3.0

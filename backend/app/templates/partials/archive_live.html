@@ -1,4 +1,5 @@
 <p class="muted">Всего записей: {{ total }}. Страница {{ page }} из {{ total_pages }}. <span class="muted">· live</span></p>
+<div class="table-scroll" role="region" aria-label="Архив торрентов" tabindex="0">
 <table>
   <thead>
     <tr>
@@ -50,6 +51,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 <div class="row" style="margin-top:12px;">
   {% if page > 1 %}
   <a class="btn" href="/archive?search={{ search|urlencode }}&page={{ page - 1 }}">Назад</a>

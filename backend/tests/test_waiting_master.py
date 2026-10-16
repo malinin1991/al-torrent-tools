@@ -6,7 +6,7 @@ import httpx
 from qbittorrentapi.exceptions import APIConnectionError, LoginFailed
 
 from app.jobs.waiting_master_retry import retry_waiting_master_pipelines
-from app.providers.anilibria.client import AniLibriaClient
+from app.providers.anilibria.client import AniLibriaClient, AniLibriaNotFoundError
 from app.services.pipeline import TorrentPipelineService
 from app.services.qbittorrent import is_qb_auth_error, is_qb_unavailable, should_wait_for_qb
 
@@ -84,7 +84,7 @@ def test_get_torrent_returns_none_on_404(monkeypatch) -> None:
     http_error = httpx.HTTPStatusError("404", request=MagicMock(), response=response)
 
     async def boom(*args, **kwargs):
-        raise RuntimeError("AniLibria API недоступен") from http_error
+        raise AniLibriaNotFoundError("AniLibria API: ресурс не найден") from http_error
 
     monkeypatch.setattr(client, "_request_json", boom)
     assert asyncio.run(client.get_torrent("abc")) is None

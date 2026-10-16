@@ -218,7 +218,7 @@ class AniLibriaClient:
     ) -> Any:
         params = self._build_fields_params(include, exclude)
         params["page"] = str(page)
-        params["limit"] = str(max(1, limit))
+        params["limit"] = str(min(50, max(1, limit)))
         return await self._request_json("/anime/catalog/releases", params)
 
     async def get_torrents_for_release(
@@ -238,17 +238,14 @@ class AniLibriaClient:
         include: Iterable[str] | None = None,
         exclude: Iterable[str] | None = None,
     ) -> Any | None:
-        """Данные торрента по hash/id. None если 404 (торрент удалён из API)."""
+        """Данные по hash/id; None только если все primary/fallback вернули 404."""
         try:
             return await self._request_json(
                 f"/anime/torrents/{hash_or_id}",
                 self._build_fields_params(include, exclude) or None,
             )
-        except RuntimeError as exc:
-            cause = exc.__cause__
-            if isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 404:
-                return None
-            raise
+        except AniLibriaNotFoundError:
+            return None
 
     async def torrent_exists(self, hash_or_id: str | int) -> bool:
         return await self.get_torrent(hash_or_id, include=["id", "hash"]) is not None

@@ -208,37 +208,44 @@ def settle_response(group: EncoderSubmission, status_code: int, body: Any) -> No
     """Only positive evidence accepts files; never infer from missing errors."""
     sent = [i for i in group.items if i.status == "sending"]
     payload = body if isinstance(body, dict) else {}
-    errors = payload.get("errors") or []
+    receipt_payload = payload if status_code in (200, 207) else {}
+    errors = receipt_payload.get("errors") or []
     errors = errors if isinstance(errors, list) else [errors]
-    jobs = payload.get("jobs")
+    jobs = receipt_payload.get("jobs")
     jobs = jobs if isinstance(jobs, list) else []
-    if payload.get("job") is not None:
-        jobs = [*jobs, payload["job"]]
-    elif payload.get("job_id") is not None:
-        jobs = [*jobs, {"job_id": payload["job_id"]}]
+    if receipt_payload.get("job") is not None:
+        jobs = [*jobs, receipt_payload["job"]]
+    elif receipt_payload.get("job_id") is not None:
+        jobs = [*jobs, {"job_id": receipt_payload["job_id"]}]
 
     def match(value: Any) -> EncoderSubmissionItem | None:
-        marker = str(value.get("path") or value.get("input_path") or value.get("filename") or "") if isinstance(value, dict) else ""
-        matches = [i for i in sent if marker and i.full_path == marker]
+        paths = [value[key] for key in ("path", "input_path") if value.get(key)] if isinstance(value, dict) else []
+        filename = value.get("filename") if isinstance(value, dict) else None
+        if paths:
+            # Every echoed identity must agree. A matching primary path cannot
+            # hide a conflicting input_path or filename in the same response.
+            matches = [i for i in sent if i.full_path and all(path == i.full_path for path in paths)]
+            if len(matches) != 1:
+                return None
+            item = matches[0]
+            return item if not filename or filename in (item.full_path, Path(item.full_path).name) else None
+        matches = [i for i in sent if filename and i.full_path == filename]
         if len(matches) == 1:
             return matches[0]
         # Current Kensetsu single-file replies contain job.filename, not the
         # requested path. Bind only to the sole actually posted source, with an
         # exact filename echo and no conflicting explicit path. Never infer a
         # batch mapping from basenames or response order.
-        if (len(sent) == 1 and isinstance(value, dict)
-                and not value.get("path") and not value.get("input_path")
-                and isinstance(value.get("filename"), str)
+        if (len(sent) == 1 and isinstance(filename, str)
                 and sent[0].full_path
-                and value["filename"] == Path(sent[0].full_path).name):
+                and filename == Path(sent[0].full_path).name):
             return sent[0]
-        if not marker and len(sent) == 1:
+        if not filename and len(sent) == 1:
             return sent[0]
         return None
 
     unmatched_error = False
     contradictory = set()
-    unmatched_job_marker = False
     for error in errors:
         item = match(error)
         if item is None:
@@ -249,8 +256,6 @@ def settle_response(group: EncoderSubmission, status_code: int, body: Any) -> No
     for job in jobs:
         jid = _job_id(job)
         item = match(job)
-        if isinstance(job, dict) and any(job.get(k) for k in ("path", "input_path", "filename")) and item is None:
-            unmatched_job_marker = True
         if jid and item is not None:
             if item.status == "rejected" or item.file_id in contradictory:
                 contradictory.add(item.file_id)
@@ -262,10 +267,14 @@ def settle_response(group: EncoderSubmission, status_code: int, body: Any) -> No
                 item.external_job_ids = sorted(set([*item.external_job_ids, jid]))
     remaining = [i for i in sent if i.status == "sending"]
     accepted = sum(i.status == "accepted" for i in sent)
-    created = payload.get("created")
-    count = int(created) if isinstance(created, (int, bool)) and created >= 0 else None
+    created = receipt_payload.get("created")
+    count = created if type(created) is int and created >= 0 else None
     job_ids = list(dict.fromkeys(jid for value in jobs if (jid := _job_id(value))))
-    all_positive = not unmatched_error and not unmatched_job_marker and (
+    # Legacy aggregate acknowledgements can prove the complete posted scope.
+    # Once jobs name sources, use those exact mappings: several jobs for A or
+    # an incomplete jobs list must never imply that an unnamed source B arrived.
+    marked_jobs = any(isinstance(job, dict) and any(job.get(k) for k in ("path", "input_path", "filename")) for job in jobs)
+    all_positive = not unmatched_error and not marked_jobs and (
         count == len(remaining) + accepted and count is not None and count > 0
         or len(job_ids) == len(remaining) + accepted and bool(job_ids)
     )

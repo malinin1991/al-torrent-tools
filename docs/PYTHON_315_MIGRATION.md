@@ -138,3 +138,71 @@ ARM64: pytest/watchfiles доступны, Uvicorn выбирает WatchFilesRe
 Обновление constraints — отдельное изменение с тестами, а не скрытая часть
 следующего `docker build`. Установка под новой minor-версией требует повторной
 проверки зависимостей, native imports и миграций.
+
+## Актуальность зависимостей 17 октября 2026
+
+Все **44** закреплённых пакета сверены с актуальными стабильными, не отозванными
+релизами PyPI. Для обычного CPython 3.15.0 есть совместимые wheels на Linux ARM64,
+Linux x86-64 и macOS ARM64. Найдены и внесены четыре обновления:
+
+- [FastAPI](https://pypi.org/project/fastapi/0.143.3/): 0.143.0 → **0.143.3**.
+- [Starlette](https://pypi.org/project/starlette/1.8.0/): 1.7.0 → **1.8.0**.
+- [pydantic-settings](https://pypi.org/project/pydantic-settings/2.16.0/): 2.15.0 → **2.16.0**.
+- [pluggy](https://pypi.org/project/pluggy/1.7.0/): 1.6.0 → **1.7.0**.
+
+Остальные 40 pins уже соответствовали последним стабильным версиям. Независимый
+pip resolver без constraints выбрал ровно тот же набор: **39 runtime** и
+**5 dev-only** пакетов. Новых транзитивных зависимостей не появилось.
+
+В чистых venv внутри имевшихся Linux CPython 3.15.0 образов обе архитектуры
+установили все 44 пакета с `--only-binary=:all:` из официального PyPI, без
+компиляции. Списки версий полностью совпали с обновлённым `backend/constraints.txt`;
+`pip check` успешен. На ARM64 нативно и x86-64 под эмуляцией отдельно выполнены:
+
+- по **1448 passed, 0 skipped** с собственными БД PostgreSQL 16.15;
+- native imports, известный BLAKE3-вектор, uvloop coroutine и разбор HTTP через httptools;
+- binary psycopg, SQLAlchemy `SELECT 1`, Pydantic Decimal и PostgreSQL Decimal
+  round trip в текстовом и бинарном режимах;
+- системная MediaInfo **26.10**, удаление bundled `libmediainfo.so.0` и реальный
+  разбор сгенерированного WAV;
+- полная цепочка `alembic upgrade head` до `0027_encoder_job_tracking`;
+- lifecycle приложения и 13 HTML/API/static endpoints, включая health и OpenAPI.
+
+[MediaInfo 26.10](https://mediaarea.net/MediaInfo/ChangeLog) остаётся актуальным
+стабильным релизом. Python 3.15.0, системная библиотека, Dockerfile и набор
+runtime extras не менялись. Для macOS проверены метаданные wheels; выполнение
+обновлённой среды на macOS этим прогоном не подтверждается.
+
+Существующее предупреждение TestClient/httpx сохраняется. Предупреждение
+дублированного OpenAPI operation ID webhook дополнительно воспроизведено на
+предыдущем FastAPI 0.143.0; оно не внесено обновлением зависимостей.
+
+Точные wheel filenames/SHA-256, версии, проверенные manifests и результаты:
+[dependency provenance](python315_dependencies_20261017.json). Использованы
+одноразовые среды и синтетические данные, без рабочего `.env` и внешних
+интеграций. Полная пересборка/публикация Docker-образа и обновление Unraid
+в эту проверку не входят.
+
+## Публикация Docker 17 октября 2026
+
+После проверки зависимостей собран рабочий `runtime` из полного снимка текущего
+backend, включая незакоммиченные UI/технические изменения. Опубликованы
+`registry.mageek.su/al-torrent-tools:latest` и версионный тег
+`release-20261016-184030` для `linux/amd64` и `linux/arm64`.
+
+Общий digest: `sha256:a70663b5aeae8244944a1b9b0e96a906b5550a9cd40480a8c53b6ddd17d0842d`.
+Имена тегов и build timestamps используют UTC; дата раздела — Asia/Omsk.
+
+Каждый точный runtime проверен отдельно: SHA-256 163 встроенных файлов,
+`pip check`, нативные зависимости, MediaInfo 26.10, отсутствие компилятора,
+dev-пакетов и локального `.env`. QA-слой добавлял только тестовые зависимости
+и fixtures, сохраняя все 14 runtime-слоёв и не подменяя app/alembic/worker.
+На каждой архитектуре прошло **1448 тестов без пропусков**, штатный entrypoint
+применил миграции к своей PostgreSQL 16.15, 15 реальных HTTP endpoints и SSE
+успешно проверены. Три JS-сценария проверены на том же снимке исходников.
+
+После публикации обе архитектуры повторно загружены через `latest` из registry;
+runtime и исходники сверены ещё раз. Индекс содержит ровно две целевые
+архитектуры, без provenance/SBOM attestations. Полные digest, source manifest,
+версии и результаты — [отчёт релиза](releases/release-20261016-184030.json).
+Рабочие интеграции и Unraid не изменялись.

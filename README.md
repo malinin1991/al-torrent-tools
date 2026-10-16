@@ -17,9 +17,13 @@
 
 Текущая архитектура и правила данных описаны в [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md), краткая карта для разработки — в [AGENTS.md](AGENTS.md).
 
+Результаты UI/UX и технического ревью с реализованными исправлениями и проверками: [docs/REVIEW_2026_10_17.md](docs/REVIEW_2026_10_17.md).
+
 ### UI live (SSE)
 
 Открытые страницы (`/`, `/jobs`, `/pipeline`, `/pipeline/{id}`, `/releases`, `/archive`, `/info`) подписываются на `EventSource /ui/events?channels=…`. Сервер проверяет change-token’ы по БД с паузой 3 с между проходами и отправляет именованное событие при изменении токена. Для активных pipeline токен также меняется каждые 3 с, чтобы обновлять прогресс qB; канал `info` имеет временной tick 30 с. Клиент точечно подтягивает HTML-partial (`show:none`, сохранение скролла и `<details>`), без HTMX interval-poll. Inbound webhook qBittorrent (`/api/webhooks/qb/complete`) меняет БД; браузер получает обновление через SSE.
+
+HTMX 1.9.12 включён в приложение локально: доступ браузера к CDN не требуется. Индикатор в навигации показывает связь автообновления, ошибки действий отображаются отдельно. Live swap сохраняет текущую прокрутку, раскрытия, выбор файлов, параметры запуска заданий и фокус; один partial не запрашивается параллельно самому себе. HEVC-фильтры и бейджи релизов обновляются минимум раз в минуту даже без изменений БД. Синхронные запросы token выполняются в потоке, а DB Session закрывается до отправки SSE клиенту.
 
 Страницы `/settings` и `/extra-urls` остаются без live (только действия пользователя).
 
@@ -41,6 +45,7 @@ location /ui/events {
 ## Требования
 
 - Для локального запуска: обычный CPython `3.15`, PostgreSQL 16 и зависимости из `backend/requirements.txt`, закреплённые в `backend/constraints.txt`. Для разработки и тестов — `backend/requirements-dev.txt`.
+- Актуальность зависимостей проверена 17.10.2026: все 44 pins соответствуют последним стабильным релизам PyPI, wheels и по 1448 тестов проверены на Linux ARM64/x86-64. Подробности — [проверка зависимостей Python 3.15](docs/PYTHON_315_MIGRATION.md#актуальность-зависимостей-17-октября-2026).
 - Для сбора MediaInfo локально нужна доступная библиотека libmediainfo; Docker-образ устанавливает и проверяет MediaInfo >=26.
 - Для запуска контейнеров: Docker + Docker Compose; Python и PostgreSQL на хосте не требуются.
 
@@ -91,6 +96,8 @@ Compose запускает PostgreSQL, API, worker и два Telegram-бота. 
 Торрент-файлы пишутся по канону `TORRENT_STORAGE_DIR` → `settings.torrent_storage_dir` (локально default — `<repo>/data/torrents`, в Docker Compose — `/app/data/torrents` с volume `./data/torrents`). Медиа монтируется отдельно: `./data/anilibria` → `/anilibria:rw`. При старте API, worker и обоих ботов entrypoint выполняет `alembic upgrade head` под PostgreSQL advisory lock, сериализующим миграции.
 
 ## Сборка образа и деплой на Unraid
+
+Публикация 17.10.2026: `registry.mageek.su/al-torrent-tools:latest` и `release-20261016-184030` включают UI/технические исправления и обновлённые зависимости. Обе архитектуры прошли по 1448 тестов; digest, состав и проверки — [отчёт релиза](docs/releases/release-20261016-184030.json). На Unraid этот шаг образ не разворачивает.
 
 Один образ используется для `api`, `worker`, `telegram-bot` и `telegram-hevc-bot`. Контекст сборки — `./backend`. Публикуемый target по умолчанию — `runtime`: рабочие исходники, миграции и runtime-зависимости. Локальный `docker-compose.yml` выбирает target `development` с тестами, `pytest`, `watchfiles` и исследовательскими скриптами.
 
@@ -475,11 +482,18 @@ python -m pytest -q
 python -m compileall -q app tests worker.py
 ```
 
+Клиентские сценарии проверяются отдельно через Node.js; установка npm-пакетов и frontend build не нужны:
+
+```bash
+# Из backend/:
+node --test tests/js/*.test.cjs
+```
+
 Запускай из `backend/`: корневой `app/` содержит пустые пакеты и может перекрыть импорт рабочего приложения. Большинство тестов использует mock-объекты; названия `e2e` не означают проверку живых qBittorrent/Telegram/AniLibria.
 
-Проверка data migration 0018 на PostgreSQL по умолчанию пропускается. Для её запуска укажи отдельную тестовую БД (из `backend/`):
+PostgreSQL-проверки миграций, конкурентных claims, advisory locks, outbox и истории кодировщика пропускаются без отдельной тестовой БД. Для полного прогона с ними укажи `ALTT_TEST_POSTGRES_URL` (из `backend/`):
 
 ```bash
 ALTT_TEST_POSTGRES_URL='postgresql+psycopg://altt:<пароль>@127.0.0.1:5432/altt_test' \
-  python -m pytest -q tests/test_migration_0018_ignore_low_quality_avc.py
+  python -m pytest -q
 ```

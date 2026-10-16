@@ -3,7 +3,7 @@
 <h1>Релизы</h1>
 <div class="card" style="margin-bottom:12px;">
   <form method="get" action="/releases" class="row">
-    <input class="input" style="max-width:320px;" name="search" placeholder="Поиск по названию / alias" value="{{ search }}" />
+    <input class="input" type="search" aria-label="Поиск релиза по названию или alias" style="max-width:320px;" name="search" placeholder="Поиск по названию / alias" value="{{ search }}" />
     <label class="row" style="gap:6px; margin:0;">
       <input type="checkbox" name="tracked_only" value="on" {% if tracked_only %}checked{% endif %} />
       Отображать только отслеживаемое
@@ -50,7 +50,7 @@
 {% set hevc_qs = ('&hevc_filter=' ~ (hevc_filter|urlencode)) if hevc_filter else '' %}
 {% set hidden_qs = '&show_hidden=on' if show_hidden else '' %}
 {% set source_qs = '&source_filter=' ~ (source_filter|urlencode) ~ '&block_filter=' ~ (block_filter|urlencode) ~ '&abandoned_filter=' ~ (abandoned_filter|urlencode) %}
-<div id="releases-action-result" class="muted" style="margin-bottom:8px;"></div>
+<div id="releases-action-result" class="muted" role="status" style="margin-bottom:8px;"></div>
 <div
   id="releases-live"
   data-ui-sse-channel="releases"

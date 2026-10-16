@@ -242,6 +242,32 @@ def test_persisted_snapshot_remains_readable_after_job_get_404(factory):
         assert job["download_url"] is None and data["ready_count"]==0
 
 
+def test_missing_job_then_connection_error_cannot_restore_stale_download_readiness(factory):
+    group_id, job_id = seed(factory)
+    ready = lambda request: httpx.Response(200, json=remote(
+        "done", progress=100, output_available=True, output_size_bytes=123))
+    poll(factory, ready)
+    make_due(factory, job_id)
+    poll(factory, lambda request: httpx.Response(404))
+    make_due(factory, job_id)
+
+    def disconnected(request):
+        raise httpx.ConnectError("offline", request=request)
+
+    poll(factory, disconnected)
+    with factory() as db:
+        job = db.get(EncoderJob, job_id)
+        data = history.serialize(history.get_submission(db, group_id))
+        assert job.status == "done" and job.poll_error_kind == "connection"
+        assert data["ready_count"] == 0
+        assert data["items"][0]["encoding_jobs"][0]["download_url"] is None
+        assert history.history_page(db, encoding_state="ready")["total"] == 0
+    make_due(factory, job_id)
+    poll(factory, ready)
+    with factory() as db:
+        assert history.serialize(history.get_submission(db, group_id))["ready_count"] == 1
+
+
 @pytest.mark.parametrize("available", [True,False])
 def test_current_api_output_metadata_avoids_head_and_ignores_untrusted_download_url(factory,available):
     group_id,job_id=seed(factory)

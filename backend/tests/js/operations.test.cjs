@@ -51,5 +51,13 @@ function retryButton(all=false){const button={disabled:false,hasAttribute:name=>
   confirmed=true;await listeners.click({target});
   assert.deepEqual(requests.at(-1),{url:'/api/telegram-outbox/17/retry',body:{bot_key:'hevc',acknowledge_unknown:true}});
   assert.equal(refreshes.at(-1),'telegram-outbox');assert.equal(button.disabled,false);
-  console.log('Operations client: exact selections, paging/SSE cursor, job isolation and unknown acknowledgement passed');
+  for (let id=1000; id<1100; id++) change(checkbox(id),true);
+  const overflow=checkbox(1100);checks=[overflow];change(overflow,true);
+  assert.equal(counter.textContent,100);assert.equal(overflow.checked,false);
+  assert.match(retryResult.textContent,/до 100 ошибок/);
+  const clear={closest:selector=>selector==='[data-sync-clear-selection]'?{}:null};
+  await listeners.click({target:clear});
+  assert.equal(counter.textContent,0);assert.match(retryResult.textContent,/всех страницах/);
+  checks=[checkbox(1000)];bodyListeners['htmx:afterSwap']();assert.equal(checks[0].checked,false);
+  console.log('Operations client: exact selections, paging/SSE cursor, selection limit/reset, job isolation and unknown acknowledgement passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

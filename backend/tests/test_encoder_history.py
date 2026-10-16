@@ -510,6 +510,72 @@ def test_same_basename_job_markers_cannot_prove_reception_of_both_sources(db, tm
     assert all(not i.external_job_ids for i in group.items)
 
 
+@pytest.mark.parametrize("job_count", [1, 2])
+@pytest.mark.parametrize("created", [None, 2])
+def test_marked_jobs_only_accept_their_exact_sources(db, tmp_path, job_count, created):
+    a, _ = source(db, tmp_path, relative_path="A/a.mkv")
+    b, _ = source(db, tmp_path, relative_path="B/b.mkv")
+    group, _ = claim(db, [a, b])
+    body = {"jobs": [{"path": a.full_path, "id": f"job-{index}"} for index in range(job_count)]}
+    if created is not None:
+        body["created"] = created
+    history.settle_response(group, 200, body)
+    db.commit()
+    assert [i.status for i in group.items] == ["accepted", "unknown"]
+    assert group.items[1].external_job_ids == []
+
+
+@pytest.mark.parametrize("other_marker", ["input_path", "filename"])
+def test_conflicting_source_markers_do_not_accept_a_matching_primary_path(db, tmp_path, other_marker):
+    file, _ = source(db, tmp_path)
+    group, _ = claim(db, [file])
+    history.settle_response(group, 200, {"created": 1, "job": {
+        "path": file.full_path, other_marker: "/different/other.mkv", "id": "job-conflicting",
+    }})
+    assert group.items[0].status == "unknown"
+    assert group.items[0].external_job_ids == []
+
+
+def test_consistent_full_path_and_filename_markers_accept_a_batch_source(db, tmp_path):
+    a, _ = source(db, tmp_path, relative_path="A/a.mkv")
+    b, _ = source(db, tmp_path, relative_path="B/b.mkv")
+    group, _ = claim(db, [a, b])
+    history.settle_response(group, 200, {"jobs": [
+        {"path": a.full_path, "input_path": a.full_path, "filename": Path(a.full_path).name, "id": "job-a"},
+        {"path": b.full_path, "filename": b.full_path, "id": "job-b"},
+    ]})
+    assert [i.status for i in group.items] == ["accepted", "accepted"]
+
+
+@pytest.mark.parametrize("body", [{"created": 2}, {"jobs": [{"id": "job-a"}, {"id": "job-b"}]}])
+def test_legacy_unmarked_complete_count_accepts_batch_without_inventing_job_mapping(db, tmp_path, body):
+    a, _ = source(db, tmp_path, relative_path="A/a.mkv")
+    b, _ = source(db, tmp_path, relative_path="B/b.mkv")
+    group, _ = claim(db, [a, b])
+    history.settle_response(group, 200, body)
+    assert [i.status for i in group.items] == ["accepted", "accepted"]
+    assert all(not i.external_job_ids for i in group.items)
+
+
+@pytest.mark.parametrize("created,expected", [(True, "unknown"), (False, "unknown"), (1, "accepted")])
+def test_only_integer_aggregate_is_a_source_count(db, tmp_path, created, expected):
+    file, _ = source(db, tmp_path)
+    group, _ = claim(db, [file])
+    history.settle_response(group, 200, {"created": created})
+    assert group.items[0].status == expected
+
+
+@pytest.mark.parametrize("status_code", [400, 409, 500, 503])
+def test_failed_http_response_cannot_confirm_source_from_a_positive_body(db, tmp_path, status_code):
+    file, _ = source(db, tmp_path)
+    group, _ = claim(db, [file])
+    body = {"created": 1, "job": {"path": file.full_path, "id": "job-unconfirmed"}}
+    history.settle_response(group, status_code, body)
+    assert group.items[0].status == "unknown"
+    assert group.items[0].external_job_ids == []
+    assert group.http_status == status_code and group.response_json == body
+
+
 def test_conflicting_error_remains_unknown_when_multiple_jobs_are_returned(db, tmp_path):
     file, _ = source(db, tmp_path)
     group, _ = claim(db, [file])

@@ -45,7 +45,7 @@ from app.services.releases_view import (
     resolve_media_file_for_download,
     torrent_allows_media_download,
 )
-from app.services.runtime_settings import SECRET_SETTING_KEYS, get_setting_value, mask_settings_dict
+from app.services.runtime_settings import SECRET_SETTING_KEYS, SECRET_SETTING_MASK, get_setting_value, mask_settings_dict
 from app.services.system_status import collect_system_status
 from app.services.torrent_archive import TorrentArchiveService
 from app.services.video_kensetsu import (
@@ -120,7 +120,7 @@ class AniLibriaLoginIn(BaseModel):
 
 class QbTestIn(BaseModel):
     host: str = ""
-    port: int = 8080
+    port: int | None = Field(default=None, ge=1, le=65535)
     username: str = ""
     password: str = ""
 
@@ -155,11 +155,13 @@ async def create_job(payload: JobCreateIn, db: Session = Depends(get_db)) -> dic
     # Legacy: type=cleanup → cleanup_master.
     if job_type == "cleanup":
         job_type = "cleanup_master"
-        params.setdefault("target_role", "master")
-    elif job_type == "cleanup_master":
-        params.setdefault("target_role", "master")
-    elif job_type == "cleanup_slave":
-        params.setdefault("target_role", "slave")
+    if job_type in {"cleanup_master", "cleanup_slave"}:
+        expected_role = "master" if job_type == "cleanup_master" else "slave"
+        requested_role = str(params.get("target_role") or "").strip().lower()
+        if requested_role and requested_role != expected_role:
+            raise HTTPException(status_code=422, detail=f"{job_type}: target_role должен быть {expected_role}")
+        # Job type also selects the concurrency lock; it must match the target.
+        params["target_role"] = expected_role
     if job_type == "retry_sync_failures":
         try:
             params = validate_retry_request(db, params)
@@ -221,8 +223,10 @@ def put_settings(items: list[SettingsIn], db: Session = Depends(get_db)) -> dict
     for item in items:
         row = db.get(Setting, item.key)
         value_to_store = item.value
-        if item.key in SECRET_SETTING_KEYS and not item.value.strip() and row is not None:
-            value_to_store = row.value
+        if item.key in SECRET_SETTING_KEYS and item.value.strip() in {"", SECRET_SETTING_MASK}:
+            # GET returns a mask. A settings round trip must not replace credentials
+            # or create a placeholder that overrides an environment value.
+            continue
         if item.key == "file_hash_workers":
             value_to_store = normalize_file_hash_workers_setting(value_to_store)
         if row is None:
@@ -253,7 +257,14 @@ def api_qb_test_connection(role: str, payload: QbTestIn | None = None, db: Sessi
 
     data = payload or QbTestIn()
     host = data.host.strip() or get_setting_value(db, f"qb_{role_value}_host", "")
-    port = data.port if data.port else int(get_setting_value(db, f"qb_{role_value}_port", "8080") or "8080")
+    port = data.port
+    if port is None:
+        try:
+            port = int(get_setting_value(db, f"qb_{role_value}_port", "8080"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"Некорректный сохранённый порт qBittorrent {role_value}") from exc
+        if not 1 <= port <= 65535:
+            raise HTTPException(status_code=422, detail=f"Некорректный сохранённый порт qBittorrent {role_value}")
     username = data.username.strip() or get_setting_value(db, f"qb_{role_value}_username", "")
     password = data.password
     if not password.strip():

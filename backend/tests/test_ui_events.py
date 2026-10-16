@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,17 @@ def test_parse_channels_filters_and_dedupes() -> None:
         "pipeline_detail:12",
         "info",
     ]
+
+
+def test_parse_channels_limits_pipeline_ids_and_normalizes_duplicates() -> None:
+    assert parse_channels(
+        "pipeline_detail:²,pipeline_detail:١,pipeline_detail:0,"
+        "pipeline_detail:9223372036854775808,pipeline_detail:" + "9" * 5000
+    ) == []
+    assert parse_channels(
+        "pipeline_detail:00012,pipeline_detail:12,pipeline_detail: 12,"
+        "pipeline_detail:9223372036854775807"
+    ) == ["pipeline_detail:12", "pipeline_detail:9223372036854775807"]
 
 
 def _jobs_db(*, max_job: int, max_log: int, active: int = 0, result_updated=None) -> MagicMock:
@@ -44,6 +56,18 @@ def test_jobs_token_changes_when_max_log_changes() -> None:
     t2 = channel_token(_jobs_db(max_job=10, max_log=2), "jobs")
     assert t1 != t2
     assert channel_token(_jobs_db(max_job=10, max_log=2), "dashboard") == t2
+
+
+def test_releases_token_refreshes_hevc_sla_without_database_changes() -> None:
+    db = MagicMock()
+    db.scalar.return_value = 0
+    db.execute.return_value.one.return_value = (0, 0, 0, 0, 0)
+    with patch("app.services.ui_events.time.time", return_value=120):
+        first = channel_token(db, "releases")
+    with patch("app.services.ui_events.time.time", return_value=179):
+        assert channel_token(db, "releases") == first
+    with patch("app.services.ui_events.time.time", return_value=180):
+        assert channel_token(db, "releases") != first
 
 
 def test_pipeline_detail_token_missing() -> None:
@@ -144,3 +168,62 @@ def test_sse_stream_sends_connected_immediately() -> None:
     chunks = asyncio.run(_run())
     assert any("retry:" in c for c in chunks)
     assert any("connected" in c for c in chunks)
+
+
+def test_sse_db_poll_runs_off_event_loop_and_closes_before_yield() -> None:
+    request = MagicMock()
+    request.is_disconnected = AsyncMock(return_value=False)
+
+    async def run() -> None:
+        loop_thread = threading.get_ident()
+        threads = []
+        session = MagicMock()
+        closed = False
+
+        def exit_session(*args):
+            nonlocal closed
+            closed = True
+
+        def token(db, channel):
+            nonlocal closed
+            closed = False
+            threads.append(threading.get_ident())
+            return str(len(threads))
+
+        with (
+            patch("app.services.ui_events.SessionLocal") as factory,
+            patch("app.services.ui_events.channel_token", side_effect=token),
+            patch("app.services.ui_events.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            factory.return_value.__enter__.return_value = session
+            factory.return_value.__exit__.side_effect = exit_session
+            stream = sse_event_stream(request, ["jobs"], heartbeat_sec=999)
+            try:
+                assert "retry:" in await anext(stream)
+                assert "connected" in await anext(stream)
+                assert "event: jobs" in await anext(stream)
+                assert closed, "A slow SSE client must not hold a DB session"
+                assert threads and all(t != loop_thread for t in threads)
+            finally:
+                await stream.aclose()
+
+    asyncio.run(run())
+
+
+def test_failed_channel_rolls_back_before_reading_next_channel() -> None:
+    from app.services.ui_events import _read_channel_tokens
+
+    db = MagicMock()
+
+    def token(session, channel):
+        if channel == "jobs":
+            raise RuntimeError("failed statement")
+        session.rollback.assert_called_once_with()
+        return "valid"
+
+    with (
+        patch("app.services.ui_events.SessionLocal") as factory,
+        patch("app.services.ui_events.channel_token", side_effect=token),
+    ):
+        factory.return_value.__enter__.return_value = db
+        assert _read_channel_tokens(["jobs", "releases"]) == {"releases": "valid"}

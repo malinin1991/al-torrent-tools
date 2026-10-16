@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Джобы</h1>
-<div id="jobs-action-result" class="muted" style="margin-bottom:8px;"></div>
+<div id="jobs-action-result" class="muted" role="status" style="margin-bottom:8px;"></div>
 <div
   id="jobs-catalog-live"
   data-ui-sse-channel="jobs"
@@ -13,8 +13,8 @@
 
 <div class="card" style="margin-bottom:12px;margin-top:16px;">
   <form method="get" action="/jobs" class="row">
-    <input class="input" style="max-width:180px;" name="job_type" placeholder="type" value="{{ job_type }}" />
-    <input class="input" style="max-width:180px;" name="status" placeholder="status" value="{{ status }}" />
+    <input class="input" aria-label="Тип джобы" style="max-width:180px;" name="job_type" placeholder="Тип джобы" value="{{ job_type }}" />
+    <input class="input" aria-label="Статус джобы" style="max-width:180px;" name="status" placeholder="Статус" value="{{ status }}" />
     <button class="btn" type="submit">Фильтр</button>
     <span class="muted" id="jobs-poll-hint">история ниже · live · SSE</span>
   </form>

@@ -3,6 +3,8 @@ import logging
 import threading
 import zlib
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import datetime, timedelta
 from app.utils.datetime_fmt import utcnow
 from typing import Any
@@ -45,6 +47,9 @@ _CONCURRENT_UNIQUE_PARAM: dict[str, str] = {
 
 # Чтобы background tasks не собрал GC до завершения.
 _background_tasks: set[asyncio.Task[Any]] = set()
+# Process-owned, bounded by ThreadPoolExecutor's default worker limit. A parent
+# job's private asyncio.run() must not wait for nested jobs when its loop closes.
+_job_executor = ThreadPoolExecutor(thread_name_prefix="altt-job")
 _active_job_ids: set[int] = set()
 _active_lock = threading.Lock()
 
@@ -489,8 +494,14 @@ class JobRunner:
                 except Exception:
                     logger.exception("Фоновый джоб id=%s завершился с ошибкой", job_id)
 
+        # Submit до первого await: закрытие временного loop родительского
+        # джоба не должно потерять вложенные hash jobs, оставив их pending.
+        future = asyncio.get_running_loop().run_in_executor(_job_executor, copy_context().run, _thread_main)
+
         async def _runner() -> None:
-            await asyncio.to_thread(_thread_main)
+            # Отмена wrapper не отменяет ещё ожидающую в executor работу.
+            # Сам джоб останавливается кооперативно через статус в БД.
+            await asyncio.shield(future)
 
         task = asyncio.create_task(_runner(), name=f"job-{job_id}")
         _background_tasks.add(task)

@@ -100,3 +100,44 @@ def test_not_found_requires_all_hosts_to_return_404(monkeypatch):
         with pytest.raises(expected) as exc:
             asyncio.run(client.get_release(1))
         assert type(exc.value) is expected
+
+
+@pytest.mark.parametrize("limit, expected", [(0, 1), (1, 1), (50, 50), (51, 50), (100, 50)])
+def test_catalog_limit_respects_public_api_bounds(monkeypatch, limit, expected):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"data": []})
+
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport, **kw))
+    client = AniLibriaClient("https://public.test/api/v1")
+    asyncio.run(client.catalog_releases(limit=limit))
+    assert requests[0].url.params["limit"] == str(expected)
+
+
+@pytest.mark.parametrize("primary_status", [401, 503, 200])
+def test_torrent_absence_is_not_confirmed_by_fallback_404_alone(monkeypatch, primary_status):
+    def handler(request):
+        if request.url.host == "primary.test":
+            # HTTP 200 with invalid JSON is also an indeterminate result.
+            return httpx.Response(primary_status, content=b"unavailable")
+        return httpx.Response(404)
+
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport, **kw))
+    client = AniLibriaClient("https://primary.test", "https://fallback.test", request_retries=1)
+    with pytest.raises(RuntimeError):
+        asyncio.run(client.torrent_exists(1))
+
+
+def test_torrent_absence_is_confirmed_when_all_hosts_return_404(monkeypatch):
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(404))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport, **kw))
+    client = AniLibriaClient("https://primary.test", "https://fallback.test", request_retries=1)
+    assert asyncio.run(client.get_torrent(1)) is None
+    assert asyncio.run(client.torrent_exists(1)) is False

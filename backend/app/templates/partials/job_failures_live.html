@@ -14,6 +14,7 @@
   <div class="row" style="margin-top:10px;flex-wrap:wrap;">
     {% if selected_job.status not in ['pending','running','stopping'] %}
     <button type="button" class="btn" data-sync-retry-selected>Повторить выбранные</button>
+    <button type="button" class="btn btn-secondary" data-sync-clear-selection>Снять выбор на всех страницах</button>
     <button type="button" class="btn btn-secondary" data-sync-retry-all>Повторить все доступные (до 100)</button>
     {% endif %}
     {% if failure_after_id %}<button class="btn btn-secondary" hx-get="/jobs/{{ selected_job.id }}/failures/live" hx-target="#job-failures-live" hx-swap="innerHTML">К первым ошибкам</button>{% endif %}

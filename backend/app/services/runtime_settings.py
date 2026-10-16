@@ -18,6 +18,7 @@ SECRET_SETTING_KEYS = frozenset(
         "telegram_hevc_bot_token",
     }
 )
+SECRET_SETTING_MASK = "***"
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +133,7 @@ def mask_settings_dict(raw: dict[str, str]) -> dict[str, str]:
     masked: dict[str, str] = {}
     for key, value in raw.items():
         if key in SECRET_SETTING_KEYS:
-            masked[key] = "***" if value else ""
+            masked[key] = SECRET_SETTING_MASK if value else ""
         else:
             masked[key] = value
     return masked

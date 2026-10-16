@@ -87,7 +87,10 @@ async def observe(client, target):
         async with asyncio.timeout(15):
             response = await client.get(target["base_url"].rstrip("/") + "/api/jobs/" + quote(target["external_job_id"], safe=""))
             if response.status_code == 404:
-                return fields, "not_found", "Задание не найдено в Kensetsu"
+                # Исчезновение задания опровергает старую готовность файла.
+                # Иначе следующий connection error снимет not_found и вернёт
+                # ссылку из устаревшего output_available=True без подтверждения.
+                return {"output_available": None, "output_size_bytes": None}, "not_found", "Задание не найдено в Kensetsu"
             response.raise_for_status()
             payload = response.json()
             fields = _parse(payload, target["external_job_id"], target.get("full_path"))

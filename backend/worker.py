@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Awaitable, Callable
 import logging
 import signal
 from datetime import datetime, timezone
@@ -52,10 +53,26 @@ async def _run_by_type(job_type: str) -> None:
         except JobAlreadyRunningError as exc:
             logger.info("Пропуск %s: уже running id=%s", job_type, exc.running_job_id)
             return
-        await job_runner.run_job(db, job.id)
+        job_id = job.id
+    # Обработчики содержат синхронные qB/MediaInfo/DB операции. Как и ручные
+    # запуски, выполняем их в потоке со своей Session, сохраняя scheduler loop
+    # доступным для health, сигналов остановки и остальных расписаний.
+    await job_runner.schedule_job(job_id)
 
 
 async def _poll_master_pipeline() -> None:
+    await _run_poll_tick(_poll_master_pipeline_tick)
+
+
+async def _run_poll_tick(callback: Callable[[], Awaitable[None]]) -> None:
+    """Полный polling tick с собственной Session и loop в рабочем потоке."""
+    def run() -> None:
+        asyncio.run(callback())
+
+    await asyncio.to_thread(run)
+
+
+async def _poll_master_pipeline_tick() -> None:
     """Частый fallback: aged master_added → slave; missing → cancelled."""
     with SessionLocal() as db:
         age_minutes = _setting_int("pipeline_master_min_age_min", settings.pipeline_master_min_age_min)
@@ -96,6 +113,10 @@ async def _poll_master_pipeline() -> None:
 
 
 async def _poll_slave_pipeline() -> None:
+    await _run_poll_tick(_poll_slave_pipeline_tick)
+
+
+async def _poll_slave_pipeline_tick() -> None:
     """Частый fallback: aged slave_added → done; missing → cancelled."""
     with SessionLocal() as db:
         age_minutes = _setting_int("pipeline_master_min_age_min", settings.pipeline_master_min_age_min)
@@ -116,35 +137,17 @@ async def _poll_slave_pipeline() -> None:
 
 
 async def _pipeline_reconcile() -> None:
-    with SessionLocal() as db:
-        try:
-            job = job_runner.create_job(db, "pipeline_reconcile", {})
-        except JobAlreadyRunningError as exc:
-            logger.info("Пропуск pipeline_reconcile: уже running id=%s", exc.running_job_id)
-            return
-        await job_runner.run_job(db, job.id)
+    await _run_by_type("pipeline_reconcile")
 
 
 async def _retry_waiting_master() -> None:
     """Раз в 5 мин: если master ожил — дослать waiting_master (или cancel если нет в API)."""
-    with SessionLocal() as db:
-        try:
-            job = job_runner.create_job(db, "waiting_master_retry", {})
-        except JobAlreadyRunningError as exc:
-            logger.info("Пропуск waiting_master_retry: уже running id=%s", exc.running_job_id)
-            return
-        await job_runner.run_job(db, job.id)
+    await _run_by_type("waiting_master_retry")
 
 
 async def _retry_waiting_slave() -> None:
     """Раз в 5 мин: если slave ожил — проверить API/master и дослать waiting_slave."""
-    with SessionLocal() as db:
-        try:
-            job = job_runner.create_job(db, "waiting_slave_retry", {})
-        except JobAlreadyRunningError as exc:
-            logger.info("Пропуск waiting_slave_retry: уже running id=%s", exc.running_job_id)
-            return
-        await job_runner.run_job(db, job.id)
+    await _run_by_type("waiting_slave_retry")
 
 
 def _setting_int(key: str, default: int) -> int:

@@ -10,6 +10,7 @@ from typing import Iterable
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from app.db.models import (
@@ -72,9 +73,15 @@ def parse_channels(raw: str | None) -> list[str]:
             continue
         if ch.startswith("pipeline_detail:"):
             suffix = ch.split(":", 1)[1].strip()
-            if suffix.isdigit():
-                seen.add(ch)
-                out.append(ch)
+            # IDs are PostgreSQL bigint. isdigit() also accepts characters
+            # such as ², and an unbounded integer fails during token polling.
+            digits = suffix.lstrip("0") or "0"
+            if (suffix.isascii() and suffix.isdecimal() and len(digits) <= 19
+                    and 0 < int(digits) <= 2**63 - 1):
+                normalized = f"pipeline_detail:{int(digits)}"
+                if normalized not in seen:
+                    seen.add(normalized)
+                    out.append(normalized)
     return out
 
 
@@ -153,7 +160,7 @@ def _hevc_workbench_token(db: Session) -> str:
     # Pairing and filesystem probes belong to rendering, never SSE token checks.
     settings_updated = db.scalar(select(func.max(Setting.updated_at)))
     return (f"{_releases_token(db)}|{_jobs_token(db)}|{_encoder_token(db)}|"
-            f"settings:{settings_updated}|sla:{int(time.time() // 60)}")
+            f"settings:{settings_updated}")
 
 
 def _pipeline_list_token(db: Session) -> str:
@@ -237,7 +244,9 @@ def _releases_token(db: Session) -> str:
         f"r:{max_arch}|fe:{max_file_ev}|pe:{max_pipe_ev}|tf:{max_tf_upd}:{max_tf_id}|"
         f"tr:{tracked}|rel:{max_rel_upd}|rm:{max_member}|"
         f"geo:{release_flags[0]}|cr:{release_flags[1]}|hidden:{release_flags[2]}|ab:{release_flags[3]}|bo:{release_flags[4]}|"
-        f"ig:{flag_counts[0]}|ap:{flag_counts[1]}|su:{flag_counts[2]}"
+        f"ig:{flag_counts[0]}|ap:{flag_counts[1]}|su:{flag_counts[2]}|"
+        # Pairing SLA changes with time even when archives/files are unchanged.
+        f"sla:{int(time.time() // 60)}"
     )
 
 
@@ -275,6 +284,21 @@ def _info_token(db: Session) -> str:
             f"hevc-hb:{hevc_heartbeat}|{_telegram_outbox_token(db)}|t:{tick}")
 
 
+def _read_channel_tokens(channels: list[str]) -> dict[str, str]:
+    """Read one snapshot in a worker thread, closing DB before streaming it."""
+    tokens: dict[str, str] = {}
+    with SessionLocal() as db:
+        for channel in channels:
+            try:
+                tokens[channel] = channel_token(db, channel)
+            except Exception:
+                # A failed statement aborts a PostgreSQL transaction. Recover
+                # before reading other channels on this connection.
+                db.rollback()
+                logger.exception("ui_events: token failed for %s", channel)
+    return tokens
+
+
 async def sse_event_stream(
     request: Request,
     channels: Iterable[str],
@@ -300,20 +324,15 @@ async def sse_event_stream(
         if await request.is_disconnected():
             break
         try:
-            with SessionLocal() as db:
-                for ch in channel_list:
-                    try:
-                        token = channel_token(db, ch)
-                    except Exception:
-                        logger.exception("ui_events: token failed for %s", ch)
-                        continue
-                    prev = last[ch]
-                    if prev is None:
-                        last[ch] = token
-                        continue
-                    if token != prev:
-                        last[ch] = token
-                        yield f"event: {ch}\ndata: {ch}\n\n"
+            tokens = await run_in_threadpool(_read_channel_tokens, channel_list)
+            for ch, token in tokens.items():
+                prev = last[ch]
+                if prev is None:
+                    last[ch] = token
+                    continue
+                if token != prev:
+                    last[ch] = token
+                    yield f"event: {ch}\ndata: {ch}\n\n"
         except Exception:
             logger.exception("ui_events: poll loop error")
 

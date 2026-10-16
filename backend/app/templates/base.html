@@ -6,15 +6,25 @@
   <title>AL Torrent Tools</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="/static/vendor/htmx-1.9.12.min.js"></script>
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; margin: 0; background: #121212; color: #eee; }
     header { padding: 12px 20px; background: #1f1f1f; }
-    nav a { color: #9ad1ff; margin-right: 16px; text-decoration: none; }
+    nav { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+    nav a { color: #9ad1ff; text-decoration: none; }
+    nav a[aria-current="page"] { color: #fff; text-decoration: underline; text-underline-offset: 4px; }
+    :focus-visible { outline: 2px solid #9ad1ff; outline-offset: 3px; }
+    .skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px; background: #2c4f76; color: #fff; transform: translateY(-160%); }
+    .skip-link:focus { transform: translateY(0); }
+    #ui-live-status { margin-top: 12px; font-size: 0.85rem; }
+    #ui-action-error { margin-top: 12px; color: #ff8a80; }
     main { padding: 20px; }
     .card { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
     .grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 12px; }
     .grid > .card { min-width: 0; overflow: hidden; }
+    .table-scroll { max-width: 100%; overflow-x: auto; }
+    .table-scroll > .pipeline-list-table { min-width: 1120px; }
     .jobs-live-grid {
       display: grid;
       grid-template-columns: 1fr 3fr;
@@ -24,9 +34,16 @@
     @media (max-width: 900px) {
       .jobs-live-grid { grid-template-columns: 1fr; }
     }
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      .grid { grid-template-columns: minmax(0, 1fr); }
+      .row { flex-wrap: wrap; }
+      form.row > .input { min-width: 0 !important; }
+      .table-scroll > table { min-width: 760px; }
+    }
     .jobs-catalog-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
       gap: 12px;
     }
     .job-catalog-card h3 { color: #9ad1ff; font-size: 1.05rem; }
@@ -608,25 +625,21 @@
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Перейти к содержимому</a>
   <header>
-    <nav>
-      <a href="/">Главная</a>
-      <a href="/info">Информация</a>
-      <a href="/settings">Настройки</a>
-      <a href="/jobs">Джобы</a>
-      <a href="/releases">Релизы</a>
-      <a href="/hevc-workbench">Рабочий список HEVC</a>
-      <a href="/archive">Архив</a>
-      <a href="/pipeline">Пайплайн</a>
-      <a href="/telegram-access">Доступ Telegram</a>
-      <a href="/telegram-outbox">Доставка Telegram</a>
-      <a href="/encoder-history">Отправки в Kensetsu</a>
+    <nav aria-label="Основная навигация">
+      {% set nav_path = request.url.path|string %}
+      {% for href, label in [('/', 'Главная'), ('/info', 'Информация'), ('/settings', 'Настройки'), ('/jobs', 'Джобы'), ('/releases', 'Релизы'), ('/hevc-workbench', 'Рабочий список HEVC'), ('/archive', 'Архив'), ('/pipeline', 'Пайплайн'), ('/telegram-access', 'Доступ Telegram'), ('/telegram-outbox', 'Доставка Telegram'), ('/encoder-history', 'Отправки в Kensetsu')] %}
+      <a href="{{ href }}"{% if nav_path == href or (href != '/' and nav_path.startswith(href ~ '/')) %} aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
       {% if video_kensetsu_ok and video_kensetsu_base_url %}
       <a href="{{ video_kensetsu_base_url }}" target="_blank" rel="noopener">Кодировщик</a>
       {% endif %}
     </nav>
+    <div id="ui-live-status" class="muted" role="status" aria-live="polite" hidden></div>
+    <div id="ui-action-error" role="alert" hidden></div>
   </header>
-  <main>
+  <main id="main-content" tabindex="-1">
     {% block content %}{% endblock %}
   </main>
   <script>
@@ -732,9 +745,10 @@
     if (dialog) return dialog;
     dialog = document.createElement("dialog");
     dialog.id = "encoder-preset-dialog";
+    dialog.setAttribute("aria-labelledby", "encoder-preset-title");
     dialog.innerHTML =
       '<form method="dialog" id="encoder-preset-form">' +
-      "<p style=\"margin:0 0 10px;\">Параметры кодирования</p>" +
+      "<h2 id=\"encoder-preset-title\" style=\"margin:0 0 10px;font-size:1.1rem;\">Параметры кодирования</h2>" +
       '<label class="field">Видео' +
       '<select class="input" name="video_id" id="encoder-video-select" required></select>' +
       "</label>" +
@@ -827,6 +841,8 @@
     const onAudioChange = () => syncEncoderDownmixLock(audioSelect, downmixSelect);
     audioSelect.addEventListener("change", onAudioChange);
 
+    // Escape keeps the previous returnValue on a reused dialog.
+    dialog.returnValue = "";
     dialog.showModal();
     return new Promise((resolve) => {
       const onClose = () => {
@@ -1230,6 +1246,7 @@
     if (dialog) return dialog;
     dialog = document.createElement("dialog");
     dialog.id = "mediainfo-dialog";
+    dialog.setAttribute("aria-labelledby", "mi-modal-title");
     dialog.innerHTML =
       '<div class="mi-header">' +
         '<div>' +
@@ -1931,11 +1948,77 @@
     }
     refreshEncoderReceipts();
   });
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    const target = event.detail.target;
+    const sel = target && target.id ? `#${target.id}` : null;
+    if (event.detail.shouldSwap && sel && _uiSsePreserveByTarget.has(sel)) {
+      // Capture immediately before replacement: the user may have scrolled,
+      // selected files or changed job options while the request was in flight.
+      _uiSsePreserveByTarget.set(sel, captureUiSsePreserve(target));
+    }
+  });
+
+  function setUiLiveStatus(message) {
+    const status = document.getElementById("ui-live-status");
+    if (!status) return;
+    status.hidden = false;
+    if (status.textContent !== message) status.textContent = message;
+  }
+
+  function showUiRequestError(event) {
+    const target = event.detail && event.detail.target;
+    if (target && target.id && _uiSsePreserveByTarget.has(`#${target.id}`)) {
+      // HTMX 1.x resolves ajax() even after HTTP errors: record the event too.
+      _uiSseFailed.add(`#${target.id}`);
+      return;
+    }
+    const status = document.getElementById("ui-action-error");
+    if (!status) return;
+    const code = event.detail && event.detail.xhr && event.detail.xhr.status;
+    status.textContent = code
+      ? `Действие не выполнено (HTTP ${code}). Проверьте введённые данные и повторите попытку.`
+      : "Нет связи с сервером. Действие не подтверждено; проверьте его состояние перед повтором.";
+    status.hidden = false;
+  }
+  ["htmx:responseError", "htmx:sendError", "htmx:timeout"].forEach((name) => {
+    document.body.addEventListener(name, showUiRequestError);
+  });
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.requestConfig && event.detail.requestConfig.verb !== "get") {
+      const status = document.getElementById("ui-action-error");
+      if (status) { status.textContent = ""; status.hidden = true; }
+    }
+  });
 
   let _uiSseSource = null;
   let _uiSseChannels = [];
   let _uiSseRefreshing = new Set();
+  const _uiSsePending = new Map();
+  const _uiSseFailed = new Set();
   const _uiSsePreserveByTarget = new Map();
+
+  function captureUiFocus(scope) {
+    const active = document.activeElement;
+    if (!active || !scope.contains(active)) return null;
+    const attrs = ["id", "name", "form", "type", "href", "hx-post", "data-file-id", "data-failure-id", "data-selection-key", "data-outbox-retry", "title", "aria-label"];
+    const selector = active.tagName.toLowerCase() + attrs.filter((name) => active.hasAttribute(name))
+      .map((name) => `[${name}="${cssAttrQuote(active.getAttribute(name))}"]`).join("");
+    const keyed = active.closest("[data-sse-key]");
+    return {selector, key: keyed && keyed.getAttribute("data-sse-key"), text: active.textContent,
+      start: active.selectionStart, end: active.selectionEnd};
+  }
+
+  function restoreUiFocus(scope, state) {
+    if (!state) return;
+    const context = state.key ? scope.querySelector(`[data-sse-key="${cssAttrQuote(state.key)}"]`) : scope;
+    if (!context) return;
+    const active = [...context.querySelectorAll(state.selector)].find((el) => !el.disabled && el.textContent === state.text);
+    if (!active) return;
+    active.focus({preventScroll: true});
+    if (typeof state.start === "number" && typeof active.setSelectionRange === "function") {
+      active.setSelectionRange(state.start, state.end);
+    }
+  }
 
   function captureUiSsePreserve(root) {
     const scope = root || document;
@@ -1963,6 +2046,12 @@
       openKeys,
       lazyBodies,
       encodeChecked,
+      focus: captureUiFocus(scope),
+      jobOptions: [...scope.querySelectorAll("input[name][form]:not([type=hidden])")]
+        .filter((el) => !el.disabled)
+        .map((el) => ({name: el.name, form: el.getAttribute("form"), value: el.value, checked: el.checked})),
+      tableScrolls: [...scope.querySelectorAll(".table-scroll[aria-label]")]
+        .map((el) => ({label: el.getAttribute("aria-label"), left: el.scrollLeft})),
     };
   }
 
@@ -2024,16 +2113,32 @@
         syncTorrentEncodeSelectActions(el);
       }
     });
+    (state.jobOptions || []).forEach((saved) => {
+      const input = scope.querySelector(`input[name="${cssAttrQuote(saved.name)}"][form="${cssAttrQuote(saved.form)}"]`);
+      // An active job disables its options on the server; that state wins.
+      if (!input || input.disabled) return;
+      input.value = saved.value;
+      input.checked = saved.checked;
+    });
+    (state.tableScrolls || []).forEach((saved) => {
+      const table = scope.querySelector(`.table-scroll[aria-label="${cssAttrQuote(saved.label)}"]`);
+      if (table) table.scrollLeft = saved.left;
+    });
+    restoreUiFocus(scope, state.focus);
     window.scrollTo(0, state.scrollY || 0);
   }
 
   function cssAttrQuote(value) {
-    return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+      .replace(/[\u0000-\u001f\u007f]/g, (char) => `\\${char.charCodeAt(0).toString(16)} `);
   }
 
   function refreshUiSseTargets(channel) {
     if (document.visibilityState !== "visible") return;
-    const scrollY = window.scrollY;
+    if (!window.htmx) {
+      setUiLiveStatus("Автообновление недоступно. Обновите страницу, чтобы получить актуальные данные.");
+      return;
+    }
     const activeJobStatuses = new Set(["pending", "running", "stopping"]);
     document.querySelectorAll(`[data-ui-sse-channel="${cssAttrQuote(channel)}"]`).forEach((el) => {
       if (el.getAttribute("data-ui-sse-active-only") === "1") {
@@ -2044,18 +2149,33 @@
       const url = el.getAttribute("data-ui-sse-url");
       const targetSel = el.getAttribute("data-ui-sse-target") || (el.id ? `#${el.id}` : null);
       if (!url || !targetSel) return;
-      const key = `${channel}|${targetSel}|${url}`;
-      if (_uiSseRefreshing.has(key)) return;
+      const key = targetSel;
+      if (_uiSseRefreshing.has(key)) { _uiSsePending.set(key, channel); return; }
       _uiSseRefreshing.add(key);
-      const preserved = captureUiSsePreserve(el);
-      preserved.scrollY = scrollY;
-      _uiSsePreserveByTarget.set(targetSel, preserved);
-      htmx.ajax("GET", url, {
-        target: targetSel,
-        swap: "innerHTML settle:0 show:none",
-      });
-      // Не чаще ~3 с на один target (согласовано с ui_events._POLL_INTERVAL_SEC).
-      setTimeout(() => _uiSseRefreshing.delete(key), 3000);
+      _uiSsePreserveByTarget.set(targetSel, null);
+      Promise.resolve().then(() => htmx.ajax("GET", url, {
+          target: targetSel,
+          swap: "innerHTML settle:0 show:none",
+        }))
+        .then(() => {
+          if (_uiSseFailed.delete(key)) throw new Error("live response failed");
+          if (_uiSseSource && _uiSseSource.readyState === 1) setUiLiveStatus("Автообновление подключено");
+        })
+        .catch(() => {
+          _uiSseFailed.delete(key);
+          setUiLiveStatus("Данные не обновились. Повторяем подключение; на странице могут быть устаревшие данные.");
+          _uiSsePending.set(key, channel);
+        })
+        .finally(() => {
+          _uiSsePreserveByTarget.delete(targetSel);
+          // Keep one request per target in flight, then allow the normal 3 s cadence.
+          setTimeout(() => {
+            _uiSseRefreshing.delete(key);
+            const pendingChannel = _uiSsePending.get(key);
+            _uiSsePending.delete(key);
+            if (pendingChannel) refreshUiSseTargets(pendingChannel);
+          }, 3000);
+        });
     });
   }
 
@@ -2066,6 +2186,7 @@
     if (document.querySelector("[data-encoder-enabled]") && !channels.includes("encoder")) channels.push("encoder");
     if (!channels.length) return;
     _uiSseChannels = channels;
+    setUiLiveStatus("Автообновление подключается…");
     const url = `/ui/events?channels=${encodeURIComponent(channels.join(","))}`;
     if (_uiSseSource) {
       _uiSseSource.close();
@@ -2073,6 +2194,13 @@
     }
     const es = new EventSource(url);
     _uiSseSource = es;
+    let opened = false;
+    es.onopen = () => {
+      setUiLiveStatus("Автообновление подключено");
+      // Reconnect also refreshes data whose earlier partial request failed.
+      if (opened) channels.forEach((ch) => refreshUiSseTargets(ch));
+      opened = true;
+    };
     channels.forEach((ch) => {
       es.addEventListener(ch, () => {
         refreshUiSseTargets(ch);
@@ -2080,7 +2208,7 @@
       });
     });
     es.onerror = () => {
-      /* браузер сам переподключится */
+      setUiLiveStatus("Нет связи для автообновления. Браузер переподключается; данные могут быть устаревшими.");
     };
   }
 

@@ -24,8 +24,8 @@
   }
   async function jsonPost(url, payload) {
     const response = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-    const body = await response.json();
-    if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Запрос отклонён. Проверьте выбранные данные.');
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `Запрос отклонён (HTTP ${response.status}). Проверьте выбранные данные.`);
     return body;
   }
   document.addEventListener('change', event => {
@@ -33,13 +33,25 @@
     const panel = syncPanel();
     if (!panel) return;
     const ids = selection(panel), id = Number(event.target.dataset.failureId);
-    if (event.target.checked) ids.add(id); else ids.delete(id);
+    if (event.target.checked && !ids.has(id) && ids.size >= 100) {
+      event.target.checked = false;
+      panel.querySelector('[data-sync-retry-result]').textContent = 'Можно выбрать до 100 ошибок. Снимите часть выбора или запустите текущий повтор.';
+    } else if (event.target.checked) ids.add(id); else ids.delete(id);
     restoreSelection();
   });
   document.body.addEventListener('htmx:afterSwap', restoreSelection);
   // jobs.html rewrites live URLs after settle; preserve the failure cursor then too.
   document.body.addEventListener('htmx:afterSettle', restoreSelection);
   document.addEventListener('click', async event => {
+    const clear = event.target.closest('[data-sync-clear-selection]');
+    if (clear) {
+      const panel = syncPanel();
+      if (!panel) return;
+      selection(panel).clear();
+      panel.querySelector('[data-sync-retry-result]').textContent = 'Выбор снят на всех страницах ошибок этого запуска.';
+      restoreSelection();
+      return;
+    }
     const retry = event.target.closest('[data-sync-retry-selected],[data-sync-retry-all]');
     if (retry && !retry.disabled) {
       const panel = syncPanel(), result = panel.querySelector('[data-sync-retry-result]');

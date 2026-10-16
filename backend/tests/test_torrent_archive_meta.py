@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from app.services.torrent_archive import TorrentArchiveService
 
 
@@ -24,6 +26,15 @@ def test_extract_torrent_type_bdrip() -> None:
         "codec": {"label": "AVC", "value": "x264/AVC"},
     }
     assert TorrentArchiveService.extract_torrent_type(payload) == "BDRip 1080p AVC"
+
+
+@pytest.mark.parametrize("label,expected", [
+    ("Show 1080p x265", "x265"), ("Show 1080p X265", "x265"),
+    ("Show 1080p x264", "x264"), ("Show 1080p X264", "x264"),
+    ("Show hevc", "HEVC"), ("Show avc", "AVC"),
+])
+def test_extract_torrent_type_label_codec_is_case_insensitive(label, expected) -> None:
+    assert TorrentArchiveService.extract_torrent_type({"label": label}) == expected
 
 
 def test_extract_torrent_description() -> None:

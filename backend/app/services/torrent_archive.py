@@ -253,7 +253,7 @@ class TorrentArchiveService:
                 if useful:
                     return " ".join(useful[:3])
             for token in ("AV1", "HEVC", "AVC", "x265", "x264"):
-                if token in label.upper():
+                if token.upper() in label.upper():
                     return token
         return None
 

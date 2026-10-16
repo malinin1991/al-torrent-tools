@@ -81,6 +81,7 @@
       {% include "partials/release_abandoned_toggle.html" %}
       {% endwith %}
     </div>
+    <div class="table-scroll" role="region" aria-label="Торренты релиза {{ group.release_id }}" tabindex="0">
     <table>
       <thead>
         <tr>
@@ -145,10 +146,12 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
 
     {% if group.archived_torrents %}
     <details style="margin-top:12px;" data-sse-key="release-arch-{{ group.release_id }}">
       <summary class="muted">Архивные торренты ({{ group.archived_torrents|length }})</summary>
+      <div class="table-scroll" role="region" aria-label="Архивные торренты релиза {{ group.release_id }}" tabindex="0">
       <table style="margin-top:8px;">
         <thead>
           <tr>
@@ -206,6 +209,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </details>
     {% endif %}
   </div>
