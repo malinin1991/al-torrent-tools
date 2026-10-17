@@ -7,7 +7,9 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.ui_events import channel_token, parse_channels, sse_event_stream
+import pytest
+
+from app.services.ui_events import UiEventBroadcaster, channel_token, parse_channels, sse_event_stream
 
 
 def test_parse_channels_filters_and_dedupes() -> None:
@@ -95,8 +97,7 @@ def test_pipeline_detail_token_includes_status() -> None:
 
 def test_sse_stream_emits_on_token_change() -> None:
     request = MagicMock()
-    # цикл: init token → same → change (emit) → disconnect
-    request.is_disconnected = AsyncMock(side_effect=[False, False, False, True])
+    request.is_disconnected = AsyncMock(side_effect=[False, True])
 
     tokens = {"jobs": ["a", "a", "b", "b"]}
 
@@ -108,18 +109,20 @@ def test_sse_stream_emits_on_token_change() -> None:
         with (
             patch("app.services.ui_events.SessionLocal") as session_cls,
             patch("app.services.ui_events.channel_token", side_effect=_token),
-            patch("app.services.ui_events.asyncio.sleep", new_callable=AsyncMock),
         ):
             session_cls.return_value.__enter__.return_value = MagicMock()
             session_cls.return_value.__exit__.return_value = None
+            broadcaster = UiEventBroadcaster(poll_interval=0.001)
             chunks: list[str] = []
-            async for chunk in sse_event_stream(
-                request,
-                ["jobs"],
-                poll_interval=0.01,
-                heartbeat_sec=999,
-            ):
-                chunks.append(chunk)
+            try:
+                async with asyncio.timeout(1):
+                    async for chunk in sse_event_stream(
+                        request, ["jobs"], broadcaster=broadcaster, heartbeat_sec=999,
+                    ):
+                        chunks.append(chunk)
+                assert not broadcaster._subscribers
+            finally:
+                await broadcaster.close()
             return "".join(chunks)
 
     joined = asyncio.run(_run())
@@ -132,10 +135,15 @@ def test_sse_empty_channels_comment() -> None:
     request.is_disconnected = AsyncMock(return_value=True)
 
     async def _run() -> str:
-        parts = []
-        async for chunk in sse_event_stream(request, []):
-            parts.append(chunk)
-        return "".join(parts)
+        broadcaster = UiEventBroadcaster()
+        try:
+            parts = []
+            async for chunk in sse_event_stream(request, [], broadcaster=broadcaster):
+                parts.append(chunk)
+            assert broadcaster._task is None
+            return "".join(parts)
+        finally:
+            await broadcaster.close()
 
     assert "no-channels" in asyncio.run(_run())
 
@@ -146,24 +154,17 @@ def test_sse_stream_sends_connected_immediately() -> None:
     request.is_disconnected = AsyncMock(return_value=True)
 
     async def _run() -> list[str]:
-        with (
-            patch("app.services.ui_events.SessionLocal") as session_cls,
-            patch("app.services.ui_events.channel_token", return_value="t0"),
-            patch("app.services.ui_events.asyncio.sleep", new_callable=AsyncMock),
-        ):
-            session_cls.return_value.__enter__.return_value = MagicMock()
-            session_cls.return_value.__exit__.return_value = None
-            chunks: list[str] = []
-            async for chunk in sse_event_stream(
-                request,
-                ["info"],
-                poll_interval=0.01,
-                heartbeat_sec=999,
-            ):
-                chunks.append(chunk)
-                if len(chunks) >= 2:
-                    break
+        broadcaster = UiEventBroadcaster()
+        stream = sse_event_stream(request, ["info"], broadcaster=broadcaster)
+        try:
+            with patch("app.services.ui_events._read_channel_tokens") as read:
+                chunks = [await anext(stream), await anext(stream)]
+                read.assert_not_called()
+                assert not broadcaster._subscribers
             return chunks
+        finally:
+            await stream.aclose()
+            await broadcaster.close()
 
     chunks = asyncio.run(_run())
     assert any("retry:" in c for c in chunks)
@@ -193,19 +194,20 @@ def test_sse_db_poll_runs_off_event_loop_and_closes_before_yield() -> None:
         with (
             patch("app.services.ui_events.SessionLocal") as factory,
             patch("app.services.ui_events.channel_token", side_effect=token),
-            patch("app.services.ui_events.asyncio.sleep", new_callable=AsyncMock),
         ):
             factory.return_value.__enter__.return_value = session
             factory.return_value.__exit__.side_effect = exit_session
-            stream = sse_event_stream(request, ["jobs"], heartbeat_sec=999)
+            broadcaster = UiEventBroadcaster(poll_interval=0.001)
+            stream = sse_event_stream(request, ["jobs"], broadcaster=broadcaster, heartbeat_sec=999)
             try:
                 assert "retry:" in await anext(stream)
                 assert "connected" in await anext(stream)
-                assert "event: jobs" in await anext(stream)
+                assert "event: jobs" in await asyncio.wait_for(anext(stream), timeout=1)
                 assert closed, "A slow SSE client must not hold a DB session"
                 assert threads and all(t != loop_thread for t in threads)
             finally:
                 await stream.aclose()
+                await broadcaster.close()
 
     asyncio.run(run())
 
@@ -227,3 +229,119 @@ def test_failed_channel_rolls_back_before_reading_next_channel() -> None:
     ):
         factory.return_value.__enter__.return_value = db
         assert _read_channel_tokens(["jobs", "releases"]) == {"releases": "valid"}
+
+
+def test_stream_cancellation_unsubscribes_without_cancelling_shared_read() -> None:
+    async def run() -> None:
+        reading = asyncio.Event()
+        release = asyncio.Event()
+
+        async def read(*args):
+            reading.set()
+            await release.wait()
+            return {"jobs": "baseline"}
+
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+        broadcaster = UiEventBroadcaster()
+        stream = sse_event_stream(request, ["jobs"], broadcaster=broadcaster)
+        pending = None
+        try:
+            with patch("app.services.ui_events.run_in_threadpool", side_effect=read):
+                await anext(stream)
+                await anext(stream)
+                pending = asyncio.create_task(anext(stream))
+                await asyncio.wait_for(reading.wait(), 1)
+                poller = broadcaster._task
+                pending.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
+                assert not broadcaster._subscribers
+                assert not poller.done()
+                release.set()
+                await broadcaster.close()
+        finally:
+            release.set()
+            if pending is not None and not pending.done():
+                pending.cancel()
+            await stream.aclose()
+            await broadcaster.close()
+
+    asyncio.run(run())
+
+
+def test_stream_heartbeat_during_slow_read_and_shutdown() -> None:
+    async def run() -> None:
+        release = asyncio.Event()
+
+        async def read(*args):
+            await release.wait()
+            return {"jobs": "baseline"}
+
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+        broadcaster = UiEventBroadcaster()
+        stream = sse_event_stream(request, ["jobs"], broadcaster=broadcaster, heartbeat_sec=0.001)
+        try:
+            with patch("app.services.ui_events.run_in_threadpool", side_effect=read):
+                await anext(stream)
+                await anext(stream)
+                assert await asyncio.wait_for(anext(stream), 1) == ": ping\n\n"
+                release.set()
+                await broadcaster.close()
+                with pytest.raises(StopAsyncIteration):
+                    await anext(stream)
+                assert not broadcaster._subscribers
+        finally:
+            release.set()
+            await stream.aclose()
+            await broadcaster.close()
+
+    asyncio.run(run())
+
+
+def test_ui_events_route_uses_application_broadcaster() -> None:
+    from app.main import ui_events
+
+    async def run() -> None:
+        broadcaster = UiEventBroadcaster()
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ui_event_broadcaster=broadcaster)))
+        try:
+            with patch("app.main.sse_event_stream") as stream:
+                response = await ui_events(request, channels="jobs,jobs,pipeline_detail:12")
+                stream.assert_called_once_with(request, ["jobs", "pipeline_detail:12"], broadcaster=broadcaster)
+                assert response.media_type == "text/event-stream"
+                assert response.headers["X-Accel-Buffering"] == "no"
+        finally:
+            await broadcaster.close()
+
+    asyncio.run(run())
+
+
+def test_lifespan_closes_broadcaster_on_error_and_recreates_on_restart(tmp_path) -> None:
+    from app import main
+
+    application = SimpleNamespace(state=SimpleNamespace())
+    broadcasters = []
+
+    async def run() -> None:
+        with (
+            patch("app.logging_filters.setup_redacted_logging"),
+            patch.object(main, "settings", SimpleNamespace(app_env="dev", secret_key="test")),
+            patch.object(main, "resolve_torrent_storage_root", return_value=tmp_path),
+            patch.object(main, "SessionLocal"),
+            patch.object(main, "reclaim_orphan_jobs", return_value=0),
+            patch.object(main, "reclaim_stale_jobs", return_value=0),
+            patch.object(main, "shutdown_cancel_active_jobs", return_value=0) as shutdown,
+        ):
+            with pytest.raises(RuntimeError, match="lifespan body failed"):
+                async with main.lifespan(application):
+                    broadcaster = application.state.ui_event_broadcaster
+                    broadcasters.append(broadcaster)
+                    assert not broadcaster._closed
+                    raise RuntimeError("lifespan body failed")
+            assert broadcaster._closed
+            shutdown.assert_called_once()
+
+    # Reuse the application in a fresh loop, as consecutive TestClient lifespans do.
+    asyncio.run(run())
+    asyncio.run(run())
+    assert broadcasters[0] is not broadcasters[1]

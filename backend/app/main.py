@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select, text
@@ -77,7 +77,7 @@ from app.services.telegram_access import (
     list_access_rows,
     set_access_status,
 )
-from app.services.ui_events import parse_channels, sse_event_stream
+from app.services.ui_events import UiEventBroadcaster, UiEventResponse, parse_channels, sse_event_stream
 from app.services.telegram_notify import (
     SOURCE_UI,
     enqueue_tracking_toggle_notification,
@@ -124,10 +124,15 @@ async def lifespan(_app: FastAPI):
         )
         if stale:
             logger.warning("При старте api помечены cancelled зависшие джобы: %s", stale)
-    yield
-    cancelled = shutdown_cancel_active_jobs(reason="API остановлен — джоб помечен как cancelled")
-    if cancelled:
-        logger.warning("При остановке api помечены cancelled активные джобы: %s", cancelled)
+    broadcaster = UiEventBroadcaster()
+    _app.state.ui_event_broadcaster = broadcaster
+    try:
+        yield
+    finally:
+        await broadcaster.close()
+        cancelled = shutdown_cancel_active_jobs(reason="API остановлен — джоб помечен как cancelled")
+        if cancelled:
+            logger.warning("При остановке api помечены cancelled активные джобы: %s", cancelled)
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -252,17 +257,11 @@ async def health(db: Session = Depends(get_db)) -> dict:
 async def ui_events(
     request: Request,
     channels: str = Query(default=""),
-) -> StreamingResponse:
+) -> UiEventResponse:
     """SSE: именованные события каналов при смене change-token (без HTML в payload)."""
     channel_list = parse_channels(channels)
-    return StreamingResponse(
-        sse_event_stream(request, channel_list),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+    return UiEventResponse(
+        sse_event_stream(request, channel_list, broadcaster=request.app.state.ui_event_broadcaster),
     )
 
 

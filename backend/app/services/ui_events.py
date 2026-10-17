@@ -6,12 +6,16 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Iterable
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
+from starlette.responses import StreamingResponse
+from starlette.types import Send
 
 from app.db.models import (
     FileChangeEvent,
@@ -299,14 +303,153 @@ def _read_channel_tokens(channels: list[str]) -> dict[str, str]:
     return tokens
 
 
+@dataclass(eq=False)
+class _Subscription:
+    channels: tuple[str, ...]
+    pending: set[str] = field(default_factory=set)
+    wake: asyncio.Event = field(default_factory=asyncio.Event)
+    closed: bool = False
+
+    async def wait(self, *, timeout: float) -> list[str]:
+        """Coalesce invalidations: memory is bounded by subscribed channels."""
+        if not self.wake.is_set():
+            try:
+                await asyncio.wait_for(self.wake.wait(), timeout=timeout)
+            except TimeoutError:
+                return []
+        # No await between taking pending changes and clearing the wake-up.
+        self.wake.clear()
+        changed = [channel for channel in self.channels if channel in self.pending]
+        self.pending.clear()
+        return changed
+
+
+@dataclass(eq=False)
+class _ChannelState:
+    subscribers: set[_Subscription] = field(default_factory=set)
+    token: str | None = None
+
+
+class UiEventBroadcaster:
+    """One DB poller per API lifespan/event loop, only for subscribed channels.
+
+    Subscription state belongs to the API loop; only token reads run in a
+    thread. A slow stream never blocks polling or retains a database session.
+    """
+
+    def __init__(self, *, poll_interval: float = _POLL_INTERVAL_SEC) -> None:
+        self._poll_interval = poll_interval
+        self._channels: dict[str, _ChannelState] = {}
+        self._subscribers: set[_Subscription] = set()
+        self._wake = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+        self._closed = False
+
+    @asynccontextmanager
+    async def subscribe(self, channels: Iterable[str]) -> AsyncIterator[_Subscription]:
+        if self._closed:
+            raise RuntimeError("UI event broadcaster is closed")
+        subscriber = _Subscription(tuple(dict.fromkeys(channels)))
+        self._subscribers.add(subscriber)
+        for channel in subscriber.channels:
+            state = self._channels.setdefault(channel, _ChannelState())
+            state.subscribers.add(subscriber)
+        if self._channels and self._task is None:
+            self._task = asyncio.create_task(self._poll(), name="ui-events-poll")
+        try:
+            yield subscriber
+        finally:
+            self._subscribers.discard(subscriber)
+            subscriber.closed = True
+            subscriber.wake.set()
+            for channel in subscriber.channels:
+                state = self._channels.get(channel)
+                if state is not None:
+                    state.subscribers.discard(subscriber)
+                    if not state.subscribers:
+                        del self._channels[channel]
+            if not self._channels:
+                # Do not cancel an in-flight threadpool read: a new subscriber
+                # must reuse this task until its SQL work has actually finished.
+                self._wake.set()
+
+    async def _poll(self) -> None:
+        try:
+            while self._channels and not self._closed:
+                self._wake.clear()
+                snapshot = self._channels.copy()
+                try:
+                    tokens = await run_in_threadpool(_read_channel_tokens, list(snapshot))
+                    for channel, token in tokens.items():
+                        state = snapshot[channel]
+                        # A channel can disappear and be subscribed again while
+                        # SQL runs. Its old baseline belongs to the old cohort.
+                        if self._channels.get(channel) is not state:
+                            continue
+                        previous = state.token
+                        state.token = token
+                        if previous is not None and token != previous:
+                            for subscriber in state.subscribers:
+                                subscriber.pending.add(channel)
+                                subscriber.wake.set()
+                except Exception:
+                    # Preserve baselines across transient DB/session failures.
+                    logger.exception("ui_events: poll loop error")
+                if not self._channels or self._closed:
+                    break
+                try:
+                    await asyncio.wait_for(self._wake.wait(), timeout=self._poll_interval)
+                except TimeoutError:
+                    pass
+        finally:
+            self._task = None
+
+    async def close(self) -> None:
+        """Wake streams and drain the only in-flight DB read on API shutdown."""
+        self._closed = True
+        for subscriber in self._subscribers:
+            subscriber.closed = True
+            subscriber.wake.set()
+        self._subscribers.clear()
+        self._channels.clear()
+        self._wake.set()
+        if self._task is not None:
+            await asyncio.shield(self._task)
+
+
+class UiEventResponse(StreamingResponse):
+    """Release subscriptions even if sending a yielded SSE chunk fails."""
+
+    def __init__(self, content: AsyncIterator[str]) -> None:
+        super().__init__(
+            content,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def stream_response(self, send: Send) -> None:
+        try:
+            await super().stream_response(send)
+        finally:
+            # StreamingResponse can be interrupted in send(), while the
+            # generator is suspended at yield and cannot run its own finally.
+            close = getattr(self.body_iterator, "aclose", None)
+            if close is not None:
+                await close()
+
+
 async def sse_event_stream(
     request: Request,
     channels: Iterable[str],
     *,
-    poll_interval: float = _POLL_INTERVAL_SEC,
+    broadcaster: UiEventBroadcaster,
     heartbeat_sec: float = _HEARTBEAT_SEC,
 ) -> AsyncIterator[str]:
-    """Генератор SSE: event=<channel> при смене token; heartbeat comment."""
+    """Stream shared channel invalidations, with a per-connection heartbeat."""
     channel_list = list(channels)
     if not channel_list:
         yield ": no-channels\n\n"
@@ -317,28 +460,17 @@ async def sse_event_stream(
     yield "retry: 3000\n"
     yield ": connected\n\n"
 
-    last: dict[str, str | None] = {ch: None for ch in channel_list}
     last_hb = time.monotonic()
-
-    while True:
-        if await request.is_disconnected():
-            break
-        try:
-            tokens = await run_in_threadpool(_read_channel_tokens, channel_list)
-            for ch, token in tokens.items():
-                prev = last[ch]
-                if prev is None:
-                    last[ch] = token
-                    continue
-                if token != prev:
-                    last[ch] = token
-                    yield f"event: {ch}\ndata: {ch}\n\n"
-        except Exception:
-            logger.exception("ui_events: poll loop error")
-
-        now = time.monotonic()
-        if now - last_hb >= heartbeat_sec:
-            last_hb = now
-            yield ": ping\n\n"
-
-        await asyncio.sleep(poll_interval)
+    async with broadcaster.subscribe(channel_list) as subscriber:
+        while not subscriber.closed:
+            if await request.is_disconnected():
+                break
+            changed = await subscriber.wait(timeout=min(_POLL_INTERVAL_SEC, heartbeat_sec))
+            if subscriber.closed:
+                break
+            for channel in changed:
+                yield f"event: {channel}\ndata: {channel}\n\n"
+            now = time.monotonic()
+            if now - last_hb >= heartbeat_sec:
+                last_hb = now
+                yield ": ping\n\n"
