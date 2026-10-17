@@ -1,0 +1,68 @@
+{
+  "ok": true,
+  "db": "altt_release_amd64",
+  "revision": "0027_encoder_job_tracking",
+  "seed_now": "2026-10-17T16:32:00.139685Z",
+  "anchor_at": "2026-10-15T14:32:00.139685Z",
+  "counts": {
+    "all": 1,
+    "ready": 1,
+    "overdue": 1,
+    "unavailable": 0,
+    "unknown": 0
+  },
+  "row": {
+    "file_id": 3,
+    "archive_id": 3,
+    "release_id": 901,
+    "torrent_id": 800,
+    "info_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "relative_path": "current/ep-09.mkv",
+    "full_path": "/bench/media/current/ep-09.mkv",
+    "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:current/ep-09.mkv",
+    "title": "Fixture <historical & AVC>",
+    "alias": "fixture-901",
+    "archive_title": "Fixture",
+    "source": "site",
+    "size_label": "24 B",
+    "sticky_status": "changed",
+    "hevc_status": "overdue",
+    "hevc_label": "HEVC отстаёт",
+    "age_hours": 50.0,
+    "overdue_hours": 26.0,
+    "age_from_api": true,
+    "anchor_at": "2026-10-15T14:32:00.139685Z",
+    "pair_archive_id": 2,
+    "episodes": "1-9",
+    "torrent_type": "BDRip 1080p AVC",
+    "receipt": null,
+    "db_reasons": [],
+    "reasons": [],
+    "db_ready": true,
+    "preselectable": true,
+    "selectable": true,
+    "snapshot_at": "2026-10-17T16:32:00.139685Z",
+    "sort_anchor": "2026-10-15 14:32:00.139685",
+    "fs_checked": true,
+    "fs_available": true,
+    "availability_changed": false,
+    "pipeline": [
+      null,
+      null,
+      null
+    ],
+    "admin_url": null,
+    "release_url": "https://aniliberty.top/anime/releases/release/fixture-901/torrents"
+  },
+  "archives": 3,
+  "files": 3,
+  "historical_metadata_preserved": true,
+  "read_only_context": true,
+  "one_file_select": [
+    {
+      "sql": "SELECT CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.id END AS id, torrent_files.info_hash, torrent_files.relative_path, CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.full_path END AS full_path, CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.size END AS size, CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.selected END AS selected, CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.ui_status END AS ui_status, CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.is_checking END AS is_checking, CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.media_present END AS media_present, CASE WHEN (torrent_files.info_hash = ANY (%(workbench_active_hashes)s::VARCHAR[])) THEN torrent_files.updated_at END AS updated_at \nFROM torrent_files",
+      "parameters": "{'workbench_active_hashes': ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']}"
+    }
+  ],
+  "sql_reads": 7
+}

@@ -1,0 +1,2340 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AL Torrent Tools</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="shortcut icon" href="/favicon.ico" />
+  <script src="/static/vendor/htmx-1.9.12.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #121212; color: #eee; }
+    header { padding: 12px 20px; background: #1f1f1f; }
+    nav { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+    nav a { color: #9ad1ff; text-decoration: none; }
+    nav a[aria-current="page"] { color: #fff; text-decoration: underline; text-underline-offset: 4px; }
+    :focus-visible { outline: 2px solid #9ad1ff; outline-offset: 3px; }
+    .skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px; background: #2c4f76; color: #fff; transform: translateY(-160%); }
+    .skip-link:focus { transform: translateY(0); }
+    #ui-live-status { margin-top: 12px; font-size: 0.85rem; }
+    #ui-action-error { margin-top: 12px; color: #ff8a80; }
+    main { padding: 20px; }
+    .card { background: #1b1b1b; border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 12px; }
+    .grid > .card { min-width: 0; overflow: hidden; }
+    .table-scroll { max-width: 100%; overflow-x: auto; }
+    .table-scroll > .pipeline-list-table { min-width: 1120px; }
+    .jobs-live-grid {
+      display: grid;
+      grid-template-columns: 1fr 3fr;
+      gap: 12px;
+    }
+    .jobs-live-grid > .card { min-width: 0; overflow: hidden; }
+    @media (max-width: 900px) {
+      .jobs-live-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 640px) {
+      main { padding: 12px; }
+      .grid { grid-template-columns: minmax(0, 1fr); }
+      .row { flex-wrap: wrap; }
+      form.row > .input { min-width: 0 !important; }
+      .table-scroll > table { min-width: 760px; }
+    }
+    .jobs-catalog-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+      gap: 12px;
+    }
+    .job-catalog-card h3 { color: #9ad1ff; font-size: 1.05rem; }
+    .job-card-meta { margin: 0 0 8px; font-size: 0.9rem; }
+    .job-meta-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 0;
+      min-width: 0;
+    }
+    .job-meta-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 16px;
+      height: 16px;
+      color: #9b9b9b;
+    }
+    .job-meta-icon svg { width: 16px; height: 16px; fill: currentColor; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn { background: #2c4f76; color: #fff; border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    .btn-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      line-height: 0;
+    }
+    .btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
+    .col-download { width: 48px; text-align: center; }
+    .btn-secondary { background: #3a3a3a; }
+    .btn-danger { background: #823b3b; }
+    .input, select, textarea { width: 100%; background: #101010; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { border-bottom: 1px solid #343434; padding: 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
+    .log-toolbar { justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; }
+    .log-toolbar h3 { margin: 0; }
+    .log-panel {
+      max-height: 70vh;
+      overflow-x: hidden;
+      overflow-y: auto;
+      background: #101010;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+    .log-line {
+      display: flex;
+      gap: 8px;
+      padding: 2px 0;
+      border-bottom: 1px solid #1f1f1f;
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+    }
+    .log-line:last-child { border-bottom: 0; }
+    .log-ts { color: #8a8a8a; flex: 0 0 auto; white-space: nowrap; }
+    .log-level { flex: 0 0 56px; text-transform: lowercase; color: #9ad1ff; }
+    .log-msg {
+      flex: 1 1 0;
+      min-width: 0;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .log-level-error { color: #ff8a80; }
+    .log-level-warning { color: #ffcc80; }
+    .log-level-debug { color: #6a6a6a; }
+    .copy-status { font-size: 0.85rem; color: #8dffb0; }
+    .muted { color: #9b9b9b; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .settings-group h2 { margin: 0 0 12px; font-size: 1.1rem; color: #9ad1ff; }
+    .settings-group .grid { margin-top: 8px; }
+    .settings-hint { display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; }
+    .badge { display: inline-block; padding: 4px 8px; border-radius: 6px; font-size: 0.85rem; width: fit-content; }
+    .badge-ok { background: #1f3d2a; color: #8dffb0; }
+    .badge-warn { background: #3d2f1f; color: #ffcc80; }
+    .badge-danger { background: #3d1f1f; color: #ff8a80; }
+    .badge-muted { background: #2a2a2a; color: #9b9b9b; }
+    .job-status-running, .job-status-discovered, .job-status-waiting_master, .job-status-waiting_slave, .job-status-master_added, .job-status-master_complete, .job-status-slave_added { color: #ffcc80; }
+    .job-status-stopping { color: #ffcc80; opacity: 0.85; }
+    .job-status-partial, .job-status-sending { color: #ffcc80; }
+    .tg-status-failed { color: #ff8a80; }
+    .tg-status-cancelled { color: #9b9b9b; }
+    .job-status-success, .job-status-done { color: #8dffb0; }
+    .job-status-failed, .job-status-error { color: #ff8a80; }
+    .job-status-cancelled, .job-status-pending { color: #9b9b9b; }
+    .tg-status-skipped { color: #9b9b9b; }
+    .tg-status-pending, .tg-status-queued { color: #ffcc80; }
+    .tg-status-sent { color: #8dffb0; }
+    .master-state-downloading { color: #9ad1ff; }
+    .master-state-seeding { color: #8dffb0; }
+    .master-state-stopped { color: #ffcc80; }
+    .master-state-error { color: #ff8a80; }
+    .master-state-missing, .master-state-unavailable { color: #9b9b9b; }
+    .gl-pipeline-board {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      min-width: 0;
+    }
+    .gl-pipeline-main-row {
+      display: flex;
+      align-items: flex-start;
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      flex-wrap: nowrap;
+    }
+    .gl-pipeline-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 0 0 auto;
+    }
+    .gl-pipeline-col-master { align-items: center; }
+    .gl-pipeline-sm .gl-pipeline-col { min-width: 40px; }
+    .gl-pipeline-lg .gl-pipeline-col { min-width: 72px; }
+    .gl-pipeline-sm .gl-stage-label { font-size: 0.65rem; }
+    .gl-pipeline-lg .gl-stage-label { font-size: 0.85rem; }
+    .gl-pipeline-lg { margin-bottom: 4px; }
+    .gl-pipeline-detail-head {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .gl-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .gl-stage-side { opacity: 0.95; }
+    .gl-pipeline-fork {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 0;
+    }
+    .gl-v-connector {
+      width: 2px;
+      height: 10px;
+      background: #444;
+      flex: 0 0 auto;
+    }
+    .gl-pipeline-lg .gl-v-connector { height: 14px; }
+    .gl-pipeline-fork-done {
+      align-items: flex-start;
+    }
+    .gl-diag-connector {
+      width: 12px;
+      height: 12px;
+      border-left: 2px solid #444;
+      border-bottom: 2px solid #444;
+      margin: 0 0 2px 5px;
+      flex: 0 0 auto;
+      box-sizing: border-box;
+    }
+    .gl-pipeline-lg .gl-diag-connector {
+      width: 16px;
+      height: 16px;
+      margin-left: 7px;
+    }
+    .gl-pipeline-fork-slave {
+      align-items: flex-start;
+    }
+    .gl-pipeline-fork-check {
+      display: flex;
+      align-items: flex-start;
+      flex-wrap: nowrap;
+    }
+    .gl-fork-h-connector {
+      flex: 0 0 14px;
+      height: 2px;
+      background: #444;
+      margin: 6px 2px 0;
+      align-self: flex-start;
+    }
+    .gl-pipeline-lg .gl-fork-h-connector {
+      flex-basis: 22px;
+      margin-top: 8px;
+    }
+    .gl-stage-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid #666;
+      background: #1b1b1b;
+      box-sizing: border-box;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      color: transparent;
+    }
+    .gl-pipeline-lg .gl-stage-dot { width: 18px; height: 18px; font-size: 13px; }
+    .gl-stage-label { color: #9b9b9b; line-height: 1.1; white-space: nowrap; }
+    .gl-stage-connector {
+      flex: 0 0 18px;
+      height: 2px;
+      background: #444;
+      margin: 6px 2px 0;
+      align-self: flex-start;
+    }
+    .gl-pipeline-sm .gl-stage-connector { flex-basis: 10px; }
+    .gl-pipeline-lg .gl-stage-connector { flex-basis: 28px; margin-top: 8px; }
+    .gl-stage-pending .gl-stage-dot { border-color: #555; background: #222; }
+    .gl-stage-pending .gl-stage-label { color: #666; }
+    .gl-stage-skipped .gl-stage-dot {
+      border-color: #444;
+      background: #1a1a1a;
+      color: #666;
+    }
+    .gl-stage-skipped .gl-stage-label { color: #555; }
+    .gl-stage-running .gl-stage-dot {
+      border-color: #1f75cb;
+      background: #1f75cb;
+      animation: gl-stage-pulse 1.2s ease-in-out infinite;
+    }
+    .gl-stage-running .gl-stage-label { color: #9ad1ff; }
+    .gl-stage-success .gl-stage-dot { border-color: #2da160; background: #2da160; }
+    .gl-stage-success .gl-stage-label { color: #8dffb0; }
+    .gl-stage-failed .gl-stage-dot {
+      border-color: #ec5941;
+      background: #ec5941;
+      color: #fff;
+    }
+    .gl-stage-failed .gl-stage-label { color: #ff8a80; }
+    .gl-stage-cancelled .gl-stage-dot {
+      border-color: #888;
+      background: #555;
+      color: #ddd;
+    }
+    .gl-stage-cancelled .gl-stage-label { color: #9b9b9b; }
+    .gl-pipeline-status-text { display: block; font-size: 0.75rem; margin-top: 4px; }
+    .pipeline-list-table { width: 100%; table-layout: fixed; }
+    .pipeline-list-table col.pipeline-col-id { width: 20rem; }
+    .pipeline-list-table col.pipeline-col-release { width: auto; }
+    .pipeline-list-table col.pipeline-col-torrent { width: 18rem; }
+    .pipeline-list-table col.pipeline-col-graph { width: 20rem; }
+    .pipeline-list-table th, .pipeline-list-table td {
+      vertical-align: middle;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pipeline-list-id {
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: normal;
+    }
+    .pipeline-list-hash {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.72rem;
+      white-space: nowrap;
+      word-break: normal;
+      overflow-wrap: normal;
+      line-height: 1.25;
+      margin-top: 2px;
+    }
+    .pipeline-list-release,
+    .pipeline-list-torrent {
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: normal;
+    }
+    .pipeline-list-graph {
+      overflow: visible;
+      overflow-wrap: normal;
+      word-break: normal;
+      white-space: normal;
+    }
+    .pipeline-list-graph .gl-pipeline-board {
+      width: max-content;
+    }
+    @keyframes gl-stage-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(31, 117, 203, 0.55); }
+      50% { box-shadow: 0 0 0 5px rgba(31, 117, 203, 0); }
+    }
+    tr.row-selected td { background: #243044; }
+    a { color: #9ad1ff; }
+    code { background: #101010; padding: 2px 6px; border-radius: 4px; }
+    .release-block {
+      background: #1b1b1b;
+      border: 1px solid #333;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .release-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      align-items: baseline;
+      justify-content: space-between;
+      padding: 14px 16px;
+      user-select: none;
+    }
+    .release-summary::-webkit-details-marker { display: none; }
+    .release-summary::before {
+      content: "▸";
+      color: #9ad1ff;
+      margin-right: 8px;
+      flex: 0 0 auto;
+    }
+    details[open] > .release-summary::before { content: "▾"; }
+    .release-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1 1 220px;
+      min-width: 0;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+    .release-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .release-meta { display: flex; flex-wrap: wrap; gap: 10px 14px; font-size: 0.9rem; }
+    .release-body { padding: 0 16px 16px; border-top: 1px solid #2a2a2a; }
+    .genre-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .genre-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      background: #243044;
+      color: #b8d4f0;
+      border: 1px solid #354a66;
+    }
+    .member-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .member-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      border: 1px solid transparent;
+    }
+    .member-tag--voicing { background: #1a3d3a; color: #7fd4c8; border-color: #2a5c56; }
+    .member-tag--editing { background: #3d321a; color: #e8c07a; border-color: #5c4a2a; }
+    .member-tag--timing { background: #1f3d2a; color: #8dffb0; border-color: #2f5c3d; }
+    .member-tag--translating { background: #1a2e4a; color: #8bb8f0; border-color: #2a4a6e; }
+    .member-tag--decorating { background: #3d2420; color: #f0a090; border-color: #5c3830; }
+    .member-tag--poster { background: #2a2e36; color: #c0c8d4; border-color: #3d4450; }
+    .member-tag--hevc { background: #34234a; color: #d0a5ff; border-color: #51346e; }
+    .member-tag--unknown { background: #2a2a2a; color: #9b9b9b; border-color: #3a3a3a; }
+    .source-tag--site { background: #1f3d2a; color: #8dffb0; border-color: #2f5c3d; }
+    .source-tag--backoffice { background: #3d1f1f; color: #ff8a80; border-color: #5c2f2f; }
+    .info-table { width: 100%; table-layout: auto; }
+    .info-table th {
+      width: 140px;
+      color: #9b9b9b;
+      font-weight: normal;
+      border-bottom: 1px solid #2a2a2a;
+      white-space: nowrap;
+    }
+    .info-table td { border-bottom: 1px solid #2a2a2a; }
+    .info-table tr:last-child th,
+    .info-table tr:last-child td { border-bottom: 0; }
+    .pipeline-timeline {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .pipeline-timeline-item {
+      border-left: 2px solid #354a66;
+      padding: 0 0 2px 12px;
+    }
+    .pipeline-timeline-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+      margin-bottom: 4px;
+      font-size: 0.9rem;
+    }
+    .pipeline-timeline-message { margin-bottom: 4px; }
+    .pipeline-timeline-links { font-size: 0.85rem; }
+    .pipeline-event-details { margin-top: 4px; }
+    .pipeline-event-details pre {
+      margin: 6px 0 0;
+      padding: 8px;
+      background: #101010;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      white-space: pre-wrap;
+    }
+    tr.torrent-files-row td {
+      padding-top: 0;
+      border-bottom: 1px solid #343434;
+    }
+    .torrent-files {
+      margin: 0 0 8px;
+      padding: 6px 10px 8px;
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+    }
+    .torrent-files summary { cursor: pointer; }
+    .file-list {
+      margin: 6px 0 0;
+      padding-left: 16px;
+      font-size: 0.9em;
+      list-style: disc;
+    }
+    .file-list li { margin: 2px 0; }
+    .file-list .file-download,
+    .file-list .file-copy-path,
+    .file-list .file-send-encoder,
+    .file-list .file-mediainfo {
+      display: inline-flex;
+      vertical-align: middle;
+      margin-left: 2px;
+      color: #9ad1ff;
+      text-decoration: none;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+    }
+    .file-list .file-encode-check {
+      vertical-align: middle;
+      margin-right: 4px;
+      cursor: pointer;
+    }
+    .file-list .file-download:hover,
+    .file-list .file-copy-path:hover,
+    .file-list .file-send-encoder:hover,
+    .file-list .file-mediainfo:hover { color: #c5e4ff; }
+    .file-list .file-download svg,
+    .file-list .file-copy-path svg,
+    .file-list .file-send-encoder svg,
+    .file-list .file-mediainfo svg { width: 12px; height: 12px; fill: currentColor; }
+    .torrent-files summary {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .torrent-encode-select-actions {
+      display: none;
+      gap: 8px;
+      align-items: center;
+      margin: 6px 0 4px;
+    }
+    /* Encoder UI: кнопки в DOM всегда (без jump после probe); без FOUC когда выключен. */
+    [data-encoder-enabled="1"] .torrent-encode-select-actions {
+      display: flex;
+    }
+    .torrent-encode-select-actions[hidden] { display: none !important; }
+    .btn-link {
+      background: none;
+      border: 0;
+      padding: 0;
+      color: #9ad1ff;
+      cursor: pointer;
+      font: inherit;
+      text-decoration: underline;
+    }
+    .btn-link:hover { color: #c5e4ff; }
+    #encoder-preset-dialog {
+      border: 1px solid #444;
+      border-radius: 8px;
+      background: #1b1b1b;
+      color: #eee;
+      padding: 16px;
+      min-width: min(400px, 92vw);
+    }
+    #encoder-preset-dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+    #encoder-preset-dialog .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #encoder-preset-dialog .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    #encoder-preset-dialog select.input { min-width: 220px; width: 100%; }
+    #encoder-batch-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 40;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      background: #1b1b1b;
+      border-top: 1px solid #444;
+      box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+    }
+    #encoder-batch-bar.is-visible { display: flex; }
+    #encoder-batch-bar .encoder-batch-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    #encoder-batch-bar .encoder-batch-status {
+      color: #aaa;
+      font-size: 0.9em;
+      min-width: 0;
+      flex: 1 1 160px;
+    }
+    body.has-encoder-batch-bar { padding-bottom: 64px; }
+
+    #mediainfo-dialog {
+      border: 1px solid #444;
+      border-radius: 8px;
+      background: #1e1e1e;
+      color: #eee;
+      padding: 18px 20px;
+      width: min(860px, 95vw);
+      max-height: 88vh;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    /* display:flex ломает UA-правило dialog:not([open]){display:none} — окно остаётся внизу страницы */
+    #mediainfo-dialog[open] {
+      display: flex;
+      flex-direction: column;
+    }
+    #mediainfo-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+    #mediainfo-dialog .mi-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 10px; flex-shrink: 0; }
+    #mediainfo-dialog #mi-modal-body { overflow-y: auto; min-height: 0; flex: 1; }
+    #mediainfo-dialog .mi-title { font-size: 1.05rem; font-weight: 600; word-break: break-all; margin: 0; color: #fff; }
+    #mediainfo-dialog .mi-section { margin-bottom: 14px; background: #262626; border-radius: 6px; padding: 12px; border: 1px solid #363636; }
+    #mediainfo-dialog .mi-section-title { font-size: 0.82rem; font-weight: 600; color: #7cb8ff; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    #mediainfo-dialog .mi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 14px; font-size: 0.88rem; }
+    #mediainfo-dialog .mi-grid-item { display: flex; flex-direction: column; }
+    #mediainfo-dialog .mi-label { font-size: 0.75rem; color: #888; text-transform: uppercase; }
+    #mediainfo-dialog .mi-value { color: #ddd; word-break: break-word; font-weight: 500; }
+    #mediainfo-dialog .mi-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; margin-top: 6px; }
+    #mediainfo-dialog .mi-table th { text-align: left; color: #888; font-weight: 500; padding: 4px 6px; border-bottom: 1px solid #3a3a3a; font-size: 0.78rem; text-transform: uppercase; }
+    #mediainfo-dialog .mi-table td { padding: 5px 6px; border-bottom: 1px solid #2d2d2d; }
+    #mediainfo-dialog .mi-flag { display: inline-block; font-weight: 700; font-size: 0.9rem; line-height: 1; }
+    #mediainfo-dialog .mi-flag-yes { color: #6dca8c; }
+    #mediainfo-dialog .mi-flag-no { color: #e07070; }
+    #mediainfo-dialog .mi-flag-unk { color: #888; }
+    #mediainfo-dialog .mi-table th.mi-flag-col,
+    #mediainfo-dialog .mi-table td.mi-flag-col { text-align: center; width: 3.2em; }
+    #mediainfo-dialog details.mi-fonts { margin: 0; }
+    #mediainfo-dialog details.mi-fonts > summary { cursor: pointer; font-weight: 600; font-size: 0.82rem; color: #7cb8ff; text-transform: uppercase; letter-spacing: 0.5px; list-style: none; }
+    #mediainfo-dialog details.mi-fonts > summary::-webkit-details-marker { display: none; }
+    #mediainfo-dialog tr.mi-att-mismatch td { color: #e07070; }
+    #mediainfo-dialog tr.mi-att-nonfont td { color: #888; }
+    #mediainfo-dialog pre.mi-raw { background: #141414; border: 1px solid #333; border-radius: 4px; padding: 10px; font-size: 0.8rem; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 8px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    #mediainfo-dialog .mi-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 10px; border-top: 1px solid #333; flex-wrap: wrap; gap: 8px; }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Перейти к содержимому</a>
+  <header>
+    <nav aria-label="Основная навигация">
+      
+      
+      <a href="/">Главная</a>
+      
+      <a href="/info">Информация</a>
+      
+      <a href="/settings">Настройки</a>
+      
+      <a href="/jobs">Джобы</a>
+      
+      <a href="/releases">Релизы</a>
+      
+      <a href="/hevc-workbench" aria-current="page">Рабочий список HEVC</a>
+      
+      <a href="/archive">Архив</a>
+      
+      <a href="/pipeline">Пайплайн</a>
+      
+      <a href="/telegram-access">Доступ Telegram</a>
+      
+      <a href="/telegram-outbox">Доставка Telegram</a>
+      
+      <a href="/encoder-history">Отправки в Kensetsu</a>
+      
+      
+    </nav>
+    <div id="ui-live-status" class="muted" role="status" aria-live="polite" hidden></div>
+    <div id="ui-action-error" role="alert" hidden></div>
+  </header>
+  <main id="main-content" tabindex="-1">
+    
+<h1>Рабочий список HEVC</h1>
+<p class="muted">Потребность HEVC, доступность точной версии исходника и подтверждение приёма Kensetsu. Приём не означает завершение кодирования.</p>
+<style>
+  .hevc-workbench-table { width:100%; border-collapse:collapse; }
+  .hevc-workbench-table td { vertical-align:top; padding:12px 8px; border-bottom:1px solid #333; }
+  .hevc-workbench-table th { text-align:left; padding:8px; }
+  .hevc-workbench-path { overflow-wrap:anywhere; max-width:480px; }
+  .hevc-workbench-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+  .hevc-workbench-tabs [aria-current="page"] { outline:2px solid #7cb8ff; }
+  .hevc-workbench-actions { position:sticky; bottom:0; background:#202025; border:1px solid #444; border-radius:8px; padding:12px; margin-top:16px; z-index:20; }
+  .hevc-workbench-reasons { margin:6px 0; padding-left:20px; }
+  .hevc-workbench-scroll { overflow-x:auto; }
+</style>
+<form method="get" action="/hevc-workbench" class="row card" style="gap:8px;">
+  <input type="hidden" name="view" value="all" />
+  <input class="input" name="search" value="" maxlength="200" placeholder="Название, ID релиза/торрента или путь файла" aria-label="Поиск исходника" style="min-width:280px;" />
+  <button class="btn" type="submit">Найти</button>
+  <a href="/hevc-workbench">Сбросить</a>
+</form>
+<div id="hevc-workbench-live" data-ui-sse-channel="hevc_workbench" data-ui-sse-target="#hevc-workbench-live" data-ui-sse-url="/hevc-workbench/live?view=all&amp;search=&amp;page=1&amp;per_page=30">
+  <div data-hevc-state data-encoder-enabled="0" data-hevc-live-url="/hevc-workbench/live?view=all&amp;search=&amp;page=1&amp;per_page=30">
+  <nav class="hevc-workbench-tabs" aria-label="Представления HEVC">
+    
+    <a class="btn btn-secondary" href="/hevc-workbench?view=all&amp;search=&amp;page=1&amp;per_page=30" aria-current="page">Все · 1</a>
+    
+    <a class="btn btn-secondary" href="/hevc-workbench?view=ready&amp;search=&amp;page=1&amp;per_page=30" >Готово к отправке · 1</a>
+    
+    <a class="btn btn-secondary" href="/hevc-workbench?view=overdue&amp;search=&amp;page=1&amp;per_page=30" >Просрочено · 1</a>
+    
+    <a class="btn btn-secondary" href="/hevc-workbench?view=unavailable&amp;search=&amp;page=1&amp;per_page=30" >Исходник недоступен · 0</a>
+    
+    <a class="btn btn-secondary" href="/hevc-workbench?view=unknown&amp;search=&amp;page=1&amp;per_page=30" >Приём требует проверки · 0</a>
+    
+  </nav>
+  <p class="muted">Готовность и недоступность во всём списке — по данным последней проверки БД. На странице проверено файлов: 1, доступно на диске: 1 · <time class="local-time" datetime="2026-10-17T16:31:52.696645Z">2026-10-17T16:31:52.696645Z</time>. Прогресс master и хеширование — по данным БД.</p>
+  <p class="muted">Исходников: 1 · страница 1 из 1.</p>
+  <p class="badge badge-warn">Kensetsu выключен в настройках. Список доступен для просмотра.</p>
+  
+  
+  <div class="hevc-workbench-scroll"><table class="hevc-workbench-table">
+    <thead><tr><th aria-label="Выбор"></th><th>Релиз / точная версия исходника</th><th>HEVC</th><th>Исходник</th><th>Приём Kensetsu</th></tr></thead>
+    <tbody>
+    
+    <tr data-hevc-row data-source-key="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:current/ep-09.mkv">
+      <td><input type="checkbox" class="hevc-encode-check" data-file-id="3" data-selection-key="3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:current/ep-09.mkv" aria-label="Выбрать current/ep-09.mkv" disabled /></td>
+      <td class="hevc-workbench-path">
+        <strong>Fixture &lt;historical &amp; AVC&gt;</strong> · #901
+        <div><code>current/ep-09.mkv</code> · 24 B</div>
+        <div class="row" style="gap:8px;">
+          <a href="/releases?search=fixture-901">Релиз</a>
+          <a href="/archive?search=Fixture">Архив релиза</a>
+          <a href="https://aniliberty.top/anime/releases/release/fixture-901/torrents" target="_blank" rel="noopener">На сайте</a>
+          
+        </div>
+        <details data-sse-key="hevc-file-3-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">
+          <summary>Версия и подробности</summary>
+          <div>Торрент 800 · архив 3 · BDRip 1080p AVC · 1-9</div>
+          <div>Hash: <code>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</code></div>
+          <div>Sticky-история: <code>changed</code></div>
+          <div>Путь: <code>/bench/media/current/ep-09.mkv</code></div>
+          <div>Снимок файла: <time class="local-time" datetime="2026-10-17T16:31:52.449975Z">2026-10-17T16:31:52.449975Z</time></div>
+          <div>Якорь SLA: <time class="local-time" datetime="2026-10-15T14:31:52.449975Z">2026-10-15T14:31:52.449975Z</time></div>
+          <div>Парный HEVC: архив 2</div>
+          
+        </details>
+      </td>
+      <td><span class="badge badge-danger">HEVC отстаёт</span>
+        <div>Возраст SLA: 50.0 ч</div><div class="muted">Часы: AniLibria API</div>
+        <div>Сверх SLA: 26.0 ч</div>
+      </td>
+      <td><span class="badge badge-muted">Файл доступен</span>
+        
+      </td>
+      <td><span class="muted">Отправок этой версии нет</span>
+      </td>
+    </tr>
+    
+    </tbody>
+  </table></div>
+  
+  
+  <div class="row" style="gap:12px;margin-top:12px;"></div>
+</div>
+</div>
+<div class="hevc-workbench-actions" id="hevc-workbench-actions">
+  <div class="row" style="gap:8px;">
+    <span>Выбрано на странице: <strong id="hevc-workbench-count">0</strong> / 100</span>
+    <button class="btn btn-secondary" type="button" data-hevc-select>Выбрать доступные на странице</button>
+    <button class="btn btn-secondary" type="button" data-hevc-clear>Снять выбор</button>
+    <button class="btn" type="button" data-hevc-send disabled>Отправить в Kensetsu</button>
+    <button class="btn btn-secondary" type="button" data-hevc-refresh>Проверить доступность страницы</button>
+  </div>
+  <p class="muted" style="margin-bottom:0;">Выбор сохраняется при обновлении этой страницы. При переходе между страницами или поиске выбор сбрасывается. Неоднозначный и повторный приём проверяйте в журнале.</p>
+  <div id="hevc-workbench-result" role="status" aria-live="polite"></div>
+  <div id="hevc-workbench-selection-notice" class="muted" role="status" aria-live="polite"></div>
+</div>
+<script src="/static/hevc_workbench.js" defer></script>
+
+  </main>
+  <script>
+  function formatLocalTimes(root) {
+    const scope = root || document;
+    scope.querySelectorAll("time.local-time[datetime]").forEach((el) => {
+      const raw = el.getAttribute("datetime");
+      if (!raw) return;
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) return;
+      el.textContent = date.toLocaleString(undefined, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      el.title = date.toString();
+    });
+  }
+  const _downloadCheckQueue = [];
+  let _downloadCheckBusy = false;
+  const _downloadProbeCache = new Map(); // hash → {file_ids, checking_ids, ts}
+  const _DOWNLOAD_PROBE_TTL_MS = 60_000;
+  const _DOWNLOAD_PROBE_CHUNK = 100;
+  const _DOWNLOAD_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10.2l3.6-3.6L17 11l-5 5-5-5 1.4-1.4L11 13.2V3h1zM5 19h14v2H5v-2z"/></svg>';
+  const _COPY_PATH_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
+  const _ENCODER_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6zm0 5h10v2H4v-2zm0 5h16v2H4v-2zm14-6.5l4 2.5-4 2.5v-5z"/></svg>';
+
+  function isEncoderUiEnabled() {
+    const marked = document.querySelector("[data-encoder-enabled]");
+    return marked && marked.getAttribute("data-encoder-enabled") === "1";
+  }
+
+  function formatApiErrorDetail(detail) {
+    if (detail == null || detail === "") return null;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            const loc = Array.isArray(item.loc)
+              ? item.loc.filter((part) => part !== "body").join(".")
+              : "";
+            const msg = item.msg || JSON.stringify(item);
+            return loc ? `${loc}: ${msg}` : msg;
+          }
+          return String(item);
+        })
+        .join("; ");
+    }
+    if (typeof detail === "object") {
+      const parts = [];
+      const main =
+        detail.message || detail.msg || detail.error || null;
+      if (main) parts.push(String(main));
+      if (Array.isArray(detail.local_errors) && detail.local_errors.length) {
+        const brief = detail.local_errors
+          .slice(0, 3)
+          .map((item) => {
+            if (!item) return "";
+            if (typeof item === "string") return item;
+            return item.error ? String(item.error) : "";
+          })
+          .filter(Boolean)
+          .join("; ");
+        const extra =
+          detail.local_errors.length > 3
+            ? ` (+${detail.local_errors.length - 3})`
+            : "";
+        if (brief) parts.push(brief + extra);
+      }
+      if (parts.length) return parts.join(" — ");
+      return JSON.stringify(detail);
+    }
+    return String(detail);
+  }
+
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+
+  function ensureEncoderPresetDialog() {
+    let dialog = document.getElementById("encoder-preset-dialog");
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.id = "encoder-preset-dialog";
+    dialog.setAttribute("aria-labelledby", "encoder-preset-title");
+    dialog.innerHTML =
+      '<form method="dialog" id="encoder-preset-form">' +
+      "<h2 id=\"encoder-preset-title\" style=\"margin:0 0 10px;font-size:1.1rem;\">Параметры кодирования</h2>" +
+      '<label class="field">Видео' +
+      '<select class="input" name="video_id" id="encoder-video-select" required></select>' +
+      "</label>" +
+      '<label class="field">Аудио' +
+      '<select class="input" name="audio_id" id="encoder-audio-select" required></select>' +
+      "</label>" +
+      '<label class="field">Downmix' +
+      '<select class="input" name="audio_downmix" id="encoder-downmix-select">' +
+      '<option value="none">Нет (none)</option>' +
+      '<option value="stereo">Stereo</option>' +
+      "</select></label>" +
+      '<div class="row" style="justify-content:flex-end;">' +
+      '<button class="btn btn-secondary" value="cancel" type="submit" formnovalidate>Отмена</button>' +
+      '<button class="btn" value="ok" type="submit">Отправить</button>' +
+      "</div></form>";
+    document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  function syncEncoderDownmixLock(audioSelect, downmixSelect) {
+    const audioId = (audioSelect.value || "").trim().toLowerCase();
+    const lockStereo = audioId === "copy" || audioId === "none";
+    const stereoOpt = [...downmixSelect.options].find((o) => o.value === "stereo");
+    if (stereoOpt) stereoOpt.disabled = lockStereo;
+    if (lockStereo && downmixSelect.value === "stereo") {
+      downmixSelect.value = "none";
+    }
+  }
+
+  function fillEncoderLayerSelect(select, items, preferredId) {
+    select.innerHTML = "";
+    const appendOption = (p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      const name = p.name || p.id;
+      opt.textContent = p.id && p.id !== name ? `${name} (${p.id})` : name;
+      if (p.available === false) {
+        opt.disabled = true;
+        opt.textContent += " — недоступен";
+      }
+      if (p.default === true) opt.dataset.default = "1";
+      select.appendChild(opt);
+    };
+    (items || []).forEach(appendOption);
+    const preferred = (preferredId || "").trim();
+    if (preferred) {
+      const match = [...select.options].find((o) => o.value === preferred && !o.disabled);
+      if (match) {
+        select.value = preferred;
+        return;
+      }
+    }
+    const defaultOpt = [...select.options].find((o) => !o.disabled && o.dataset.default === "1");
+    if (defaultOpt) {
+      select.value = defaultOpt.value;
+      return;
+    }
+    const firstEnabled = [...select.options].find((o) => !o.disabled);
+    if (firstEnabled) select.value = firstEnabled.value;
+  }
+
+  async function pickEncoderPreset() {
+    const dialog = ensureEncoderPresetDialog();
+    const videoSelect = dialog.querySelector("#encoder-video-select");
+    const audioSelect = dialog.querySelector("#encoder-audio-select");
+    const downmixSelect = dialog.querySelector("#encoder-downmix-select");
+    videoSelect.innerHTML = "";
+    audioSelect.innerHTML = "";
+    downmixSelect.value = "none";
+
+    const resp = await fetch("/api/video-kensetsu/presets");
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(formatApiErrorDetail(err.detail) || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    const videos = data.videos || [];
+    const audios = data.audios || [];
+    if (!videos.length) throw new Error("Видео-пресеты не найдены");
+    if (!audios.length) throw new Error("Аудио-пресеты не найдены");
+
+    const defaults = data.defaults || {};
+    fillEncoderLayerSelect(videoSelect, videos, defaults.video_id);
+    fillEncoderLayerSelect(audioSelect, audios, defaults.audio_id);
+    const preferredDownmix =
+      defaults.audio_downmix === "stereo" ? "stereo" : "none";
+    downmixSelect.value = preferredDownmix;
+    syncEncoderDownmixLock(audioSelect, downmixSelect);
+
+    const onAudioChange = () => syncEncoderDownmixLock(audioSelect, downmixSelect);
+    audioSelect.addEventListener("change", onAudioChange);
+
+    // Escape keeps the previous returnValue on a reused dialog.
+    dialog.returnValue = "";
+    dialog.showModal();
+    return new Promise((resolve) => {
+      const onClose = () => {
+        dialog.removeEventListener("close", onClose);
+        audioSelect.removeEventListener("change", onAudioChange);
+        if (dialog.returnValue === "ok") {
+          const videoOpt = videoSelect.selectedOptions[0];
+          const audioOpt = audioSelect.selectedOptions[0];
+          if (!videoOpt || videoOpt.disabled || !audioOpt || audioOpt.disabled) {
+            resolve(null);
+            return;
+          }
+          const video_id = videoSelect.value || "";
+          const audio_id = audioSelect.value || "";
+          let audio_downmix = downmixSelect.value === "stereo" ? "stereo" : "none";
+          const audioIdNorm = audio_id.trim().toLowerCase();
+          if (audioIdNorm === "copy" || audioIdNorm === "none") audio_downmix = "none";
+          if (!video_id || !audio_id) {
+            resolve(null);
+            return;
+          }
+          resolve({ video_id, audio_id, audio_downmix });
+        } else {
+          resolve(null);
+        }
+      };
+      dialog.addEventListener("close", onClose);
+    });
+  }
+
+  const _encoderRequestKeys = new Map();
+  function encoderRequestId(signature, fresh) {
+    const storageKey = "altt.encoder.request." + signature;
+    let id = !fresh && _encoderRequestKeys.get(signature);
+    try { if (!id && !fresh) id = sessionStorage.getItem(storageKey); } catch (_) {}
+    if (!id) {
+      id = globalThis.crypto && crypto.randomUUID ? crypto.randomUUID() :
+        "request-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+      _encoderRequestKeys.set(signature, id);
+      try { sessionStorage.setItem(storageKey, id); } catch (_) {}
+    }
+    return id;
+  }
+
+  async function submitEncoderFiles(fileIds, layers, options = {}) {
+    const signature = JSON.stringify({ids:[...fileIds].sort((a,b)=>a-b), ...layers, retry_of:options.retry_of || null});
+    const body = {file_ids:fileIds, ...layers, ...options, request_id:encoderRequestId(signature, !!options.fresh)};
+    delete body.fresh;
+    delete body.noRepeatPrompt;
+    const send = () => fetch("/api/torrent-files/send-to-encoder", {
+      method:"POST", headers:{"Content-Type":"application/json", Accept:"application/json"}, body:JSON.stringify(body)
+    });
+    let resp = await send();
+    let payload = await resp.json().catch(()=>({}));
+    const previous = payload.detail && payload.detail.previous;
+    if (resp.status === 409 && Array.isArray(previous) && previous.length && !options.noRepeatPrompt) {
+      const active = previous.some(x=>x.status==="sending");
+      const unknown = previous.some(x=>x.status==="unknown");
+      const acceptedCount = previous.filter(x=>x.status==="accepted").length;
+      const unknownCount = previous.filter(x=>x.status==="unknown").length;
+      const repeatMessage = [
+        acceptedCount ? `Уже приняты Kensetsu с этими пресетами: ${acceptedCount}.` : "",
+        unknownCount ? `Приём не подтверждён: ${unknownCount}. Сначала проверьте Kensetsu: повтор может создать ещё одно задание.` : "",
+        "Отправить все выбранные файлы ещё раз?"
+      ].filter(Boolean).join("\n");
+      if (!active && confirm(repeatMessage)) {
+        body.allow_repeat = true;
+        body.acknowledge_unknown = unknown;
+        resp = await send();
+        payload = await resp.json().catch(()=>({}));
+      }
+    }
+    if (!resp.ok) {
+      const priorId = Array.isArray(previous) && previous.find(item => Number.isInteger(item.submission_id))?.submission_id;
+      const id = resp.headers.get("X-Encoder-Submission-Id") || priorId;
+      const message = formatApiErrorDetail(payload.detail) || `HTTP ${resp.status}`;
+      const error = new Error(message + (id ? ` · история отправки #${id}` : ""));
+      error.historyUrl = id ? `/encoder-history?submission_id=${encodeURIComponent(id)}` : null;
+      await refreshEncoderReceipts();
+      throw error;
+    }
+    if (!(payload.counts && (payload.counts.sending || payload.counts.unknown))) {
+      _encoderRequestKeys.delete(signature);
+      try { sessionStorage.removeItem("altt.encoder.request." + signature); } catch (_) {}
+    }
+    await refreshEncoderReceipts();
+    return payload;
+  }
+
+  function showEncoderReceipt(target, payload) {
+    const names = {accepted:"Приняты",not_sent:"Не отправлены",rejected:"Отклонены",unknown:"Приём не подтверждён",sending:"Отправляются"};
+    target.replaceChildren();
+    target.append(document.createTextNode(Object.entries(payload.counts || {}).map(([k,n])=>`${names[k]||k}: ${n}`).join("; ")));
+    if (payload.history_url) {
+      const link = document.createElement("a");
+      link.href = payload.history_url;
+      link.textContent = ` История #${payload.submission_id}`;
+      target.append(link);
+    }
+  }
+
+  let _encoderReceiptBusy = false;
+  let _encoderReceiptAgain = false;
+  async function refreshEncoderReceipts() {
+    if (_encoderReceiptBusy) { _encoderReceiptAgain = true; return; }
+    _encoderReceiptBusy = true;
+    try {
+      const slots = [...document.querySelectorAll(".file-download-slot[data-file-id]")];
+      const ids = [...new Set(slots.map(el=>Number(el.dataset.fileId)).filter(Number.isFinite))];
+      for (let offset=0; offset<ids.length; offset+=100) {
+        const chunk = ids.slice(offset,offset+100);
+        const resp = await fetch("/api/encoder-submissions/receipts", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({file_ids:chunk})});
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        slots.filter(slot=>chunk.includes(Number(slot.dataset.fileId))).forEach(slot=>{
+          let link = slot.parentElement.querySelector(`.file-encoder-history[data-file-id="${slot.dataset.fileId}"]`);
+          const receipt = (data.receipts || {})[slot.dataset.fileId];
+          if (!receipt) { if (link) link.remove(); return; }
+          if (!link) {
+            link = document.createElement("a");
+            link.className = "file-encoder-history muted";
+            link.dataset.fileId = slot.dataset.fileId;
+            link.style.marginLeft = "8px";
+            slot.after(link);
+          }
+          link.href = receipt.history_url;
+          link.textContent = "Kensetsu: " + receipt.label;
+        });
+      }
+    } catch (_) { /* The durable journal remains available if a badge refresh fails. */ }
+    finally {
+      _encoderReceiptBusy = false;
+      if (_encoderReceiptAgain) { _encoderReceiptAgain=false; setTimeout(refreshEncoderReceipts,0); }
+    }
+  }
+
+  document.addEventListener("click", async event=>{
+    const button = event.target.closest(".encoder-history-retry");
+    if (!button || button.disabled) return;
+    const result = button.closest(".encoder-submission").querySelector(".encoder-history-action-result");
+    try {
+      button.disabled=true;
+      if (button.dataset.hasUnknown==="1" && !confirm("Приём не подтверждён. Проверьте Kensetsu перед повтором. Повтор может создать ещё одно задание. Продолжить?")) return;
+      const layers = await pickEncoderPreset();
+      if (!layers) return;
+      result.textContent="Отправка…";
+      const payload = await submitEncoderFiles(JSON.parse(button.dataset.fileIds), layers, {retry_of:Number(button.dataset.submissionId),fresh:true,acknowledge_unknown:button.dataset.hasUnknown==="1"});
+      showEncoderReceipt(result,payload);
+      refreshUiSseTargets("encoder");
+    } catch(error) { result.textContent=error.message || "Ошибка отправки"; }
+    finally { button.disabled=false; }
+  });
+
+  function selectedEncodeFileIds(root) {
+    const scope = root || document;
+    return [...scope.querySelectorAll(".file-encode-check:checked")]
+      .map((el) => el.getAttribute("data-file-id"))
+      .filter(Boolean)
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id));
+  }
+
+  function ensureEncoderBatchBar() {
+    let bar = document.getElementById("encoder-batch-bar");
+    if (bar) return bar;
+    bar = document.createElement("div");
+    bar.id = "encoder-batch-bar";
+    bar.innerHTML =
+      '<div class="encoder-batch-count">Выбрано: <strong data-encoder-count>0</strong></div>' +
+      '<div class="encoder-batch-status" data-encoder-status></div>' +
+      '<div class="encoder-batch-actions">' +
+      '<button type="button" class="btn btn-secondary" data-encoder-clear>Снять все</button>' +
+      '<button type="button" class="btn" data-encoder-send>Отправить в кодировщик</button>' +
+      "</div>";
+    document.body.appendChild(bar);
+    bar.querySelector("[data-encoder-clear]").addEventListener("click", () => {
+      document.querySelectorAll(".file-encode-check:checked").forEach((el) => {
+        el.checked = false;
+      });
+      updateEncoderBatchBar();
+    });
+    bar.querySelector("[data-encoder-send]").addEventListener("click", async () => {
+      const ids = selectedEncodeFileIds();
+      if (!ids.length) return;
+      const sendBtn = bar.querySelector("[data-encoder-send]");
+      const statusEl = bar.querySelector("[data-encoder-status]");
+      try {
+        sendBtn.disabled = true;
+        statusEl.textContent = "Выбор параметров…";
+        const layers = await pickEncoderPreset();
+        if (!layers) {
+          statusEl.textContent = "";
+          return;
+        }
+        statusEl.textContent = "Отправка…";
+        const payload = await submitEncoderFiles(ids, layers);
+        showEncoderReceipt(statusEl, payload);
+        // Снимаем только успешно принятые file_ids — local/encoder errors остаются выбранными.
+        const accepted = new Set(
+          (Array.isArray(payload.file_ids) ? payload.file_ids : []).map(String)
+        );
+        if (accepted.size) {
+          document.querySelectorAll(".file-encode-check:checked").forEach((el) => {
+            const id = el.getAttribute("data-file-id");
+            if (id && accepted.has(String(id))) el.checked = false;
+          });
+          updateEncoderBatchBar();
+        }
+      } catch (err) {
+        statusEl.textContent = err && err.message ? err.message : "Ошибка отправки";
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+    return bar;
+  }
+
+  function updateEncoderBatchBar() {
+    if (!isEncoderUiEnabled()) {
+      const existing = document.getElementById("encoder-batch-bar");
+      if (existing) existing.classList.remove("is-visible");
+      document.body.classList.remove("has-encoder-batch-bar");
+      return;
+    }
+    const bar = ensureEncoderBatchBar();
+    const count = selectedEncodeFileIds().length;
+    const countEl = bar.querySelector("[data-encoder-count]");
+    if (countEl) countEl.textContent = String(count);
+    if (count > 0) {
+      bar.classList.add("is-visible");
+      document.body.classList.add("has-encoder-batch-bar");
+    } else {
+      bar.classList.remove("is-visible");
+      document.body.classList.remove("has-encoder-batch-bar");
+      const statusEl = bar.querySelector("[data-encoder-status]");
+      if (statusEl && !statusEl.textContent.includes("отправлено") && !statusEl.textContent.includes("ошиб")) {
+        statusEl.textContent = "";
+      }
+    }
+  }
+
+  function ensureFileEncodeCheckbox(li, fileId) {
+    if (!isEncoderUiEnabled() || !li || !fileId) return;
+    let check = li.querySelector(":scope > .file-encode-check");
+    if (check && _jsBoundEncodeChecks.has(check)) {
+      check.setAttribute("data-file-id", String(fileId));
+      return;
+    }
+    if (check) check.remove();
+    check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "file-encode-check";
+    check.setAttribute("data-file-id", String(fileId));
+    check.title = "Выбрать для кодировщика";
+    check.addEventListener("change", updateEncoderBatchBar);
+    check.addEventListener("click", (event) => event.stopPropagation());
+    _jsBoundEncodeChecks.add(check);
+    li.insertBefore(check, li.firstChild);
+  }
+
+  function removeFileEncodeCheckbox(li) {
+    if (!li) return;
+    const check = li.querySelector(":scope > .file-encode-check");
+    if (check) {
+      check.remove();
+      updateEncoderBatchBar();
+    }
+  }
+
+  function syncTorrentEncodeSelectActions(block) {
+    if (!block) return;
+    const actions = block.querySelector(".torrent-encode-select-actions");
+    if (!actions) return;
+    // CSS уже скрывает при data-encoder-enabled≠1; JS — запасной путь + bind кликов.
+    // Кнопки видны сразу при encoder on (даже без .file-encode-check — клик no-op).
+    actions.hidden = !isEncoderUiEnabled();
+    if (actions.dataset.bound === "1") return;
+    actions.dataset.bound = "1";
+    const selectAll = actions.querySelector(".torrent-encode-select-all");
+    const clearBtn = actions.querySelector(".torrent-encode-clear");
+    if (selectAll) {
+      selectAll.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        block.querySelectorAll(".file-encode-check").forEach((el) => {
+          el.checked = true;
+        });
+        updateEncoderBatchBar();
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        block.querySelectorAll(".file-encode-check").forEach((el) => {
+          el.checked = false;
+        });
+        updateEncoderBatchBar();
+      });
+    }
+  }
+
+  function ensureCopyPathButton(slot) {
+    const fullPath = slot.getAttribute("data-full-path");
+    if (!fullPath) return;
+    let btn = slot.querySelector(".file-copy-path");
+    if (btn && _jsBoundCopyPathBtns.has(btn)) return;
+    if (btn) btn.remove();
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-icon file-copy-path";
+    btn.title = "Копировать путь";
+    btn.setAttribute("aria-label", "Копировать путь");
+    btn.innerHTML = _COPY_PATH_ICON;
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        await copyTextToClipboard(fullPath);
+        btn.title = "Скопировано";
+        setTimeout(() => {
+          btn.title = "Копировать путь";
+        }, 1500);
+      } catch (_) {
+        btn.title = "Не удалось скопировать";
+      }
+    });
+    _jsBoundCopyPathBtns.add(btn);
+    const download = slot.querySelector("a.file-download");
+    if (download) {
+      download.after(btn);
+    } else {
+      slot.appendChild(btn);
+    }
+  }
+
+  function ensureEncoderButton(slot) {
+    if (!isEncoderUiEnabled()) return;
+    const id = slot.getAttribute("data-file-id");
+    if (!id) return;
+    let btn = slot.querySelector(".file-send-encoder");
+    if (btn && _jsBoundEncoderBtns.has(btn)) return;
+    if (btn) btn.remove();
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-icon file-send-encoder";
+    btn.title = "Отправить в кодировщик";
+    btn.setAttribute("aria-label", "Отправить в кодировщик");
+    btn.innerHTML = _ENCODER_ICON;
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const prevTitle = btn.title;
+      try {
+        btn.disabled = true;
+        btn.title = "Загрузка пресетов…";
+        const layers = await pickEncoderPreset();
+        if (!layers) {
+          btn.title = prevTitle;
+          return;
+        }
+        btn.title = "Отправка…";
+        const payload = await submitEncoderFiles([Number(id)], layers);
+        const encErrors = Array.isArray(payload.errors) ? payload.errors.length : 0;
+        const isPartial =
+          payload.partial === true || encErrors > 0 || payload.ok === false;
+        if (isPartial) {
+          const errHint =
+            encErrors > 0
+              ? (payload.errors[0] && (payload.errors[0].error || payload.errors[0].message)) ||
+                "частичный ответ"
+              : "частичный ответ";
+          btn.title = `Ошибка / частично: ${errHint}`;
+          setTimeout(() => {
+            btn.title = prevTitle;
+          }, 3500);
+        } else {
+          btn.title = "Отправлено";
+          setTimeout(() => {
+            btn.title = prevTitle;
+          }, 2000);
+        }
+      } catch (err) {
+        btn.title = err && err.message ? err.message : "Ошибка отправки";
+        setTimeout(() => {
+          btn.title = prevTitle;
+        }, 3500);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    _jsBoundEncoderBtns.add(btn);
+    slot.appendChild(btn);
+  }
+
+  const _MEDIAINFO_ICON =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/></svg>';
+
+  function ensureMediaInfoDialog() {
+    let dialog = document.getElementById("mediainfo-dialog");
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.id = "mediainfo-dialog";
+    dialog.setAttribute("aria-labelledby", "mi-modal-title");
+    dialog.innerHTML =
+      '<div class="mi-header">' +
+        '<div>' +
+          '<h3 class="mi-title" id="mi-modal-title">MediaInfo</h3>' +
+          '<div id="mi-modal-subtitle" style="font-size:0.8rem;color:#888;margin-top:2px;"></div>' +
+        '</div>' +
+        '<button class="btn btn-secondary btn-icon" id="mi-modal-close" title="Закрыть" aria-label="Закрыть" style="margin-top:-4px;line-height:1;font-size:1.1rem;padding:2px 8px;">✕</button>' +
+      '</div>' +
+      '<div id="mi-modal-body"></div>';
+    document.body.appendChild(dialog);
+    dialog.querySelector("#mi-modal-close").addEventListener("click", () => dialog.close());
+    let backdropMouseDown = false;
+    function isBackdropClick(e) {
+      if (e.target !== dialog) return false;
+      const r = dialog.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    }
+    dialog.addEventListener("mousedown", (e) => {
+      backdropMouseDown = isBackdropClick(e);
+    });
+    dialog.addEventListener("mouseup", (e) => {
+      if (backdropMouseDown && isBackdropClick(e)) dialog.close();
+      backdropMouseDown = false;
+    });
+    return dialog;
+  }
+
+  function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  function formatMediaInfoFileSize(val) {
+    if (val == null || val === "") return "";
+    if (typeof val === "string" && !/^\d+(\.\d+)?$/.test(val.trim())) return val;
+    const num = Number(val);
+    if (!Number.isFinite(num) || num <= 0) return "";
+    if (num >= 1073741824) return `${(num / 1073741824).toFixed(2)} ГиБ`;
+    if (num >= 1048576) return `${(num / 1048576).toFixed(1)} МиБ`;
+    if (num >= 1024) return `${Math.round(num / 1024)} КиБ`;
+    return `${Math.round(num)} Б`;
+  }
+
+  async function showMediaInfoModal(fileId, relativePath, initialFullPath) {
+    const dialog = ensureMediaInfoDialog();
+    const titleEl = dialog.querySelector("#mi-modal-title");
+    const subTitleEl = dialog.querySelector("#mi-modal-subtitle");
+    const bodyEl = dialog.querySelector("#mi-modal-body");
+
+    titleEl.textContent = relativePath ? relativePath.split("/").pop() : `Файл #${fileId}`;
+    subTitleEl.textContent = relativePath || (initialFullPath ? initialFullPath : "");
+    bodyEl.innerHTML = '<div style="padding:24px 0;text-align:center;color:#888;">Загрузка MediaInfo…</div>';
+
+    dialog.showModal();
+
+    await loadMediaInfoData(fileId, bodyEl, false);
+  }
+
+  async function loadMediaInfoData(fileId, container, force) {
+    try {
+      const url = force
+        ? `/api/torrent-files/${encodeURIComponent(fileId)}/mediainfo/refresh`
+        : `/api/torrent-files/${encodeURIComponent(fileId)}/mediainfo`;
+      const method = force ? "POST" : "GET";
+      const resp = await fetch(url, { method });
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        container.innerHTML = `<div class="badge badge-danger" style="padding:10px;display:block;margin:10px 0;">Ошибка: ${escapeHtml(data.detail || `HTTP ${resp.status}`)}</div>`;
+        return;
+      }
+
+      if (data.status !== "ready") {
+        let warnText = data.error || "Информация о файле пока недоступна.";
+        if (data.status === "in_progress") {
+          warnText = "Файл проверяется или ещё загружается на master.";
+        } else if (data.status === "file_missing") {
+          warnText = "Файл ещё не скачан или отсутствует на диске.";
+        }
+        container.innerHTML = `
+          <div style="padding:18px;text-align:center;">
+            <p class="muted" style="margin-bottom:12px;">${escapeHtml(warnText)}</p>
+            <button class="btn btn-secondary" id="mi-retry-btn" type="button">Попробовать снова</button>
+          </div>
+        `;
+        container.querySelector("#mi-retry-btn")?.addEventListener("click", () => {
+          container.innerHTML = '<div style="padding:24px 0;text-align:center;color:#888;">Повторная попытка…</div>';
+          loadMediaInfoData(fileId, container, true);
+        });
+        return;
+      }
+
+      renderMediaInfoContent(container, data, fileId);
+    } catch (err) {
+      container.innerHTML = `<div class="badge badge-danger" style="padding:10px;display:block;margin:10px 0;">Ошибка сети: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function miFlagIcon(value, label) {
+    const title = escapeHtml(label || "");
+    if (value === true) {
+      return `<span class="mi-flag mi-flag-yes" title="${title}: да">✓</span>`;
+    }
+    if (value === false) {
+      return `<span class="mi-flag mi-flag-no" title="${title}: нет">✕</span>`;
+    }
+    return `<span class="mi-flag mi-flag-unk" title="${title}: неизвестно">—</span>`;
+  }
+
+  function attachmentRowClass(name, mime) {
+    // Правила проекта: ttf/ttc → application/x-truetype-font; otf → application/vnd.ms-opentype.
+    // Пустой MIME — данные ещё не получены, строку не красим.
+    const lower = String(name || "").toLowerCase();
+    const m = String(mime || "").trim().toLowerCase();
+    if (!m) return "";
+    let expected = null;
+    if (lower.endsWith(".ttf") || lower.endsWith(".ttc")) {
+      expected = "application/x-truetype-font";
+    } else if (lower.endsWith(".otf")) {
+      expected = "application/vnd.ms-opentype";
+    } else {
+      return "mi-att-nonfont";
+    }
+    if (m === expected) return "";
+    return "mi-att-mismatch";
+  }
+
+  function attachmentRowTitle(name, mime) {
+    const lower = String(name || "").toLowerCase();
+    const m = String(mime || "").trim();
+    if (!m) return "";
+    let expected = null;
+    if (lower.endsWith(".ttf") || lower.endsWith(".ttc")) {
+      expected = "application/x-truetype-font";
+    } else if (lower.endsWith(".otf")) {
+      expected = "application/vnd.ms-opentype";
+    } else {
+      return "Не шрифт проекта (ожидаются .ttf / .ttc / .otf)";
+    }
+    if (m.toLowerCase() === expected) return "";
+    return `Ожидался MIME ${expected}, в файле: ${m}`;
+  }
+
+  function renderMediaInfoContent(container, data, fileId) {
+    const summary = data.summary || {};
+    const videos = summary.videos || [];
+    const audios = summary.audios || [];
+    const subs = summary.subtitles || [];
+    const fonts = Array.isArray(summary.fonts) ? summary.fonts : [];
+    const rawText = data.raw_text || "";
+
+    let html = "";
+
+    if (data.cached_only) {
+      html += '<div class="badge badge-warn" style="display:block;margin-bottom:12px;padding:8px 12px;font-size:0.85rem;">Файл отсутствует на диске — показаны сохранённые метаданные из базы данных</div>';
+    }
+
+    // Блок General
+    html += '<div class="mi-section">';
+    html += '<div class="mi-section-title">Контейнер</div>';
+    html += '<div class="mi-grid">';
+    if (summary.format) html += `<div class="mi-grid-item"><span class="mi-label">Формат</span><span class="mi-value">${escapeHtml(summary.format)} ${escapeHtml(summary.format_profile || "")}</span></div>`;
+    if (summary.duration_human) html += `<div class="mi-grid-item"><span class="mi-label">Продолжительность</span><span class="mi-value">${escapeHtml(summary.duration_human)}</span></div>`;
+    const containerSize = formatMediaInfoFileSize(summary.file_size);
+    if (containerSize) html += `<div class="mi-grid-item"><span class="mi-label">Размер</span><span class="mi-value">${escapeHtml(containerSize)}</span></div>`;
+    if (summary.overall_bit_rate) html += `<div class="mi-grid-item"><span class="mi-label">Общий битрейт</span><span class="mi-value">${escapeHtml(summary.overall_bit_rate)}</span></div>`;
+    html += '</div></div>';
+
+    // Блок Video
+    if (videos.length) {
+      html += '<div class="mi-section">';
+      html += `<div class="mi-section-title">Видео (${videos.length})</div>`;
+      videos.forEach((v, idx) => {
+        if (idx > 0) html += '<hr style="border:0;border-top:1px solid #363636;margin:10px 0;">';
+        html += '<div class="mi-grid">';
+        if (v.title) html += `<div class="mi-grid-item"><span class="mi-label">Название</span><span class="mi-value">${escapeHtml(v.title)}</span></div>`;
+        if (v.language) html += `<div class="mi-grid-item"><span class="mi-label">Язык</span><span class="mi-value">${escapeHtml(v.language.toUpperCase())}</span></div>`;
+        if (v.format) html += `<div class="mi-grid-item"><span class="mi-label">Кодек</span><span class="mi-value">${escapeHtml(v.format)} ${escapeHtml(v.format_profile || "")}</span></div>`;
+        if (v.resolution) html += `<div class="mi-grid-item"><span class="mi-label">Разрешение</span><span class="mi-value">${escapeHtml(v.resolution)} ${escapeHtml(v.aspect_ratio ? `(${v.aspect_ratio})` : "")}</span></div>`;
+        if (v.frame_rate) html += `<div class="mi-grid-item"><span class="mi-label">Частота кадров</span><span class="mi-value">${escapeHtml(v.frame_rate)} fps</span></div>`;
+        if (v.bit_rate) html += `<div class="mi-grid-item"><span class="mi-label">Битрейт</span><span class="mi-value">${escapeHtml(v.bit_rate)}</span></div>`;
+        if (v.stream_size) html += `<div class="mi-grid-item"><span class="mi-label">Размер</span><span class="mi-value">${escapeHtml(v.stream_size)}</span></div>`;
+        if (v.bit_depth) html += `<div class="mi-grid-item"><span class="mi-label">Глубина цвета</span><span class="mi-value">${escapeHtml(v.bit_depth)} бит</span></div>`;
+        if (v.hdr_format) html += `<div class="mi-grid-item"><span class="mi-label">HDR</span><span class="mi-value badge badge-ok" style="display:inline-block;width:fit-content;">${escapeHtml(v.hdr_format)}</span></div>`;
+        html += `<div class="mi-grid-item"><span class="mi-label">Default</span><span class="mi-value">${miFlagIcon(v.default, "Default")}</span></div>`;
+        html += `<div class="mi-grid-item"><span class="mi-label">Forced</span><span class="mi-value">${miFlagIcon(v.forced, "Forced")}</span></div>`;
+        html += `<div class="mi-grid-item"><span class="mi-label">Язык оригинала</span><span class="mi-value">${miFlagIcon(v.original, "Язык оригинала")}</span></div>`;
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Блок Audio
+    if (audios.length) {
+      html += '<div class="mi-section">';
+      html += `<div class="mi-section-title">Аудиодорожки (${audios.length})</div>`;
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Кодек</th><th>Каналы</th><th>Частота</th><th>Битрейт</th><th>Размер</th><th class="mi-flag-col">Def</th><th class="mi-flag-col">Forced</th><th class="mi-flag-col">Ориг.</th><th>Название</th></tr></thead><tbody>';
+      audios.forEach((a, i) => {
+        html += `<tr>
+          <td style="color:#888;">${i + 1}</td>
+          <td><strong>${escapeHtml((a.language || "und").toUpperCase())}</strong></td>
+          <td>${escapeHtml(a.format || "—")} ${escapeHtml(a.format_profile || "")}</td>
+          <td>${escapeHtml(a.channels || "—")}</td>
+          <td>${escapeHtml(a.sampling_rate || "—")}</td>
+          <td>${escapeHtml(a.bit_rate || "—")}</td>
+          <td>${escapeHtml(a.stream_size || "—")}</td>
+          <td class="mi-flag-col">${miFlagIcon(a.default, "Default")}</td>
+          <td class="mi-flag-col">${miFlagIcon(a.forced, "Forced")}</td>
+          <td class="mi-flag-col">${miFlagIcon(a.original, "Язык оригинала")}</td>
+          <td class="muted">${escapeHtml(a.title || "—")}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // Блок Subtitles
+    if (subs.length) {
+      html += '<div class="mi-section">';
+      html += `<div class="mi-section-title">Субтитры (${subs.length})</div>`;
+      html += '<table class="mi-table"><thead><tr><th>#</th><th>Язык</th><th>Формат</th><th>Размер</th><th class="mi-flag-col">Def</th><th class="mi-flag-col">Forced</th><th class="mi-flag-col">Ориг.</th><th>Название</th></tr></thead><tbody>';
+      subs.forEach((s, i) => {
+        html += `<tr>
+          <td style="color:#888;">${i + 1}</td>
+          <td><strong>${escapeHtml((s.language || "und").toUpperCase())}</strong></td>
+          <td>${escapeHtml(s.format || "—")}</td>
+          <td>${escapeHtml(s.stream_size || "—")}</td>
+          <td class="mi-flag-col">${miFlagIcon(s.default, "Default")}</td>
+          <td class="mi-flag-col">${miFlagIcon(s.forced, "Forced")}</td>
+          <td class="mi-flag-col">${miFlagIcon(s.original, "Язык оригинала")}</td>
+          <td class="muted">${escapeHtml(s.title || "—")}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></div>';
+    }
+
+    // Блок Вложения (fonts/attachments в summary)
+    html += '<div class="mi-section">';
+    if (fonts.length) {
+      const totalLabel = summary.fonts_total_size
+        ? escapeHtml(summary.fonts_total_size)
+        : (() => {
+            const known = fonts
+              .map((f) => (typeof f.size_bytes === "number" ? f.size_bytes : null))
+              .filter((n) => n != null);
+            if (!known.length) return "";
+            const sum = known.reduce((a, b) => a + b, 0);
+            return escapeHtml(formatMediaInfoFileSize(sum) || String(sum));
+          })();
+      html += `<details class="mi-fonts"><summary>Вложения (${fonts.length})</summary>`;
+      html += '<table class="mi-table"><thead><tr><th>Название</th><th>Размер</th><th>MIME</th></tr></thead><tbody>';
+      fonts.forEach((f) => {
+        const rowClass = attachmentRowClass(f.name, f.mime);
+        const rowTitle = attachmentRowTitle(f.name, f.mime);
+        const trAttrs =
+          (rowClass ? ` class="${rowClass}"` : "") +
+          (rowTitle ? ` title="${escapeHtml(rowTitle)}"` : "");
+        html += `<tr${trAttrs}>
+          <td>${escapeHtml(f.name || "—")}</td>
+          <td>${escapeHtml(f.size || "—")}</td>
+          <td>${escapeHtml(f.mime || "—")}</td>
+        </tr>`;
+      });
+      if (totalLabel) {
+        html += `<tr><td><strong>Итого</strong></td><td colspan="2"><strong>${totalLabel}</strong></td></tr>`;
+      }
+      html += '</tbody></table></details>';
+    } else {
+      html += '<div class="mi-section-title">Вложения</div>';
+      html += '<div class="muted" style="font-size:0.88rem;">Нет вложений</div>';
+    }
+    html += '</div>';
+
+    // Блок Raw Text Report
+    if (rawText) {
+      html += '<details style="margin-top:14px;background:#242424;border-radius:6px;padding:8px 12px;border:1px solid #333;">';
+      html += '<summary style="cursor:pointer;font-weight:600;font-size:0.85rem;color:#bbb;">Полный отчёт MediaInfo</summary>';
+      html += '<div style="margin-top:8px;">';
+      html += '<button class="btn btn-secondary btn-sm" id="mi-copy-report-btn" type="button" style="margin-bottom:6px;">Скопировать отчёт</button>';
+      html += `<pre class="mi-raw" id="mi-raw-text-block">${escapeHtml(rawText)}</pre>`;
+      html += '</div></details>';
+    }
+
+    // Подвал с кнопкой перепарсинга
+    html += '<div class="mi-footer">';
+    html += `<span class="muted" style="font-size:0.78rem;">${escapeHtml(data.full_path || "")}</span>`;
+    html += '<button class="btn btn-secondary btn-sm" id="mi-refresh-disk-btn" type="button" title="Принудительно перечитать с диска">Обновить с диска</button>';
+    html += '</div>';
+
+    container.innerHTML = html;
+
+    container.querySelector("#mi-copy-report-btn")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      try {
+        await copyTextToClipboard(rawText);
+        btn.textContent = "Скопировано!";
+        setTimeout(() => { btn.textContent = "Скопировать отчёт"; }, 1500);
+      } catch (_) {
+        btn.textContent = "Ошибка копирования";
+      }
+    });
+
+    container.querySelector("#mi-refresh-disk-btn")?.addEventListener("click", () => {
+      container.innerHTML = '<div style="padding:24px 0;text-align:center;color:#888;">Обновление данных с диска…</div>';
+      loadMediaInfoData(fileId, container, true);
+    });
+  }
+
+  const _jsBoundMediaInfoBtns = new WeakSet();
+  const _jsBoundCopyPathBtns = new WeakSet();
+  const _jsBoundEncoderBtns = new WeakSet();
+  const _jsBoundEncodeChecks = new WeakSet();
+
+  function ensureMediaInfoButton(slot) {
+    const id = slot.getAttribute("data-file-id");
+    if (!id) return;
+    let btn = slot.querySelector(".file-mediainfo");
+    if (btn && _jsBoundMediaInfoBtns.has(btn)) return;
+    if (btn) btn.remove();
+    const fullPath = slot.getAttribute("data-full-path") || "";
+    const li = slot.closest("li");
+    const codeEl = li ? li.querySelector("code") : null;
+    const relPath = codeEl ? codeEl.textContent.trim() : "";
+
+    const name = relPath || fullPath || "";
+    const extMatch = name.match(/\.([a-z0-9]+)$/i);
+    const ext = extMatch ? extMatch[1].toLowerCase() : "";
+    const mediaExts = new Set(["mkv", "mp4", "avi", "m4v", "mov", "flv", "wmv", "webm", "ts", "m2ts", "flac", "mp3", "aac", "ac3", "mka"]);
+    if (ext && !mediaExts.has(ext)) return;
+
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-icon file-mediainfo";
+    btn.title = "MediaInfo";
+    btn.setAttribute("aria-label", "MediaInfo");
+    btn.innerHTML = _MEDIAINFO_ICON;
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showMediaInfoModal(id, relPath, fullPath);
+    });
+    _jsBoundMediaInfoBtns.add(btn);
+    slot.appendChild(btn);
+  }
+
+  function clearDownloadableSlotButtons(slot) {
+    if (!slot) return;
+    slot.querySelectorAll("a.file-download, .file-copy-path, .file-send-encoder, .file-mediainfo").forEach((el) => el.remove());
+    const li = slot.closest("li[data-file-id]");
+    removeFileEncodeCheckbox(li);
+  }
+
+  function restoreEncodeChecksIfNeeded(block) {
+    const details =
+      (block && block.closest && block.closest("details.torrent-files, details.torrent-files-loaded")) ||
+      block;
+    if (!details || !details.dataset) return;
+    const ids = (details.dataset.encodeRestoreIds || "").split(",").filter(Boolean);
+    if (!ids.length) return;
+    let found = 0;
+    ids.forEach((fileId) => {
+      const box = details.querySelector(
+        `.file-encode-check[data-file-id="${cssAttrQuote(fileId)}"]`
+      );
+      if (box) {
+        box.checked = true;
+        found += 1;
+      }
+    });
+    if (found > 0) {
+      if (typeof updateEncoderBatchBar === "function") updateEncoderBatchBar();
+      if (typeof syncTorrentEncodeSelectActions === "function") {
+        syncTorrentEncodeSelectActions(details);
+      }
+    }
+    if (found >= ids.length) {
+      delete details.dataset.encodeRestoreIds;
+    }
+  }
+
+  const _FILE_UI_BADGE = {
+    new: { cls: "badge badge-ok file-ui-badge", title: "Добавлен в состав этого торрента", text: "новый" },
+    changed: { cls: "badge badge-warn file-ui-badge", title: "Хеш не совпал с предыдущей версией", text: "изменён" },
+    checking: { cls: "badge badge-warn file-ui-badge", title: "Качается или проверяется на master", text: "проверка" },
+    removed: { cls: "badge badge-danger file-ui-badge", title: "Убран из состава этого торрента", text: "удалён" },
+    ok: { cls: "badge badge-muted file-ui-badge", title: "Без изменений относительно предыдущей версии", text: "ok" },
+  };
+
+  function setFileUiBadge(badge, status) {
+    if (!badge) return;
+    const key = _FILE_UI_BADGE[status] ? status : "ok";
+    const meta = _FILE_UI_BADGE[key];
+    badge.className = meta.cls;
+    badge.title = meta.title;
+    badge.textContent = meta.text;
+    badge.setAttribute("data-ui-status", key);
+  }
+
+  function _ruPluralFiles(n, one, few, many) {
+    const nAbs = Math.abs(n) % 100;
+    const n1 = nAbs % 10;
+    if (nAbs >= 11 && nAbs <= 19) return many;
+    if (n1 === 1) return one;
+    if (n1 >= 2 && n1 <= 4) return few;
+    return many;
+  }
+
+  function formatTorrentFilesSummaryFromStatuses(statuses) {
+    const counts = { new: 0, changed: 0, checking: 0, ok: 0, removed: 0 };
+    (statuses || []).forEach((raw) => {
+      const status = String(raw || "ok").toLowerCase();
+      if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
+      else counts.ok += 1;
+    });
+    const active = counts.new + counts.changed + counts.checking + counts.ok;
+    const removed = counts.removed;
+    if (active === 0) {
+      if (removed === 0) return "0 файлов.";
+      return `${removed} ${_ruPluralFiles(removed, "удалён", "удалённых", "удалённых")}.`;
+    }
+    let head = `${active} ${_ruPluralFiles(active, "файл", "файла", "файлов")}`;
+    const order = [
+      ["new", "новый", "новые", "новых"],
+      ["changed", "изменён", "изменённые", "изменённых"],
+      ["checking", "проверка", "проверки", "проверок"],
+      ["ok", "старый", "старые", "старых"],
+    ];
+    const detail = order
+      .filter(([key]) => counts[key])
+      .map(([key, one, few, many]) => `${counts[key]} ${_ruPluralFiles(counts[key], one, few, many)}`);
+    const interesting = counts.new || counts.changed || counts.checking || removed;
+    if (interesting && detail.length) head += ` (${detail.join(", ")})`;
+    if (removed) {
+      head += `, ${removed} ${_ruPluralFiles(removed, "удалён", "удалённых", "удалённых")}`;
+    }
+    return `${head}.`;
+  }
+
+  function refreshTorrentFilesSummary(block) {
+    if (!block) return;
+    const details = block.closest("details.torrent-files") || block.closest("details");
+    const textEl = (details || block).querySelector(".torrent-files-summary-text");
+    if (!textEl) return;
+    const listRoot = block.querySelector("ul.file-list") || block;
+    const statuses = [];
+    listRoot.querySelectorAll("li .file-ui-badge[data-ui-status]").forEach((badge) => {
+      statuses.push(badge.getAttribute("data-ui-status") || "ok");
+    });
+    // Fallback: бейджи без data-ui-status (старый HTML до деплоя).
+    if (!statuses.length) {
+      listRoot.querySelectorAll("li .file-ui-badge").forEach((badge) => {
+        const t = (badge.textContent || "").trim().toLowerCase();
+        if (t === "новый") statuses.push("new");
+        else if (t === "изменён") statuses.push("changed");
+        else if (t === "проверка") statuses.push("checking");
+        else if (t === "удалён") statuses.push("removed");
+        else statuses.push("ok");
+      });
+    }
+    textEl.textContent = formatTorrentFilesSummaryFromStatuses(statuses);
+  }
+
+  function applyDownloadableProbe(block, data) {
+    if (!block || !data) return;
+    const ids = new Set((data.file_ids || []).map(String));
+    const checking = new Set((data.checking_ids || []).map(String));
+    // Бейджи ↔ checking_ids: и выставить «проверка», и вернуть sticky после снятия overlay.
+    block.querySelectorAll("li[data-file-id]").forEach((li) => {
+      const id = li.getAttribute("data-file-id");
+      if (!id) return;
+      const stickyRaw = (li.getAttribute("data-sticky-status") || "ok").toLowerCase();
+      const sticky = ["new", "ok", "changed", "removed"].includes(stickyRaw)
+        ? stickyRaw
+        : "ok";
+      const display = checking.has(id) ? "checking" : sticky;
+      setFileUiBadge(li.querySelector(".file-ui-badge"), display);
+    });
+    block.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
+      const id = slot.getAttribute("data-file-id");
+      if (!id) return;
+      const li = slot.closest("li[data-file-id]");
+      // checking и не-downloadable — убрать кнопки (в т.ч. stale media_present).
+      if (!ids.has(id) || checking.has(id)) {
+        clearDownloadableSlotButtons(slot);
+        return;
+      }
+      if (!slot.querySelector("a.file-download")) {
+        const link = document.createElement("a");
+        link.className = "btn-icon file-download";
+        link.href = `/api/torrent-files/${id}/download`;
+        link.title = "Скачать файл";
+        link.setAttribute("download", "");
+        link.innerHTML = _DOWNLOAD_ICON;
+        slot.insertBefore(link, slot.firstChild);
+      }
+      ensureCopyPathButton(slot);
+      ensureEncoderButton(slot);
+      ensureMediaInfoButton(slot);
+      ensureFileEncodeCheckbox(li, id);
+    });
+    refreshTorrentFilesSummary(block);
+    syncTorrentEncodeSelectActions(block.closest(".torrent-files") || block);
+    updateEncoderBatchBar();
+    restoreEncodeChecksIfNeeded(block);
+  }
+
+  function probeResultIsEmpty(data) {
+    if (!data) return true;
+    return !(data.file_ids || []).length && !(data.checking_ids || []).length;
+  }
+
+  function cacheDownloadableProbe(hash, data) {
+    if (!hash || !data) return;
+    // Пустой ответ не кэшируем — иначе блокируем повторный probe на том же DOM.
+    if (probeResultIsEmpty(data)) {
+      _downloadProbeCache.delete(hash);
+      return;
+    }
+    _downloadProbeCache.set(hash, {
+      file_ids: data.file_ids || [],
+      checking_ids: data.checking_ids || [],
+      ts: Date.now(),
+    });
+  }
+
+  function cachedDownloadableProbe(hash) {
+    const hit = _downloadProbeCache.get(hash);
+    if (!hit) return null;
+    if (Date.now() - hit.ts > _DOWNLOAD_PROBE_TTL_MS) return null;
+    if (probeResultIsEmpty(hit)) return null;
+    return hit;
+  }
+
+  function clearDownloadQueued(blocks) {
+    (blocks || []).forEach((el) => {
+      if (el && el.removeAttribute) el.removeAttribute("data-download-queued");
+    });
+  }
+
+  function enqueueDownloadableChecks(root) {
+    const scope = root || document;
+    scope.querySelectorAll(".file-download-slot[data-file-id]").forEach((slot) => {
+      // MediaInfo / copy / encoder — только для downloadable (как «Скачать»).
+      if (slot.querySelector("a.file-download")) {
+        ensureCopyPathButton(slot);
+        ensureEncoderButton(slot);
+        ensureMediaInfoButton(slot);
+        const li = slot.closest("li[data-file-id]");
+        ensureFileEncodeCheckbox(li, slot.getAttribute("data-file-id"));
+      }
+    });
+    scope.querySelectorAll(".torrent-files").forEach((block) => {
+      syncTorrentEncodeSelectActions(block);
+    });
+    updateEncoderBatchBar();
+    scope.querySelectorAll(
+      ".torrent-files[data-download-check]:not([data-download-queued]), .torrent-files-loaded[data-download-check]:not([data-download-queued])"
+    ).forEach((el) => {
+      el.setAttribute("data-download-queued", "1");
+      const hash = el.getAttribute("data-download-check");
+      const wantRefresh = el.getAttribute("data-download-refresh") === "1";
+      const cached = hash ? cachedDownloadableProbe(hash) : null;
+      // Кэш + refresh: не применяем — пустые checking_ids иначе снимут SSR «проверка»
+      // и мелькнут кнопки до ответа сети.
+      if (cached && !wantRefresh) {
+        applyDownloadableProbe(el, cached);
+        return;
+      }
+      _downloadCheckQueue.push(el);
+    });
+    pumpDownloadableQueue();
+  }
+
+  function chunkHashes(hashes, size) {
+    const out = [];
+    for (let i = 0; i < hashes.length; i += size) out.push(hashes.slice(i, i + size));
+    return out;
+  }
+
+  async function postDownloadableProbe(hashes, refresh, byHash) {
+    if (!hashes.length) return;
+    const chunks = chunkHashes(hashes, _DOWNLOAD_PROBE_CHUNK);
+    for (const chunk of chunks) {
+      const chunkBlocks = [];
+      chunk.forEach((hash) => {
+        (byHash.get(hash) || []).forEach((block) => chunkBlocks.push(block));
+      });
+      try {
+        const resp = await fetch("/api/torrents/downloadable-files", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ hashes: chunk, refresh: !!refresh }),
+        });
+        if (!resp.ok) {
+          clearDownloadQueued(chunkBlocks);
+          continue;
+        }
+        const payload = await resp.json();
+        (payload.items || []).forEach((item) => {
+          const hash = item.info_hash;
+          if (!hash) return;
+          cacheDownloadableProbe(hash, item);
+          (byHash.get(hash) || []).forEach((block) => {
+            applyDownloadableProbe(block, item);
+            // Пустой ответ — не блокируем повторный enqueue (Hash backfill / retry).
+            if (probeResultIsEmpty(item)) {
+              block.removeAttribute("data-download-queued");
+            }
+          });
+        });
+      } catch (_) {
+        clearDownloadQueued(chunkBlocks);
+      }
+    }
+  }
+
+  async function pumpDownloadableQueue() {
+    if (_downloadCheckBusy) return;
+    _downloadCheckBusy = true;
+    while (_downloadCheckQueue.length) {
+      const batch = _downloadCheckQueue.splice(0, _downloadCheckQueue.length);
+      const byHash = new Map();
+      const refreshHashes = [];
+      const dbOnlyHashes = [];
+      const seenRefresh = new Set();
+      const seenDb = new Set();
+      batch.forEach((block) => {
+        const hash = block.getAttribute("data-download-check");
+        if (!hash) return;
+        if (!byHash.has(hash)) byHash.set(hash, []);
+        byHash.get(hash).push(block);
+      });
+      byHash.forEach((blocks, hash) => {
+        const wantRefresh = blocks.some((b) => b.getAttribute("data-download-refresh") === "1");
+        if (wantRefresh) {
+          if (!seenRefresh.has(hash)) {
+            seenRefresh.add(hash);
+            refreshHashes.push(hash);
+          }
+        } else if (!seenDb.has(hash)) {
+          seenDb.add(hash);
+          dbOnlyHashes.push(hash);
+        }
+      });
+      // refresh не должен заражать весь батч: две группы запросов.
+      await postDownloadableProbe(refreshHashes, true, byHash);
+      await postDownloadableProbe(dbOnlyHashes, false, byHash);
+    }
+    _downloadCheckBusy = false;
+  }
+
+  // .release-name — без toggle (выделение текста / dblclick).
+  // Остальной summary — native toggle, но не если есть Range-selection или dblclick.
+  document.addEventListener("click", (event) => {
+    const summary = event.target.closest("summary.release-summary");
+    if (!summary) return;
+    if (event.target.closest("button, a, input, label")) return;
+    if (event.target.closest(".release-name")) {
+      event.preventDefault();
+      return;
+    }
+    const selection = window.getSelection();
+    const hasRange =
+      selection &&
+      selection.type === "Range" &&
+      String(selection).length > 0;
+    if (hasRange || event.detail > 1) {
+      event.preventDefault();
+    }
+  });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    formatLocalTimes();
+    enqueueDownloadableChecks();
+    refreshEncoderReceipts();
+    initUiSse();
+  });
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    formatLocalTimes(event.detail.target);
+    enqueueDownloadableChecks(event.detail.target);
+    const target = event.detail.target;
+    if (target && target.id === "job-detail-live") {
+      const marker = target.querySelector("[data-selected-job-status]");
+      if (marker) {
+        target.setAttribute(
+          "data-job-status",
+          marker.getAttribute("data-selected-job-status") || ""
+        );
+      }
+    }
+    const sel = target && target.id ? `#${target.id}` : null;
+    if (sel && _uiSsePreserveByTarget.has(sel)) {
+      restoreUiSsePreserve(target, _uiSsePreserveByTarget.get(sel));
+      _uiSsePreserveByTarget.delete(sel);
+    }
+    refreshEncoderReceipts();
+  });
+  document.body.addEventListener("htmx:beforeSwap", (event) => {
+    const target = event.detail.target;
+    const sel = target && target.id ? `#${target.id}` : null;
+    if (event.detail.shouldSwap && sel && _uiSsePreserveByTarget.has(sel)) {
+      // Capture immediately before replacement: the user may have scrolled,
+      // selected files or changed job options while the request was in flight.
+      _uiSsePreserveByTarget.set(sel, captureUiSsePreserve(target));
+    }
+  });
+
+  function setUiLiveStatus(message) {
+    const status = document.getElementById("ui-live-status");
+    if (!status) return;
+    status.hidden = false;
+    if (status.textContent !== message) status.textContent = message;
+  }
+
+  function showUiRequestError(event) {
+    const target = event.detail && event.detail.target;
+    if (target && target.id && _uiSsePreserveByTarget.has(`#${target.id}`)) {
+      // HTMX 1.x resolves ajax() even after HTTP errors: record the event too.
+      _uiSseFailed.add(`#${target.id}`);
+      return;
+    }
+    const status = document.getElementById("ui-action-error");
+    if (!status) return;
+    const code = event.detail && event.detail.xhr && event.detail.xhr.status;
+    status.textContent = code
+      ? `Действие не выполнено (HTTP ${code}). Проверьте введённые данные и повторите попытку.`
+      : "Нет связи с сервером. Действие не подтверждено; проверьте его состояние перед повтором.";
+    status.hidden = false;
+  }
+  ["htmx:responseError", "htmx:sendError", "htmx:timeout"].forEach((name) => {
+    document.body.addEventListener(name, showUiRequestError);
+  });
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    if (event.detail.requestConfig && event.detail.requestConfig.verb !== "get") {
+      const status = document.getElementById("ui-action-error");
+      if (status) { status.textContent = ""; status.hidden = true; }
+    }
+  });
+
+  let _uiSseSource = null;
+  let _uiSseChannels = [];
+  let _uiSseRefreshing = new Set();
+  const _uiSsePending = new Map();
+  const _uiSseFailed = new Set();
+  const _uiSsePreserveByTarget = new Map();
+
+  function captureUiFocus(scope) {
+    const active = document.activeElement;
+    if (!active || !scope.contains(active)) return null;
+    const attrs = ["id", "name", "form", "type", "href", "hx-post", "data-file-id", "data-failure-id", "data-selection-key", "data-outbox-retry", "title", "aria-label"];
+    const selector = active.tagName.toLowerCase() + attrs.filter((name) => active.hasAttribute(name))
+      .map((name) => `[${name}="${cssAttrQuote(active.getAttribute(name))}"]`).join("");
+    const keyed = active.closest("[data-sse-key]");
+    return {selector, key: keyed && keyed.getAttribute("data-sse-key"), text: active.textContent,
+      start: active.selectionStart, end: active.selectionEnd};
+  }
+
+  function restoreUiFocus(scope, state) {
+    if (!state) return;
+    const context = state.key ? scope.querySelector(`[data-sse-key="${cssAttrQuote(state.key)}"]`) : scope;
+    if (!context) return;
+    const active = [...context.querySelectorAll(state.selector)].find((el) => !el.disabled && el.textContent === state.text);
+    if (!active) return;
+    active.focus({preventScroll: true});
+    if (typeof state.start === "number" && typeof active.setSelectionRange === "function") {
+      active.setSelectionRange(state.start, state.end);
+    }
+  }
+
+  function captureUiSsePreserve(root) {
+    const scope = root || document;
+    const openKeys = [...scope.querySelectorAll("details[open][data-sse-key]")].map(
+      (el) => el.getAttribute("data-sse-key")
+    );
+    const lazyBodies = {};
+    const encodeChecked = {};
+    scope.querySelectorAll("details.torrent-files[data-sse-key]").forEach((details) => {
+      const key = details.getAttribute("data-sse-key");
+      if (!key) return;
+      const body = details.querySelector(":scope > .torrent-files-body");
+      if (body && body.querySelector(".torrent-files-loaded, .file-list")) {
+        lazyBodies[key] = body.innerHTML;
+      }
+      const checkedIds = [...details.querySelectorAll(".file-encode-check:checked")]
+        .map((el) => el.getAttribute("data-file-id"))
+        .filter(Boolean);
+      if (checkedIds.length) {
+        encodeChecked[key] = checkedIds;
+      }
+    });
+    return {
+      scrollY: window.scrollY,
+      openKeys,
+      lazyBodies,
+      encodeChecked,
+      focus: captureUiFocus(scope),
+      jobOptions: [...scope.querySelectorAll("input[name][form]:not([type=hidden])")]
+        .filter((el) => !el.disabled)
+        .map((el) => ({name: el.name, form: el.getAttribute("form"), value: el.value, checked: el.checked})),
+      tableScrolls: [...scope.querySelectorAll(".table-scroll[aria-label]")]
+        .map((el) => ({label: el.getAttribute("aria-label"), left: el.scrollLeft})),
+    };
+  }
+
+  function stripTorrentFileActionWidgets(scope) {
+    // После innerHTML-restore JS-кнопки без listeners — снести и создать заново.
+    // a.file-download не трогаем: href работает без rewire; без него enqueue не восстановит
+    // кнопки у блоков без data-download-check (eager archive).
+    if (!scope) return;
+    scope
+      .querySelectorAll(".file-copy-path, .file-send-encoder, .file-mediainfo, .file-encode-check")
+      .forEach((el) => el.remove());
+    scope.querySelectorAll(".torrent-encode-select-actions").forEach((el) => {
+      delete el.dataset.bound;
+    });
+    // Иначе :not([data-download-queued]) пропустит повторный probe.
+    const details =
+      (scope.closest && scope.closest("details.torrent-files, details.torrent-files-loaded")) ||
+      (scope.matches &&
+      scope.matches("details.torrent-files, details.torrent-files-loaded")
+        ? scope
+        : null);
+    if (details) details.removeAttribute("data-download-queued");
+  }
+
+  function restoreUiSsePreserve(root, state) {
+    if (!state) return;
+    const scope = root || document;
+    const lazyBodies = state.lazyBodies || {};
+    const encodeChecked = state.encodeChecked || {};
+    (state.openKeys || []).forEach((key) => {
+      const el = scope.querySelector(`details[data-sse-key="${cssAttrQuote(key)}"]`);
+      if (!el) return;
+      const checked = encodeChecked[key] || [];
+      if (checked.length) {
+        // Чекбоксы пересоздаст probe → restoreEncodeChecksIfNeeded в applyDownloadableProbe.
+        el.dataset.encodeRestoreIds = checked.join(",");
+      } else {
+        delete el.dataset.encodeRestoreIds;
+      }
+      const savedHtml = lazyBodies[key];
+      if (savedHtml) {
+        const body = el.querySelector(":scope > .torrent-files-body");
+        if (body) {
+          body.innerHTML = savedHtml;
+          // Сначала снимаем lazy-триггеры, иначе open=true снова дернёт hx-get.
+          body.removeAttribute("hx-get");
+          body.removeAttribute("hx-trigger");
+          if (window.htmx) htmx.process(body);
+          stripTorrentFileActionWidgets(body);
+          if (typeof enqueueDownloadableChecks === "function") {
+            enqueueDownloadableChecks(el);
+          }
+        }
+      }
+      el.open = true;
+      // Уже есть download-ссылки (eager / кэш) — чекбоксы могли появиться в первом ensure-цикле.
+      restoreEncodeChecksIfNeeded(el);
+      if (!checked.length && typeof syncTorrentEncodeSelectActions === "function") {
+        syncTorrentEncodeSelectActions(el);
+      }
+    });
+    (state.jobOptions || []).forEach((saved) => {
+      const input = scope.querySelector(`input[name="${cssAttrQuote(saved.name)}"][form="${cssAttrQuote(saved.form)}"]`);
+      // An active job disables its options on the server; that state wins.
+      if (!input || input.disabled) return;
+      input.value = saved.value;
+      input.checked = saved.checked;
+    });
+    (state.tableScrolls || []).forEach((saved) => {
+      const table = scope.querySelector(`.table-scroll[aria-label="${cssAttrQuote(saved.label)}"]`);
+      if (table) table.scrollLeft = saved.left;
+    });
+    restoreUiFocus(scope, state.focus);
+    window.scrollTo(0, state.scrollY || 0);
+  }
+
+  function cssAttrQuote(value) {
+    return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+      .replace(/[\u0000-\u001f\u007f]/g, (char) => `\\${char.charCodeAt(0).toString(16)} `);
+  }
+
+  function refreshUiSseTargets(channel) {
+    if (document.visibilityState !== "visible") return;
+    if (!window.htmx) {
+      setUiLiveStatus("Автообновление недоступно. Обновите страницу, чтобы получить актуальные данные.");
+      return;
+    }
+    const activeJobStatuses = new Set(["pending", "running", "stopping"]);
+    document.querySelectorAll(`[data-ui-sse-channel="${cssAttrQuote(channel)}"]`).forEach((el) => {
+      if (el.getAttribute("data-ui-sse-active-only") === "1") {
+        const jobStatus = (el.getAttribute("data-job-status") || "").toLowerCase();
+        // Финальный джоб: не тянем логи/детали на каждый jobs-event.
+        if (!activeJobStatuses.has(jobStatus)) return;
+      }
+      const url = el.getAttribute("data-ui-sse-url");
+      const targetSel = el.getAttribute("data-ui-sse-target") || (el.id ? `#${el.id}` : null);
+      if (!url || !targetSel) return;
+      const key = targetSel;
+      if (_uiSseRefreshing.has(key)) { _uiSsePending.set(key, channel); return; }
+      _uiSseRefreshing.add(key);
+      _uiSsePreserveByTarget.set(targetSel, null);
+      Promise.resolve().then(() => htmx.ajax("GET", url, {
+          target: targetSel,
+          swap: "innerHTML settle:0 show:none",
+        }))
+        .then(() => {
+          if (_uiSseFailed.delete(key)) throw new Error("live response failed");
+          if (_uiSseSource && _uiSseSource.readyState === 1) setUiLiveStatus("Автообновление подключено");
+        })
+        .catch(() => {
+          _uiSseFailed.delete(key);
+          setUiLiveStatus("Данные не обновились. Повторяем подключение; на странице могут быть устаревшие данные.");
+          _uiSsePending.set(key, channel);
+        })
+        .finally(() => {
+          _uiSsePreserveByTarget.delete(targetSel);
+          // Keep one request per target in flight, then allow the normal 3 s cadence.
+          setTimeout(() => {
+            _uiSseRefreshing.delete(key);
+            const pendingChannel = _uiSsePending.get(key);
+            _uiSsePending.delete(key);
+            if (pendingChannel) refreshUiSseTargets(pendingChannel);
+          }, 3000);
+        });
+    });
+  }
+
+  function initUiSse() {
+    const nodes = [...document.querySelectorAll("[data-ui-sse-channel]")];
+    if (!nodes.length || typeof EventSource === "undefined") return;
+    const channels = [...new Set(nodes.map((n) => n.getAttribute("data-ui-sse-channel")).filter(Boolean))];
+    if (document.querySelector("[data-encoder-enabled]") && !channels.includes("encoder")) channels.push("encoder");
+    if (!channels.length) return;
+    _uiSseChannels = channels;
+    setUiLiveStatus("Автообновление подключается…");
+    const url = `/ui/events?channels=${encodeURIComponent(channels.join(","))}`;
+    if (_uiSseSource) {
+      _uiSseSource.close();
+      _uiSseSource = null;
+    }
+    const es = new EventSource(url);
+    _uiSseSource = es;
+    let opened = false;
+    es.onopen = () => {
+      setUiLiveStatus("Автообновление подключено");
+      // Reconnect also refreshes data whose earlier partial request failed.
+      if (opened) channels.forEach((ch) => refreshUiSseTargets(ch));
+      opened = true;
+    };
+    channels.forEach((ch) => {
+      es.addEventListener(ch, () => {
+        refreshUiSseTargets(ch);
+        if (ch === "encoder") refreshEncoderReceipts();
+      });
+    });
+    es.onerror = () => {
+      setUiLiveStatus("Нет связи для автообновления. Браузер переподключается; данные могут быть устаревшими.");
+    };
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !_uiSseChannels.length) return;
+    // Пока вкладка была скрыта, события могли пройти мимо — один refresh при возврате.
+    _uiSseChannels.forEach((ch) => refreshUiSseTargets(ch));
+    if (_uiSseChannels.includes("encoder")) refreshEncoderReceipts();
+  });
+  </script>
+  <script src="/static/operations.js" defer></script>
+</body>
+</html>

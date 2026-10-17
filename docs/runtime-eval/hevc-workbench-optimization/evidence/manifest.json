@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "success": true,
+  "created_utc": "2026-10-17T12:03:58.659426+00:00",
+  "run_root_name": "altt-workbench-opt-20261017",
+  "archive_script_sha256": "5bccacfc5c92e51510065e56b970c97c5d752fe7700e68cb0feb1ea340287b4c",
+  "series": {
+    "comparison-python": {
+      "analysis": "comparison-python-analysis.json",
+      "samples": 64,
+      "requests": 512,
+      "psycopg_backend": "python"
+    },
+    "comparison-c": {
+      "analysis": "comparison-c-analysis.json",
+      "samples": 64,
+      "requests": 512,
+      "psycopg_backend": "c"
+    },
+    "renderer-c": {
+      "analysis": "renderer-c-analysis.json",
+      "samples": 64,
+      "requests": 512,
+      "psycopg_backend": "c"
+    }
+  },
+  "samples": 192,
+  "requests": 1536,
+  "archive": {
+    "name": "raw-evidence.tar.gz",
+    "bytes": 4708612,
+    "sha256": "a31c2e2e8c79054485558fa8537a58b571f1636ecf304fe5c011cceb7da4582f"
+  },
+  "archive_member_manifest": {
+    "name": "archive-members.json",
+    "bytes": 97402,
+    "sha256": "44b0cfa8ffb5a3263e6d6c9a599e19a6e8898c501ddb83b3704cb1fadaad9cc3"
+  },
+  "delivery_files": [
+    {
+      "name": "comparison-python-analysis.json",
+      "bytes": 54173,
+      "sha256": "2b1b3002021eb40fc56c8fb584fd29fdc8069623192506e3edf6da2f533359ff"
+    },
+    {
+      "name": "comparison-c-analysis.json",
+      "bytes": 54149,
+      "sha256": "291a6cbe3e07eadb00cd5ea1e9a4cac1e25d54e1e7f5c1ef675c53f44f90be93"
+    },
+    {
+      "name": "renderer-c-analysis.json",
+      "bytes": 81953,
+      "sha256": "e340ee36cae4eecc671ddb84755802c70b63f334818fd7ffe3f5f34045fb28a2"
+    },
+    {
+      "name": "host-platform.json",
+      "bytes": 200,
+      "sha256": "f0d0ee516a3d370881313cf905957412c545eb8d847749d914f862225ab98765"
+    },
+    {
+      "name": "primary-series-complete.json",
+      "bytes": 142,
+      "sha256": "33592fb81bc21f7d2e5ae66d95f96a3b51f03581c234c5d7680d76ba0deefc88"
+    },
+    {
+      "name": "fixture.json",
+      "bytes": 1169,
+      "sha256": "17029b9431cef35ff0a1aa8018501ca7718f6260ebe4ae45b35ee16398171c13"
+    },
+    {
+      "name": "c-driver-summary.json",
+      "bytes": 2647,
+      "sha256": "c8021211873f965e034ce970f59056e76b3ac31061052734befb5cea657117c0"
+    },
+    {
+      "name": "validation-receipts.json",
+      "bytes": 3236,
+      "sha256": "2eb81636d1e8e7511ff71de004c21c8a044c73d2b17765f233912b86734164a4"
+    },
+    {
+      "name": "sql-explain-status.json",
+      "bytes": 1333,
+      "sha256": "471b9247e3c6087dddd0489c934f10f7e3866245804cf79ebde511a79199ad6f"
+    },
+    {
+      "name": "archive-members.json",
+      "bytes": 97402,
+      "sha256": "44b0cfa8ffb5a3263e6d6c9a599e19a6e8898c501ddb83b3704cb1fadaad9cc3"
+    }
+  ],
+  "omitted": [
+    {
+      "name": "host-tools/__pycache__",
+      "reason": "Generated runtime cache directory excluded without traversal"
+    }
+  ],
+  "omitted_entries": 1,
+  "excluded_runtime_cache_directories": [
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__"
+  ],
+  "source_snapshots": "Only frozen/{baseline,optimized}/source-manifest.json and source-backend.tar.gz; verified against nested archive contents",
+  "excluded_subtrees": [
+    "pilot-projection",
+    "final-optimized",
+    "frozen/baseline/backend",
+    "frozen/optimized/backend",
+    "c-driver root duplicates"
+  ],
+  "policy": "Explicit bounded evidence trees; no .env, user data, media, databases, caches, symlinks, special files, or native built wheels; no Docker/SQL/deletion"
+}

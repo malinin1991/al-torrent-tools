@@ -1,0 +1,47 @@
+{
+  "status": "passed",
+  "image_id": "sha256:0a835fd064c702ac9c6d4fb7a33d22e696f6d38354d404bfc1be95b0bcf2576f",
+  "workdir": "/app",
+  "source_bind_mount": false,
+  "source_files_verified_before_after": 263,
+  "source_manifest_sha256": "fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a",
+  "runtime": {
+    "stage": "after_pytest_complete",
+    "implementation": "cpython",
+    "python_version": [
+      3,
+      15,
+      0
+    ],
+    "python": "3.15.0 (main, Oct 12 2026, 22:32:55) [GCC 14.2.0]",
+    "free_threaded_build": false,
+    "gil_enabled": true,
+    "jit_available": false,
+    "jit_enabled": false,
+    "psycopg_impl": "binary",
+    "psycopg_version": "3.3.6",
+    "libpq_version": 180006
+  },
+  "passed": 1504,
+  "skipped": [
+    {
+      "nodeid": "tests/test_minijinja_workbench_experiment.py",
+      "reason": "('/app/tests/test_minijinja_workbench_experiment.py', 22, 'Skipped: Optional experiment requires minijinja==3.0.1 in its isolated environment')"
+    }
+  ],
+  "warning": "Existing StarletteDeprecationWarning: httpx with starlette.testclient is deprecated",
+  "pip_check": "passed",
+  "compileall": "passed",
+  "pytest_exit_code": 0,
+  "logs": "attempt-02/",
+  "junit": "attempt-02/pytest-junit.xml",
+  "actual_commands": "attempt-02/test-commands.jsonl",
+  "initial_attempt_preserved": {
+    "directory": ".",
+    "result": "1502 passed,2 failed,1 skipped",
+    "reason": "Invocation TORRENT_STORAGE_DIR and AniLibria API URL overrides changed fallback defaults; removed for second attempt, no source edits"
+  },
+  "postgres_receipt": "postgres-fixture.json",
+  "postgres_retained_for_root": true,
+  "production_or_test_source_edits": false
+}

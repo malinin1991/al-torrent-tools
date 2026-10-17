@@ -1,0 +1,1752 @@
+{
+  "method": {
+    "point": "pooled latency median/p95; total requests / total batch wall; CPU ms per completed response",
+    "confidence": "5000 paired block bootstrap resamples of eight whole rounds",
+    "seed": 315017,
+    "p95_limit": "64 HTTP observations per configuration; exploratory tail estimate",
+    "memory_limit": "Application-process RSS only; includes setup/warmup, excludes PostgreSQL",
+    "context_limit": "Context event wall time includes I/O, scheduling and instrumentation; pooled medians are not additive or isolated CPU measurements",
+    "outliers_removed": 0
+  },
+  "samples": 64,
+  "requests": 512,
+  "files": [
+    "http-r00-ft_off-c1-baseline.json",
+    "http-r00-ft_off-c1-optimized.json",
+    "http-r00-ft_off-c4-baseline.json",
+    "http-r00-ft_off-c4-optimized.json",
+    "http-r00-regular-c1-baseline.json",
+    "http-r00-regular-c1-optimized.json",
+    "http-r00-regular-c4-baseline.json",
+    "http-r00-regular-c4-optimized.json",
+    "http-r01-ft_off-c1-baseline.json",
+    "http-r01-ft_off-c1-optimized.json",
+    "http-r01-ft_off-c4-baseline.json",
+    "http-r01-ft_off-c4-optimized.json",
+    "http-r01-regular-c1-baseline.json",
+    "http-r01-regular-c1-optimized.json",
+    "http-r01-regular-c4-baseline.json",
+    "http-r01-regular-c4-optimized.json",
+    "http-r02-ft_off-c1-baseline.json",
+    "http-r02-ft_off-c1-optimized.json",
+    "http-r02-ft_off-c4-baseline.json",
+    "http-r02-ft_off-c4-optimized.json",
+    "http-r02-regular-c1-baseline.json",
+    "http-r02-regular-c1-optimized.json",
+    "http-r02-regular-c4-baseline.json",
+    "http-r02-regular-c4-optimized.json",
+    "http-r03-ft_off-c1-baseline.json",
+    "http-r03-ft_off-c1-optimized.json",
+    "http-r03-ft_off-c4-baseline.json",
+    "http-r03-ft_off-c4-optimized.json",
+    "http-r03-regular-c1-baseline.json",
+    "http-r03-regular-c1-optimized.json",
+    "http-r03-regular-c4-baseline.json",
+    "http-r03-regular-c4-optimized.json",
+    "http-r04-ft_off-c1-baseline.json",
+    "http-r04-ft_off-c1-optimized.json",
+    "http-r04-ft_off-c4-baseline.json",
+    "http-r04-ft_off-c4-optimized.json",
+    "http-r04-regular-c1-baseline.json",
+    "http-r04-regular-c1-optimized.json",
+    "http-r04-regular-c4-baseline.json",
+    "http-r04-regular-c4-optimized.json",
+    "http-r05-ft_off-c1-baseline.json",
+    "http-r05-ft_off-c1-optimized.json",
+    "http-r05-ft_off-c4-baseline.json",
+    "http-r05-ft_off-c4-optimized.json",
+    "http-r05-regular-c1-baseline.json",
+    "http-r05-regular-c1-optimized.json",
+    "http-r05-regular-c4-baseline.json",
+    "http-r05-regular-c4-optimized.json",
+    "http-r06-ft_off-c1-baseline.json",
+    "http-r06-ft_off-c1-optimized.json",
+    "http-r06-ft_off-c4-baseline.json",
+    "http-r06-ft_off-c4-optimized.json",
+    "http-r06-regular-c1-baseline.json",
+    "http-r06-regular-c1-optimized.json",
+    "http-r06-regular-c4-baseline.json",
+    "http-r06-regular-c4-optimized.json",
+    "http-r07-ft_off-c1-baseline.json",
+    "http-r07-ft_off-c1-optimized.json",
+    "http-r07-ft_off-c4-baseline.json",
+    "http-r07-ft_off-c4-optimized.json",
+    "http-r07-regular-c1-baseline.json",
+    "http-r07-regular-c1-optimized.json",
+    "http-r07-regular-c4-baseline.json",
+    "http-r07-regular-c4-optimized.json"
+  ],
+  "source_differences": [
+    "app/services/hevc_workbench.py"
+  ],
+  "allowed_implementation_differences": [
+    "app/services/hevc_workbench.py"
+  ],
+  "package_versions": {
+    "alembic": "1.20.0",
+    "annotated-doc": "0.0.5",
+    "annotated-types": "0.8.0",
+    "anyio": "4.15.1",
+    "apscheduler": "3.11.3",
+    "blake3": "1.0.11",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.2",
+    "click": "8.5.0",
+    "fastapi": "0.143.3",
+    "h11": "0.16.0",
+    "httpcore": "1.0.9",
+    "httptools": "0.9.0",
+    "httpx": "0.28.1",
+    "idna": "3.20",
+    "iniconfig": "2.3.1",
+    "jinja2": "3.1.6",
+    "mako": "1.4.3",
+    "markupsafe": "3.0.4",
+    "minijinja": "3.0.1",
+    "opentelemetry-api": "1.45.1",
+    "packaging": "26.3",
+    "pip": "26.2.1",
+    "pluggy": "1.7.0",
+    "psycopg": "3.3.6",
+    "pydantic": "2.14.1",
+    "pydantic-core": "2.50.1",
+    "pydantic-settings": "2.16.0",
+    "pygments": "2.21.0",
+    "pymediainfo": "7.0.1",
+    "pytest": "9.1.1",
+    "python-dotenv": "1.2.4",
+    "python-multipart": "0.0.32",
+    "python-telegram-bot": "22.8",
+    "pyyaml": "6.0.3",
+    "qbittorrent-api": "2026.10.0",
+    "requests": "2.34.2",
+    "sqlalchemy": "2.1.4",
+    "starlette": "1.8.0",
+    "typing-extensions": "4.16.0",
+    "typing-inspection": "0.4.4",
+    "tzlocal": "5.4.4",
+    "urllib3": "2.8.0",
+    "uvicorn": "0.54.0",
+    "uvloop": "0.23.0",
+    "watchfiles": "1.3.0",
+    "websockets": "17.2"
+  },
+  "psycopg_backend": "python",
+  "libpq_version": 170011,
+  "expected_psycopg_implementation": "python",
+  "source_files": {
+    "baseline": {
+      "scripts/benchmark_minijinja_workbench.py": "0226a2f88549ba2a58bb47cf0122b3934a7387230bb785a16fe102d64577c035",
+      "experiments/minijinja_workbench/prototype.py": "68aeb2e5cbb2bf71edea832090ff3f3a71d1e33722048298cc64656b88d7986f",
+      "app/api/hevc_workbench.py": "400d6b1261aba726962c8b37b45d6fe8634a898c4b2eac78cdd43497b9c27c3a",
+      "app/services/hevc_workbench.py": "0ed990e00bb6e4e1c2bff88d48b1490a09e926d66f3f147b2929e95a289fb8db",
+      "app/templates/base.html": "ed6c4a531d32733b8330b77925734a42ea6aa21375ad793797ffff1d3dc23f0d",
+      "app/templates/hevc_workbench.html": "70431c0d18d80d69011dfc47d0406a1752639417427165fed031db1179ed3ab3",
+      "app/templates/partials/hevc_workbench_live.html": "9c4fd54e706d0c20c39b6e51c66c932cbd92f11ec2ef3ae35fbcf8fdd6df69e2"
+    },
+    "optimized": {
+      "scripts/benchmark_minijinja_workbench.py": "0226a2f88549ba2a58bb47cf0122b3934a7387230bb785a16fe102d64577c035",
+      "experiments/minijinja_workbench/prototype.py": "68aeb2e5cbb2bf71edea832090ff3f3a71d1e33722048298cc64656b88d7986f",
+      "app/api/hevc_workbench.py": "400d6b1261aba726962c8b37b45d6fe8634a898c4b2eac78cdd43497b9c27c3a",
+      "app/services/hevc_workbench.py": "e5838d5cef83af43407130d12e9d6044773e5a459186b2b4f70944054af51ef4",
+      "app/templates/base.html": "ed6c4a531d32733b8330b77925734a42ea6aa21375ad793797ffff1d3dc23f0d",
+      "app/templates/hevc_workbench.html": "70431c0d18d80d69011dfc47d0406a1752639417427165fed031db1179ed3ab3",
+      "app/templates/partials/hevc_workbench_live.html": "9c4fd54e706d0c20c39b6e51c66c932cbd92f11ec2ef3ae35fbcf8fdd6df69e2"
+    }
+  },
+  "semantic_sha256": "9e173286c865ee611d6c5fca7aab77a79d195a4ad2a33f779f60f3640802fdd7",
+  "html_sha256": "8338ae08a434c781d9724bdbd5f5b169273d59d7f2fbf12a7237b07ec5d9d355",
+  "clock_gap_max_abs_sec": 0.002132043009623885,
+  "summaries": [
+    {
+      "variant": "baseline",
+      "mode": "ft_off",
+      "concurrency": 1,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 1409.4670424819924,
+      "p95_ms": 1477.7277589368168,
+      "context_median_ms": 1404.9648130021524,
+      "context_p95_ms": 1473.3684715232812,
+      "throughput_per_sec": 0.7064940228795413,
+      "cpu_ms_per_response": 1400.3355914375,
+      "cpu_average_cores": 0.9893287253760812,
+      "rss_after_mean_mib": 221.56494140625,
+      "peak_rss_max_mib": 374.75,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 1,
+      "context_worker_threads_max": 1,
+      "peak_context_concurrency": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "ft_off",
+      "concurrency": 4,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 5152.629877004074,
+      "p95_ms": 5466.35430927272,
+      "context_median_ms": 5139.9935229856055,
+      "context_p95_ms": 5455.661568930373,
+      "throughput_per_sec": 0.7672670869446462,
+      "cpu_ms_per_response": 5005.933398484375,
+      "cpu_average_cores": 3.840887936094019,
+      "rss_after_mean_mib": 357.158203125,
+      "peak_rss_max_mib": 381.41015625,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 4,
+      "context_worker_threads_max": 4,
+      "peak_context_concurrency": 4
+    },
+    {
+      "variant": "baseline",
+      "mode": "regular",
+      "concurrency": 1,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 1210.8119589684065,
+      "p95_ms": 1276.5662492223782,
+      "context_median_ms": 1207.1728964801878,
+      "context_p95_ms": 1272.9244241549168,
+      "throughput_per_sec": 0.8230506784452316,
+      "cpu_ms_per_response": 1197.575091578125,
+      "cpu_average_cores": 0.9856649916124861,
+      "rss_after_mean_mib": 166.9716796875,
+      "peak_rss_max_mib": 319.51953125,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 1,
+      "context_worker_threads_max": 1,
+      "peak_context_concurrency": 1
+    },
+    {
+      "variant": "baseline",
+      "mode": "regular",
+      "concurrency": 4,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 27376.089741504984,
+      "p95_ms": 28152.71674694086,
+      "context_median_ms": 27358.724970486946,
+      "context_p95_ms": 28139.305711135967,
+      "throughput_per_sec": 0.14473655410848513,
+      "cpu_ms_per_response": 11185.886862937501,
+      "cpu_average_cores": 1.6190067191889466,
+      "rss_after_mean_mib": 215.8115234375,
+      "peak_rss_max_mib": 318.40625,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 4,
+      "context_worker_threads_max": 4,
+      "peak_context_concurrency": 4
+    },
+    {
+      "variant": "optimized",
+      "mode": "ft_off",
+      "concurrency": 1,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 1165.4890420031734,
+      "p95_ms": 1191.2505375628825,
+      "context_median_ms": 1161.153771536192,
+      "context_p95_ms": 1186.8694813369075,
+      "throughput_per_sec": 0.8566040513471569,
+      "cpu_ms_per_response": 1140.7703150000002,
+      "cpu_average_cores": 0.9771884734855725,
+      "rss_after_mean_mib": 338.6728515625,
+      "peak_rss_max_mib": 352.34765625,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 1,
+      "context_worker_threads_max": 1,
+      "peak_context_concurrency": 1
+    },
+    {
+      "variant": "optimized",
+      "mode": "ft_off",
+      "concurrency": 4,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 4064.183460024651,
+      "p95_ms": 4385.57982329221,
+      "context_median_ms": 4056.560355995316,
+      "context_p95_ms": 4373.800783182378,
+      "throughput_per_sec": 0.9747125260856362,
+      "cpu_ms_per_response": 3913.7329453125,
+      "cpu_average_cores": 3.8147645255501237,
+      "rss_after_mean_mib": 377.50634765625,
+      "peak_rss_max_mib": 408.36328125,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 4,
+      "context_worker_threads_max": 4,
+      "peak_context_concurrency": 4
+    },
+    {
+      "variant": "optimized",
+      "mode": "regular",
+      "concurrency": 1,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 1017.7888965117745,
+      "p95_ms": 1175.895738453255,
+      "context_median_ms": 1014.1151050047483,
+      "context_p95_ms": 1172.0983812818304,
+      "throughput_per_sec": 0.962503937309634,
+      "cpu_ms_per_response": 1011.058380265625,
+      "cpu_average_cores": 0.9731476718555652,
+      "rss_after_mean_mib": 234.5029296875,
+      "peak_rss_max_mib": 288.78515625,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 1,
+      "context_worker_threads_max": 1,
+      "peak_context_concurrency": 1
+    },
+    {
+      "variant": "optimized",
+      "mode": "regular",
+      "concurrency": 4,
+      "rounds": 8,
+      "observations": 64,
+      "median_ms": 22952.29642750928,
+      "p95_ms": 23850.815894891275,
+      "context_median_ms": 22943.645489460323,
+      "context_p95_ms": 23835.951921530068,
+      "throughput_per_sec": 0.17286647711874642,
+      "cpu_ms_per_response": 9387.80577925,
+      "cpu_average_cores": 1.6228369129339557,
+      "rss_after_mean_mib": 251.71044921875,
+      "peak_rss_max_mib": 296.578125,
+      "sql_reads_per_sample": [
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136,
+        136
+      ],
+      "context_worker_threads_min": 4,
+      "context_worker_threads_max": 4,
+      "peak_context_concurrency": 4
+    }
+  ],
+  "comparisons": [
+    {
+      "question": "Optimized / baseline, same runtime",
+      "mode": "regular",
+      "concurrency": 1,
+      "statistics": {
+        "median_ms": {
+          "reference": 1210.8119589684065,
+          "candidate": 1017.7888965117745,
+          "ratio": 0.8405837826204783,
+          "change_percent": -15.941621737952172,
+          "ci95_ratio": [
+            0.828821663385371,
+            0.8747552715888901
+          ]
+        },
+        "p95_ms": {
+          "reference": 1276.5662492223782,
+          "candidate": 1175.895738453255,
+          "ratio": 0.92113961117925,
+          "change_percent": -7.886038882074997,
+          "ci95_ratio": [
+            0.8184428272064459,
+            0.9551314343630659
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1207.1728964801878,
+          "candidate": 1014.1151050047483,
+          "ratio": 0.8400744482929103,
+          "change_percent": -15.992555170708966,
+          "ci95_ratio": [
+            0.8283097417222286,
+            0.8740695062200033
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1272.9244241549168,
+          "candidate": 1172.0983812818304,
+          "ratio": 0.9207918074633348,
+          "change_percent": -7.920819253666522,
+          "ci95_ratio": [
+            0.8178130782267622,
+            0.9549004935515304
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.8230506784452316,
+          "candidate": 0.962503937309634,
+          "ratio": 1.1694345956045307,
+          "change_percent": 16.943459560453068,
+          "ci95_ratio": [
+            1.123142057050184,
+            1.209078230563412
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1197.575091578125,
+          "candidate": 1011.058380265625,
+          "ratio": 0.8442546837988135,
+          "change_percent": -15.574531620118648,
+          "ci95_ratio": [
+            0.8157166112607985,
+            0.8804108616873062
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9856649916124861,
+          "candidate": 0.9731476718555652,
+          "ratio": 0.9873006347354963,
+          "change_percent": -1.269936526450366,
+          "ci95_ratio": [
+            0.9859738187496337,
+            0.9887384403478485
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 166.9716796875,
+          "candidate": 234.5029296875,
+          "ratio": 1.4044473297890385,
+          "change_percent": 40.44473297890385,
+          "ci95_ratio": [
+            1.3744699824274587,
+            1.4372690596127642
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 319.51953125,
+          "candidate": 288.78515625,
+          "ratio": 0.9038106532024401,
+          "change_percent": -9.618934679755986,
+          "ci95_ratio": [
+            0.886426152548382,
+            0.9058927324192184
+          ]
+        }
+      }
+    },
+    {
+      "question": "Optimized / baseline, same runtime",
+      "mode": "regular",
+      "concurrency": 4,
+      "statistics": {
+        "median_ms": {
+          "reference": 27376.089741504984,
+          "candidate": 22952.29642750928,
+          "ratio": 0.8384066769298767,
+          "change_percent": -16.15933230701233,
+          "ci95_ratio": [
+            0.8133964029020231,
+            0.8544668120888607
+          ]
+        },
+        "p95_ms": {
+          "reference": 28152.71674694086,
+          "candidate": 23850.815894891275,
+          "ratio": 0.8471941130684292,
+          "change_percent": -15.280588693157082,
+          "ci95_ratio": [
+            0.8275038857520514,
+            0.859353688265818
+          ]
+        },
+        "context_median_ms": {
+          "reference": 27358.724970486946,
+          "candidate": 22943.645489460323,
+          "ratio": 0.8386226154256324,
+          "change_percent": -16.137738457436757,
+          "ci95_ratio": [
+            0.8134643310412989,
+            0.8545786305534395
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 28139.305711135967,
+          "candidate": 23835.951921530068,
+          "ratio": 0.8470696528982635,
+          "change_percent": -15.293034710173647,
+          "ci95_ratio": [
+            0.8260837431333867,
+            0.8593309713324305
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.14473655410848513,
+          "candidate": 0.17286647711874642,
+          "ratio": 1.1943525820655985,
+          "change_percent": 19.435258206559848,
+          "ci95_ratio": [
+            1.17299927302577,
+            1.2206342307098454
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 11185.886862937501,
+          "candidate": 9387.80577925,
+          "ratio": 0.8392544904378453,
+          "change_percent": -16.07455095621547,
+          "ci95_ratio": [
+            0.8211259760278622,
+            0.854693578579252
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 1.6190067191889466,
+          "candidate": 1.6228369129339557,
+          "ratio": 1.0023657676645887,
+          "change_percent": 0.2365767664588736,
+          "ci95_ratio": [
+            1.000923627435093,
+            1.0037740872359517
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 215.8115234375,
+          "candidate": 251.71044921875,
+          "ratio": 1.1663438782574855,
+          "change_percent": 16.634387825748554,
+          "ci95_ratio": [
+            1.1304279814025053,
+            1.206751452867638
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 318.40625,
+          "candidate": 296.578125,
+          "ratio": 0.9314456767101776,
+          "change_percent": -6.855432328982236,
+          "ci95_ratio": [
+            0.9171901069781137,
+            0.9340813464235624
+          ]
+        }
+      }
+    },
+    {
+      "question": "Optimized / baseline, same runtime",
+      "mode": "ft_off",
+      "concurrency": 1,
+      "statistics": {
+        "median_ms": {
+          "reference": 1409.4670424819924,
+          "candidate": 1165.4890420031734,
+          "ratio": 0.8269005282669204,
+          "change_percent": -17.30994717330796,
+          "ci95_ratio": [
+            0.8190076703971503,
+            0.8307603931153095
+          ]
+        },
+        "p95_ms": {
+          "reference": 1477.7277589368168,
+          "candidate": 1191.2505375628825,
+          "ratio": 0.8061366718995341,
+          "change_percent": -19.386332810046593,
+          "ci95_ratio": [
+            0.7970743755776729,
+            0.8468376095395721
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1404.9648130021524,
+          "candidate": 1161.153771536192,
+          "ratio": 0.8264646635918369,
+          "change_percent": -17.35353364081631,
+          "ci95_ratio": [
+            0.8188926323825896,
+            0.8304492934977805
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1473.3684715232812,
+          "candidate": 1186.8694813369075,
+          "ratio": 0.8055483093851132,
+          "change_percent": -19.445169061488677,
+          "ci95_ratio": [
+            0.7982192030371206,
+            0.8464549831206699
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.7064940228795413,
+          "candidate": 0.8566040513471569,
+          "ratio": 1.2124717599956392,
+          "change_percent": 21.247175999563915,
+          "ci95_ratio": [
+            1.2040792798709878,
+            1.224071351446954
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1400.3355914375,
+          "candidate": 1140.7703150000002,
+          "ratio": 0.814640663263407,
+          "change_percent": -18.5359336736593,
+          "ci95_ratio": [
+            0.8070313689995313,
+            0.8202656360832661
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9893287253760812,
+          "candidate": 0.9771884734855725,
+          "ratio": 0.9877287987509978,
+          "change_percent": -1.2271201249002162,
+          "ci95_ratio": [
+            0.9874440396052098,
+            0.9880214017276456
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 221.56494140625,
+          "candidate": 338.6728515625,
+          "ratio": 1.5285489184930525,
+          "change_percent": 52.854891849305254,
+          "ci95_ratio": [
+            1.513241712484358,
+            1.5445303130355434
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 374.75,
+          "candidate": 352.34765625,
+          "ratio": 0.9402205637091394,
+          "change_percent": -5.977943629086058,
+          "ci95_ratio": [
+            0.9359573048699132,
+            0.9536501559443886
+          ]
+        }
+      }
+    },
+    {
+      "question": "Optimized / baseline, same runtime",
+      "mode": "ft_off",
+      "concurrency": 4,
+      "statistics": {
+        "median_ms": {
+          "reference": 5152.629877004074,
+          "candidate": 4064.183460024651,
+          "ratio": 0.7887590525690378,
+          "change_percent": -21.124094743096222,
+          "ci95_ratio": [
+            0.7678024814618127,
+            0.8145721811829884
+          ]
+        },
+        "p95_ms": {
+          "reference": 5466.35430927272,
+          "candidate": 4385.57982329221,
+          "ratio": 0.8022860530377324,
+          "change_percent": -19.771394696226764,
+          "ci95_ratio": [
+            0.776206851164086,
+            0.817841569282177
+          ]
+        },
+        "context_median_ms": {
+          "reference": 5139.9935229856055,
+          "candidate": 4056.560355995316,
+          "ratio": 0.7892150715472169,
+          "change_percent": -21.07849284527831,
+          "ci95_ratio": [
+            0.7687935213049957,
+            0.8143179185238013
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 5455.661568930373,
+          "candidate": 4373.800783182378,
+          "ratio": 0.8016994324008073,
+          "change_percent": -19.830056759919266,
+          "ci95_ratio": [
+            0.776015178967883,
+            0.8159336816225563
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.7672670869446462,
+          "candidate": 0.9747125260856362,
+          "ratio": 1.2703692660232095,
+          "change_percent": 27.036926602320953,
+          "ci95_ratio": [
+            1.249027005446968,
+            1.2906601587401516
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 5005.933398484375,
+          "candidate": 3913.7329453125,
+          "ratio": 0.7818188205415285,
+          "change_percent": -21.81811794584715,
+          "ci95_ratio": [
+            0.7665920843463276,
+            0.7975691756145973
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 3.840887936094019,
+          "candidate": 3.8147645255501237,
+          "ratio": 0.9931986012144729,
+          "change_percent": -0.6801398785527102,
+          "ci95_ratio": [
+            0.9885111122053736,
+            0.9968700311245758
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 357.158203125,
+          "candidate": 377.50634765625,
+          "ratio": 1.0569723566565499,
+          "change_percent": 5.697235665654987,
+          "ci95_ratio": [
+            1.0387203234589868,
+            1.0762690893925217
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 381.41015625,
+          "candidate": 408.36328125,
+          "ratio": 1.0706670353642425,
+          "change_percent": 7.066703536424246,
+          "ci95_ratio": [
+            1.030776005981094,
+            1.0771870170015456
+          ]
+        }
+      }
+    },
+    {
+      "question": "Free-threaded / regular, same source",
+      "variant": "baseline",
+      "concurrency": 1,
+      "statistics": {
+        "median_ms": {
+          "reference": 1210.8119589684065,
+          "candidate": 1409.4670424819924,
+          "ratio": 1.1640676589309846,
+          "change_percent": 16.406765893098463,
+          "ci95_ratio": [
+            1.1509134447163523,
+            1.174335841908711
+          ]
+        },
+        "p95_ms": {
+          "reference": 1276.5662492223782,
+          "candidate": 1477.7277589368168,
+          "ratio": 1.1575801567971709,
+          "change_percent": 15.758015679717086,
+          "ci95_ratio": [
+            1.1152004585168482,
+            1.2073402831499414
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1207.1728964801878,
+          "candidate": 1404.9648130021524,
+          "ratio": 1.1638472145114225,
+          "change_percent": 16.384721451142248,
+          "ci95_ratio": [
+            1.1505095870335071,
+            1.1735688978042014
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1272.9244241549168,
+          "candidate": 1473.3684715232812,
+          "ratio": 1.1574673590707771,
+          "change_percent": 15.746735907077714,
+          "ci95_ratio": [
+            1.1146865625505642,
+            1.2055773370468876
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.8230506784452316,
+          "candidate": 0.7064940228795413,
+          "ratio": 0.8583845945113983,
+          "change_percent": -14.161540548860174,
+          "ci95_ratio": [
+            0.8469608148615079,
+            0.8711825895404643
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1197.575091578125,
+          "candidate": 1400.3355914375,
+          "ratio": 1.169309216002634,
+          "change_percent": 16.930921600263392,
+          "ci95_ratio": [
+            1.1515622058228827,
+            1.185446575926221
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9856649916124861,
+          "candidate": 0.9893287253760812,
+          "ratio": 1.0037170172368621,
+          "change_percent": 0.371701723686213,
+          "ci95_ratio": [
+            1.0030201842560242,
+            1.0042987571621864
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 166.9716796875,
+          "candidate": 221.56494140625,
+          "ratio": 1.3269612057621112,
+          "change_percent": 32.696120576211115,
+          "ci95_ratio": [
+            1.3044955597024515,
+            1.3495903477293403
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 319.51953125,
+          "candidate": 374.75,
+          "ratio": 1.1728547501742117,
+          "change_percent": 17.28547501742117,
+          "ci95_ratio": [
+            1.1565220581042748,
+            1.1755566175299292
+          ]
+        }
+      }
+    },
+    {
+      "question": "Free-threaded / regular, same source",
+      "variant": "baseline",
+      "concurrency": 4,
+      "statistics": {
+        "median_ms": {
+          "reference": 27376.089741504984,
+          "candidate": 5152.629877004074,
+          "ratio": 0.1882164299451486,
+          "change_percent": -81.17835700548514,
+          "ci95_ratio": [
+            0.18450617259148447,
+            0.19114933934233233
+          ]
+        },
+        "p95_ms": {
+          "reference": 28152.71674694086,
+          "candidate": 5466.35430927272,
+          "ratio": 0.19416791489108085,
+          "change_percent": -80.58320851089191,
+          "ci95_ratio": [
+            0.19047905175333926,
+            0.19907579726197733
+          ]
+        },
+        "context_median_ms": {
+          "reference": 27358.724970486946,
+          "candidate": 5139.9935229856055,
+          "ratio": 0.1878740156396302,
+          "change_percent": -81.21259843603698,
+          "ci95_ratio": [
+            0.18436597879740949,
+            0.1909831473920062
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 28139.305711135967,
+          "candidate": 5455.661568930373,
+          "ratio": 0.19388046119316035,
+          "change_percent": -80.61195388068396,
+          "ci95_ratio": [
+            0.19023136079505387,
+            0.19863896674036435
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.14473655410848513,
+          "candidate": 0.7672670869446462,
+          "ratio": 5.3011286034179905,
+          "change_percent": 430.11286034179903,
+          "ci95_ratio": [
+            5.219085088355921,
+            5.37909452816934
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 11185.886862937501,
+          "candidate": 5005.933398484375,
+          "ratio": 0.44752226263530953,
+          "change_percent": -55.24777373646905,
+          "ci95_ratio": [
+            0.44122274108219617,
+            0.45408731745025777
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 1.6190067191889466,
+          "candidate": 3.840887936094019,
+          "ratio": 2.3723730671223775,
+          "change_percent": 137.23730671223774,
+          "ci95_ratio": [
+            2.3652499713520494,
+            2.378742263937422
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 215.8115234375,
+          "candidate": 357.158203125,
+          "ratio": 1.654954274155961,
+          "change_percent": 65.49542741559611,
+          "ci95_ratio": [
+            1.6133395166880733,
+            1.7029691260974218
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 318.40625,
+          "candidate": 381.41015625,
+          "ratio": 1.19787270585926,
+          "change_percent": 19.787270585926,
+          "ci95_ratio": [
+            1.1935654462495848,
+            1.2012622720897617
+          ]
+        }
+      }
+    },
+    {
+      "question": "Free-threaded / regular, same source",
+      "variant": "optimized",
+      "concurrency": 1,
+      "statistics": {
+        "median_ms": {
+          "reference": 1017.7888965117745,
+          "candidate": 1165.4890420031734,
+          "ratio": 1.1451186449347261,
+          "change_percent": 14.511864493472615,
+          "ci95_ratio": [
+            1.097287640546872,
+            1.1586307705310148
+          ]
+        },
+        "p95_ms": {
+          "reference": 1175.895738453255,
+          "candidate": 1191.2505375628825,
+          "ratio": 1.013057959653655,
+          "change_percent": 1.3057959653655082,
+          "ci95_ratio": [
+            1.0026011581898053,
+            1.153860790137
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1014.1151050047483,
+          "candidate": 1161.153771536192,
+          "ratio": 1.144992087984682,
+          "change_percent": 14.4992087984682,
+          "ci95_ratio": [
+            1.0969860886990204,
+            1.1584409927589547
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1172.0983812818304,
+          "candidate": 1186.8694813369075,
+          "ratio": 1.012602269818787,
+          "change_percent": 1.2602269818787093,
+          "ci95_ratio": [
+            1.0020790707475562,
+            1.154373679541613
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.962503937309634,
+          "candidate": 0.8566040513471569,
+          "ratio": 0.8899745945367395,
+          "change_percent": -11.002540546326046,
+          "ci95_ratio": [
+            0.862095912485848,
+            0.9271283584095735
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1011.058380265625,
+          "candidate": 1140.7703150000002,
+          "ratio": 1.1282932195273405,
+          "change_percent": 12.829321952734052,
+          "ci95_ratio": [
+            1.0818673570462125,
+            1.1656942719977819
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9731476718555652,
+          "candidate": 0.9771884734855725,
+          "ratio": 1.0041523005673973,
+          "change_percent": 0.4152300567397349,
+          "ci95_ratio": [
+            1.002678216562903,
+            1.0052856366421437
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 234.5029296875,
+          "candidate": 338.6728515625,
+          "ratio": 1.4442158655067443,
+          "change_percent": 44.421586550674434,
+          "ci95_ratio": [
+            1.4102328306708225,
+            1.4816452632036028
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 288.78515625,
+          "candidate": 352.34765625,
+          "ratio": 1.22010307186625,
+          "change_percent": 22.010307186625,
+          "ci95_ratio": [
+            1.22010307186625,
+            1.2418525107920615
+          ]
+        }
+      }
+    },
+    {
+      "question": "Free-threaded / regular, same source",
+      "variant": "optimized",
+      "concurrency": 4,
+      "statistics": {
+        "median_ms": {
+          "reference": 22952.29642750928,
+          "candidate": 4064.183460024651,
+          "ratio": 0.17707088582010289,
+          "change_percent": -82.29291141798971,
+          "ci95_ratio": [
+            0.17134457480003312,
+            0.18463809633056846
+          ]
+        },
+        "p95_ms": {
+          "reference": 23850.815894891275,
+          "candidate": 4385.57982329221,
+          "ratio": 0.18387546332247606,
+          "change_percent": -81.61245366775239,
+          "ci95_ratio": [
+            0.17996689695272852,
+            0.18766726002860443
+          ]
+        },
+        "context_median_ms": {
+          "reference": 22943.645489460323,
+          "candidate": 4056.560355995316,
+          "ratio": 0.17680539728783676,
+          "change_percent": -82.31946027121633,
+          "ci95_ratio": [
+            0.17129647771385983,
+            0.1844973972440025
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 23835.951921530068,
+          "candidate": 4373.800783182378,
+          "ratio": 0.18349595592327478,
+          "change_percent": -81.65040440767253,
+          "ci95_ratio": [
+            0.1797531536839166,
+            0.18726238664698358
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.17286647711874642,
+          "candidate": 0.9747125260856362,
+          "ratio": 5.638528315794167,
+          "change_percent": 463.85283157941666,
+          "ci95_ratio": [
+            5.48321310825043,
+            5.789541126193148
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 9387.80577925,
+          "candidate": 3913.7329453125,
+          "ratio": 0.41689538933187975,
+          "change_percent": -58.310461066812024,
+          "ci95_ratio": [
+            0.40430487061399784,
+            0.4303702723817535
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 1.6228369129339557,
+          "candidate": 3.8147645255501237,
+          "ratio": 2.3506764574718373,
+          "change_percent": 135.06764574718372,
+          "ci95_ratio": [
+            2.338623789376609,
+            2.361848904538836
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 251.71044921875,
+          "candidate": 377.50634765625,
+          "ratio": 1.4997643078701772,
+          "change_percent": 49.97643078701772,
+          "ci95_ratio": [
+            1.4495216148313077,
+            1.5469827109924075
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 296.578125,
+          "candidate": 408.36328125,
+          "ratio": 1.376916390074285,
+          "change_percent": 37.69163900742849,
+          "ci95_ratio": [
+            1.3256150887729836,
+            1.3983173269842968
+          ]
+        }
+      }
+    },
+    {
+      "question": "Four clients / one, same source and runtime",
+      "variant": "baseline",
+      "mode": "regular",
+      "statistics": {
+        "median_ms": {
+          "reference": 1210.8119589684065,
+          "candidate": 27376.089741504984,
+          "ratio": 22.60969553425042,
+          "change_percent": 2160.9695534250422,
+          "ci95_ratio": [
+            22.225520918166982,
+            22.829400323028583
+          ]
+        },
+        "p95_ms": {
+          "reference": 1276.5662492223782,
+          "candidate": 28152.71674694086,
+          "ratio": 22.05347099227331,
+          "change_percent": 2105.347099227331,
+          "ci95_ratio": [
+            21.763809377390317,
+            23.096234720556218
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1207.1728964801878,
+          "candidate": 27358.724970486946,
+          "ratio": 22.663468547262866,
+          "change_percent": 2166.3468547262864,
+          "ci95_ratio": [
+            22.261716306543207,
+            22.88890243574746
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1272.9244241549168,
+          "candidate": 28139.305711135967,
+          "ratio": 22.10603015950252,
+          "change_percent": 2110.603015950252,
+          "ci95_ratio": [
+            21.803613889471837,
+            23.158076812644385
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.8230506784452316,
+          "candidate": 0.14473655410848513,
+          "ratio": 0.17585375712452725,
+          "change_percent": -82.41462428754728,
+          "ci95_ratio": [
+            0.17305355119874205,
+            0.1792174157521158
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1197.575091578125,
+          "candidate": 11185.886862937501,
+          "ratio": 9.340447159933085,
+          "change_percent": 834.0447159933085,
+          "ci95_ratio": [
+            9.166697363036729,
+            9.487681936295795
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9856649916124861,
+          "candidate": 1.6190067191889466,
+          "ratio": 1.642552726297353,
+          "change_percent": 64.25527262973529,
+          "ci95_ratio": [
+            1.6393924683701555,
+            1.645887601605469
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 166.9716796875,
+          "candidate": 215.8115234375,
+          "ratio": 1.2925037577714222,
+          "change_percent": 29.250375777142224,
+          "ci95_ratio": [
+            1.2580907536521837,
+            1.3273561903526436
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 319.51953125,
+          "candidate": 318.40625,
+          "ratio": 0.9965157646368449,
+          "change_percent": -0.34842353631551193,
+          "ci95_ratio": [
+            0.9937039255718425,
+            0.998811405604774
+          ]
+        }
+      }
+    },
+    {
+      "question": "Four clients / one, same source and runtime",
+      "variant": "baseline",
+      "mode": "ft_off",
+      "statistics": {
+        "median_ms": {
+          "reference": 1409.4670424819924,
+          "candidate": 5152.629877004074,
+          "ratio": 3.6557292378618387,
+          "change_percent": 265.5729237861839,
+          "ci95_ratio": [
+            3.5851497556131866,
+            3.6980613078255837
+          ]
+        },
+        "p95_ms": {
+          "reference": 1477.7277589368168,
+          "candidate": 5466.35430927272,
+          "ratio": 3.699161957413324,
+          "change_percent": 269.9161957413324,
+          "ci95_ratio": [
+            3.663367438302066,
+            3.8792287357070294
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1404.9648130021524,
+          "candidate": 5139.9935229856055,
+          "ratio": 3.65845000203413,
+          "change_percent": 265.845000203413,
+          "ci95_ratio": [
+            3.5903926053100736,
+            3.6974996257290447
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1473.3684715232812,
+          "candidate": 5455.661568930373,
+          "ratio": 3.7028494055461167,
+          "change_percent": 270.2849405546117,
+          "ci95_ratio": [
+            3.6734227916371602,
+            3.882579706427768
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.7064940228795413,
+          "candidate": 0.7672670869446462,
+          "ratio": 1.0860206344243435,
+          "change_percent": 8.60206344243435,
+          "ci95_ratio": [
+            1.0745123169895887,
+            1.0979939991714252
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1400.3355914375,
+          "candidate": 5005.933398484375,
+          "ratio": 3.5748098020886454,
+          "change_percent": 257.48098020886454,
+          "ci95_ratio": [
+            3.5368819586215885,
+            3.6118932986606365
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9893287253760812,
+          "candidate": 3.840887936094019,
+          "ratio": 3.8823172092106724,
+          "change_percent": 288.2317209210672,
+          "ci95_ratio": [
+            3.8711802170901155,
+            3.893274398872071
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 221.56494140625,
+          "candidate": 357.158203125,
+          "ratio": 1.611979769263826,
+          "change_percent": 61.1979769263826,
+          "ci95_ratio": [
+            1.590272618412887,
+            1.6365761080064185
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 374.75,
+          "candidate": 381.41015625,
+          "ratio": 1.0177722648432288,
+          "change_percent": 1.7772264843228802,
+          "ci95_ratio": [
+            1.0177722648432288,
+            1.029518422582862
+          ]
+        }
+      }
+    },
+    {
+      "question": "Four clients / one, same source and runtime",
+      "variant": "optimized",
+      "mode": "regular",
+      "statistics": {
+        "median_ms": {
+          "reference": 1017.7888965117745,
+          "candidate": 22952.29642750928,
+          "ratio": 22.551136592443413,
+          "change_percent": 2155.1136592443413,
+          "ci95_ratio": [
+            21.397504743409453,
+            23.134658704421444
+          ]
+        },
+        "p95_ms": {
+          "reference": 1175.895738453255,
+          "candidate": 23850.815894891275,
+          "ratio": 20.283104288024774,
+          "change_percent": 1928.3104288024774,
+          "ci95_ratio": [
+            19.82924608650845,
+            23.096251920791204
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1014.1151050047483,
+          "candidate": 22943.645489460323,
+          "ratio": 22.62430110372224,
+          "change_percent": 2162.4301103722237,
+          "ci95_ratio": [
+            21.463039445095365,
+            23.174543151223254
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1172.0983812818304,
+          "candidate": 23835.951921530068,
+          "ratio": 20.336135858717416,
+          "change_percent": 1933.6135858717416,
+          "ci95_ratio": [
+            19.85143559179621,
+            23.164919640022674
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.962503937309634,
+          "candidate": 0.17286647711874642,
+          "ratio": 0.17960079997380407,
+          "change_percent": -82.0399200026196,
+          "ci95_ratio": [
+            0.1730209841665868,
+            0.1878618213020162
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1011.058380265625,
+          "candidate": 9387.80577925,
+          "ratio": 9.285127310634266,
+          "change_percent": 828.5127310634266,
+          "ci95_ratio": [
+            8.863119516392263,
+            9.657847251007425
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9731476718555652,
+          "candidate": 1.6228369129339557,
+          "ratio": 1.6676162928485303,
+          "change_percent": 66.76162928485303,
+          "ci95_ratio": [
+            1.6632556241600285,
+            1.672463378171972
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 234.5029296875,
+          "candidate": 251.71044921875,
+          "ratio": 1.0733786974609691,
+          "change_percent": 7.3378697460969144,
+          "ci95_ratio": [
+            1.0558867840831516,
+            1.0933548529943897
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 288.78515625,
+          "candidate": 296.578125,
+          "ratio": 1.0269853508095605,
+          "change_percent": 2.698535080956055,
+          "ci95_ratio": [
+            1.0112675675310094,
+            1.047126484339443
+          ]
+        }
+      }
+    },
+    {
+      "question": "Four clients / one, same source and runtime",
+      "variant": "optimized",
+      "mode": "ft_off",
+      "statistics": {
+        "median_ms": {
+          "reference": 1165.4890420031734,
+          "candidate": 4064.183460024651,
+          "ratio": 3.487105681439419,
+          "change_percent": 248.71056814394188,
+          "ci95_ratio": [
+            3.4192632270488983,
+            3.5594496958229436
+          ]
+        },
+        "p95_ms": {
+          "reference": 1191.2505375628825,
+          "candidate": 4385.57982329221,
+          "ratio": 3.6814924191047496,
+          "change_percent": 268.149241910475,
+          "ci95_ratio": [
+            3.590688011495719,
+            3.7167421252414594
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1161.153771536192,
+          "candidate": 4056.560355995316,
+          "ratio": 3.4935599878632244,
+          "change_percent": 249.35599878632243,
+          "ci95_ratio": [
+            3.4283701454744624,
+            3.567095294167775
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1186.8694813369075,
+          "candidate": 4373.800783182378,
+          "ratio": 3.6851573420319674,
+          "change_percent": 268.51573420319676,
+          "ci95_ratio": [
+            3.5947843908336874,
+            3.7138657580919037
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.8566040513471569,
+          "candidate": 0.9747125260856362,
+          "ratio": 1.1378798927611111,
+          "change_percent": 13.787989276111112,
+          "ci95_ratio": [
+            1.1215538558755667,
+            1.157042022953943
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1140.7703150000002,
+          "candidate": 3913.7329453125,
+          "ratio": 3.430780845057753,
+          "change_percent": 243.0780845057753,
+          "ci95_ratio": [
+            3.3637250148084576,
+            3.49035404545273
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9771884734855725,
+          "candidate": 3.8147645255501237,
+          "ratio": 3.9038165400611904,
+          "change_percent": 290.38165400611905,
+          "ci95_ratio": [
+            3.889728198933329,
+            3.9178339428519613
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 338.6728515625,
+          "candidate": 377.50634765625,
+          "ratio": 1.1146637408773332,
+          "change_percent": 11.466374087733321,
+          "ci95_ratio": [
+            1.0950862821288354,
+            1.132718249102156
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 352.34765625,
+          "candidate": 408.36328125,
+          "ratio": 1.1589782818372303,
+          "change_percent": 15.897828183723028,
+          "ci95_ratio": [
+            1.1157969423842309,
+            1.1642573948681396
+          ]
+        }
+      }
+    },
+    {
+      "question": "Optimized free-threaded / baseline regular",
+      "concurrency": 1,
+      "statistics": {
+        "median_ms": {
+          "reference": 1210.8119589684065,
+          "candidate": 1165.4890420031734,
+          "ratio": 0.9625681621084684,
+          "change_percent": -3.7431837891531594,
+          "ci95_ratio": [
+            0.9507621828104542,
+            0.9662318975773588
+          ]
+        },
+        "p95_ms": {
+          "reference": 1276.5662492223782,
+          "candidate": 1191.2505375628825,
+          "ratio": 0.9331678150574121,
+          "change_percent": -6.683218494258791,
+          "ci95_ratio": [
+            0.9260035708310577,
+            0.9846980464214683
+          ]
+        },
+        "context_median_ms": {
+          "reference": 1207.1728964801878,
+          "candidate": 1161.153771536192,
+          "ratio": 0.9618785966134793,
+          "change_percent": -3.8121403386520702,
+          "ci95_ratio": [
+            0.9500338690341782,
+            0.9659667992125297
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 1272.9244241549168,
+          "candidate": 1186.8694813369075,
+          "ratio": 0.9323958742679163,
+          "change_percent": -6.760412573208374,
+          "ci95_ratio": [
+            0.9249902297560564,
+            0.984075017178835
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.8230506784452316,
+          "candidate": 0.8566040513471569,
+          "ratio": 1.040767080060378,
+          "change_percent": 4.07670800603781,
+          "ci95_ratio": [
+            1.0295126415755869,
+            1.0551246155154568
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 1197.575091578125,
+          "candidate": 1140.7703150000002,
+          "ratio": 0.9525668352844001,
+          "change_percent": -4.7433164715599885,
+          "ci95_ratio": [
+            0.9390150514602122,
+            0.9632052763002908
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 0.9856649916124861,
+          "candidate": 0.9771884734855725,
+          "ratio": 0.9914002037213003,
+          "change_percent": -0.8599796278699667,
+          "ci95_ratio": [
+            0.9907055650047867,
+            0.9920722112797252
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 166.9716796875,
+          "candidate": 338.6728515625,
+          "ratio": 2.028325115949912,
+          "change_percent": 102.8325115949912,
+          "ci95_ratio": [
+            2.0088211751279075,
+            2.045864537258206
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 319.51953125,
+          "candidate": 352.34765625,
+          "ratio": 1.1027421543577394,
+          "change_percent": 10.274215435773936,
+          "ci95_ratio": [
+            1.0979164628778244,
+            1.1052825056059994
+          ]
+        }
+      }
+    },
+    {
+      "question": "Optimized free-threaded / baseline regular",
+      "concurrency": 4,
+      "statistics": {
+        "median_ms": {
+          "reference": 27376.089741504984,
+          "candidate": 4064.183460024651,
+          "ratio": 0.1484574129614621,
+          "change_percent": -85.15425870385378,
+          "ci95_ratio": [
+            0.14507974591683848,
+            0.151677252204581
+          ]
+        },
+        "p95_ms": {
+          "reference": 28152.71674694086,
+          "candidate": 4385.57982329221,
+          "ratio": 0.1557782100645316,
+          "change_percent": -84.42217899354684,
+          "ci95_ratio": [
+            0.1521434065751403,
+            0.15810131597763316
+          ]
+        },
+        "context_median_ms": {
+          "reference": 27358.724970486946,
+          "candidate": 4056.560355995316,
+          "ratio": 0.14827300469489368,
+          "change_percent": -85.17269953051063,
+          "ci95_ratio": [
+            0.14491638945777366,
+            0.151638284332712
+          ]
+        },
+        "context_p95_ms": {
+          "reference": 28139.305711135967,
+          "candidate": 4373.800783182378,
+          "ratio": 0.15543385569216342,
+          "change_percent": -84.45661443078366,
+          "ci95_ratio": [
+            0.15181066160885115,
+            0.15752904409093416
+          ]
+        },
+        "throughput_per_sec": {
+          "reference": 0.14473655410848513,
+          "candidate": 0.9747125260856362,
+          "ratio": 6.734390853018754,
+          "change_percent": 573.4390853018754,
+          "ci95_ratio": [
+            6.624801650159859,
+            6.8482487378840915
+          ]
+        },
+        "cpu_ms_per_response": {
+          "reference": 11185.886862937501,
+          "candidate": 3913.7329453125,
+          "ratio": 0.3498813275396139,
+          "change_percent": -65.01186724603862,
+          "ci95_ratio": [
+            0.34275056103534624,
+            0.3566251090104452
+          ]
+        },
+        "cpu_average_cores": {
+          "reference": 1.6190067191889466,
+          "candidate": 3.8147645255501237,
+          "ratio": 2.3562376118248345,
+          "change_percent": 135.62376118248346,
+          "ci95_ratio": [
+            2.3454671066904624,
+            2.3653831157866194
+          ]
+        },
+        "rss_after_mean_mib": {
+          "reference": 215.8115234375,
+          "candidate": 377.50634765625,
+          "ratio": 1.7492409193134562,
+          "change_percent": 74.92409193134561,
+          "ci95_ratio": [
+            1.715194749029183,
+            1.7866754323215912
+          ]
+        },
+        "peak_rss_max_mib": {
+          "reference": 318.40625,
+          "candidate": 408.36328125,
+          "ratio": 1.282522818726077,
+          "change_percent": 28.25228187260771,
+          "ci95_ratio": [
+            1.2347384434193738,
+            1.286151915553259
+          ]
+        }
+      }
+    }
+  ]
+}

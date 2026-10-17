@@ -1,0 +1,10 @@
+{
+  "first_attempt": "../pytest-runtime-summary.json",
+  "first_result": "2 failed, 1502 passed, 1 skipped",
+  "classification": "Two invocation environment overrides changed settings fallback assumptions; no application/test source changes",
+  "changes": [
+    "Remove global TORRENT_STORAGE_DIR; default /app/data is container-only tmpfs",
+    "Remove ANILIBRIA API/site-related overrides; network remains internal and dotenv absent"
+  ],
+  "source_manifest_unchanged": true
+}

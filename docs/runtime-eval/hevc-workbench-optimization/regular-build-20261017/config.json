@@ -1,0 +1,12 @@
+{
+  "run_id": "20261017-161151",
+  "root": "/private/tmp/altt-regular-workbench-20261017-161151",
+  "source": "/private/tmp/altt-regular-workbench-20261017-161151/backend",
+  "build_time_utc": "2026-10-17T16:11:51Z",
+  "git_head": "4e78fcfb10de16abd8bebf13232196ce84c1d5d0",
+  "dirty_workbench": true,
+  "runtime_tag": "altt-workbench:py315-20261017-161151",
+  "development_tag": "altt-workbench-dev:py315-20261017-161151",
+  "source_files": 263,
+  "platform": "linux/arm64"
+}

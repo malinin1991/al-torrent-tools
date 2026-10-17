@@ -1,0 +1,70 @@
+{
+  "created_utc": "2026-10-17T11:06:53.820602+00:00",
+  "purpose": "isolated c-driver controls, sequential startup/import checks only",
+  "modes": {
+    "regular": {
+      "tag": "altt-workbench-opt-c:regular-20261017",
+      "base_image_id": "sha256:369e102e42c37bb13926fbfbccac273097928e9f7b15fda86e703b84f64d61fb",
+      "image_id": "sha256:5a030bc5af69739f2b0f5f504071983a6ba85ee7387bae3307add337c5319fab",
+      "psycopg": {
+        "implementation": "c",
+        "libpq_runtime_version": 170011,
+        "libpq_build_version": 170011
+      },
+      "expected_gil": true,
+      "checkpoint_count": 16,
+      "package_diff": {
+        "psycopg-c": {
+          "base": null,
+          "control": "3.3.6"
+        }
+      },
+      "wheels": [
+        {
+          "name": "psycopg_c-3.3.6-cp315-cp315-linux_aarch64.whl",
+          "sha256": "f0c77ec7f46db14d559da0af68af62804560a683440e8ddff2c0788486979c38",
+          "bytes": 3175563
+        }
+      ],
+      "warnings": []
+    },
+    "ft": {
+      "tag": "altt-workbench-opt-c:ft-20261017",
+      "base_image_id": "sha256:0f279bcd228e687d31e6d73d6a0ed82c71eaa67296fe14c124907aed2e3f7ad5",
+      "image_id": "sha256:67ebb4d6662d411290c500c25f34ca20dfbf6c7de52eaff914150a9d392f7d13",
+      "psycopg": {
+        "implementation": "c",
+        "libpq_runtime_version": 170011,
+        "libpq_build_version": 170011
+      },
+      "expected_gil": false,
+      "checkpoint_count": 16,
+      "package_diff": {
+        "psycopg-c": {
+          "base": null,
+          "control": "3.3.6"
+        }
+      },
+      "wheels": [
+        {
+          "name": "psycopg_c-3.3.6-cp315-cp315t-linux_aarch64.whl",
+          "sha256": "4e6ec52f3fcb30715674b286f50ef2332b451150c38ac5431d25e6a698a9c204",
+          "bytes": 3282153
+        }
+      ],
+      "warnings": []
+    }
+  },
+  "ok": true,
+  "completed_utc": "2026-10-17T11:07:52.386281+00:00",
+  "source_files": {
+    "Dockerfile": "1872ad200ee9b7c36aeee5cce5cc7a7700641139124a821fa38490e1e7f15f70",
+    "build_controls.py": "f19362b604b7c42f9a7a4696b4e18c3b0f280be63d3475bed64b1720dba2c945",
+    "build_provenance.py": "5a56f7b92039be501a53a92b32eecf80e5466af28feca2dafb62ec51d6610331",
+    "offline-inputs.json": "989d00d22c24a98565bf1c0d906d51668c57184268f1875c20752442ba3416f6",
+    "probe_runtime.py": "6ce943f5e1c94a6f7b47ef6387b620c0dc99952b23e2c78142a209c07fba65fd",
+    "psycopg_c-3.3.6.tar.gz": "29c568426ad61c1b702c7d73505c43ca2c9fc5d97a8431d8d9049e731e319ff8",
+    "sources.json": "757309fb944d61d22222c94faf750c874035e3d244ff7d883231e57524bcf431",
+    "verify_inputs.py": "0ea4e7265e87af7f51dcc057b829e6b833c9da52022e3f51f52f9f9a27ddb676"
+  }
+}

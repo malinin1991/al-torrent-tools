@@ -1,0 +1,6 @@
+ARG CANDIDATE
+FROM ${CANDIDATE}
+ENV PYTHONDONTWRITEBYTECODE=1
+COPY dev-requirements.txt constraints.txt /qa-inputs/
+RUN python -m pip install --no-cache-dir --only-binary=:all: -c /qa-inputs/constraints.txt -r /qa-inputs/dev-requirements.txt && python -m pip check
+COPY extras/ /app/

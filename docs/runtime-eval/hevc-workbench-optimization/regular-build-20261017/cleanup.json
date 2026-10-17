@@ -1,0 +1,26 @@
+{
+  "created_utc": "2026-10-17T16:17:44.560454+00:00",
+  "resources": [
+    {
+      "kind": "container",
+      "name": "altt-regular-workbench-pg-20261017-161151",
+      "id": "6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d",
+      "labels": {
+        "altt.regular-workbench": "20261017-161151"
+      }
+    },
+    {
+      "kind": "network",
+      "name": "altt-regular-workbench-tests-20261017-161151",
+      "id": "ba71fa4285f5d634a67a0a514580b5d9a23f99e4e524064a34ae6180bd220067",
+      "labels": {
+        "altt.regular-workbench": "20261017-161151"
+      }
+    }
+  ],
+  "retained_images": [
+    "altt-workbench:py315-20261017-161151",
+    "altt-workbench-dev:py315-20261017-161151"
+  ],
+  "ok": true
+}

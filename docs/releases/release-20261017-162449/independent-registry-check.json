@@ -1,0 +1,95 @@
+{
+  "created_utc": "2026-10-17T16:27:41.591005+00:00",
+  "commands": [
+    {
+      "stage": "previous-index",
+      "argv": [
+        "docker",
+        "buildx",
+        "imagetools",
+        "inspect",
+        "--raw",
+        "registry.mageek.su/al-torrent-tools@sha256:f819949e816ed5c67c7121cc3f515fc5bd6d8dc639dbea02cd026b97d1fd9809"
+      ],
+      "exit_code": 0,
+      "digest": "sha256:f819949e816ed5c67c7121cc3f515fc5bd6d8dc639dbea02cd026b97d1fd9809",
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "manifests": [
+        {
+          "digest": "sha256:8fb3f300d05dbde7124fadb9060ca936f32d5d978076cf3344a04e6ed58c426b",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "digest": "sha256:807a43a66e0b67f668a3029d192c787cc408b84e3e0ef05e1ccf55716a325593",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "latest-before-validation",
+      "argv": [
+        "docker",
+        "buildx",
+        "imagetools",
+        "inspect",
+        "--raw",
+        "registry.mageek.su/al-torrent-tools:latest"
+      ],
+      "exit_code": 0,
+      "digest": "sha256:f819949e816ed5c67c7121cc3f515fc5bd6d8dc639dbea02cd026b97d1fd9809",
+      "media_type": "application/vnd.oci.image.index.v1+json",
+      "manifests": [
+        {
+          "digest": "sha256:8fb3f300d05dbde7124fadb9060ca936f32d5d978076cf3344a04e6ed58c426b",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        },
+        {
+          "digest": "sha256:807a43a66e0b67f668a3029d192c787cc408b84e3e0ef05e1ccf55716a325593",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "candidate-independent",
+      "argv": [
+        "docker",
+        "buildx",
+        "imagetools",
+        "inspect",
+        "--raw",
+        "registry.mageek.su/al-torrent-tools:release-20261017-162449"
+      ],
+      "exit_code": 0,
+      "digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+      "media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "manifests": [
+        {
+          "digest": "sha256:ee10aa4b021be737b7a2f29d8569fcb019f37a9fd9d8a30dfc97767fbcc3b762",
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        },
+        {
+          "digest": "sha256:81192459e37e722d43268bf4509633cb3810236ca3080263e84d689e03045120",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        }
+      ]
+    }
+  ]
+}

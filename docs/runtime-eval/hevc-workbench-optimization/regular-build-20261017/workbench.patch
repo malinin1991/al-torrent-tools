@@ -1,0 +1,112 @@
+diff --git a/backend/app/services/hevc_workbench.py b/backend/app/services/hevc_workbench.py
+index f229161..83e5e28 100644
+--- a/backend/app/services/hevc_workbench.py
++++ b/backend/app/services/hevc_workbench.py
+@@ -10,9 +10,11 @@ from collections import defaultdict
+ from datetime import datetime
+ import os
+ from pathlib import Path
++from typing import NamedTuple
+ from urllib.parse import urlencode
+ 
+-from sqlalchemy import func, select
++from sqlalchemy import String, any_, bindparam, case, func, select
++from sqlalchemy.dialects.postgresql import ARRAY
+ from sqlalchemy.orm import Session
+ 
+ from app.core.config import settings
+@@ -37,6 +39,60 @@ _HEVC_LABELS = {"missing": "HEVC отсутствует", "overdue": "HEVC от
+ _BLOCKING_RECEIPTS = frozenset({"sending", "accepted", "unknown"})
+ 
+ 
++class _ArchiveRow(NamedTuple):
++    """Request-local values; repeated pairing reads avoid SQL Row lookups."""
++    id: int
++    release_id: int
++    torrent_id: int
++    info_hash: str
++    torrent_type: str | None
++    torrent_description: str | None
++    quality_json: object
++    created_at: datetime | None
++    api_created_at: datetime | None
++    api_present: bool | None
++    superseded: bool | None
++    ignore_hevc: bool | None
++    anime_name: str | None
++    release_alias: str | None
++
++
++class _FileRow(NamedTuple):
++    id: int | None
++    info_hash: str
++    relative_path: str
++    full_path: str | None
++    size: int | None
++    selected: bool | None
++    ui_status: str | None
++    is_checking: bool | None
++    media_present: bool | None
++    updated_at: datetime | None
++
++
++def _file_projection(db: Session, hashes: list[str]):
++    """Keep all composition paths, materialize metadata only for active AVC.
++
++    One SELECT retains the same file snapshot for pairing and readiness. Raw
++    hash/path values are never normalized or filtered. The later Python hash
++    lookup still owns candidate identity. PostgreSQL uses one array parameter;
++    other dialects fall back to the original metadata for larger IN lists.
++    """
++    columns = (
++        TorrentFile.id, TorrentFile.info_hash, TorrentFile.relative_path,
++        TorrentFile.full_path, TorrentFile.size, TorrentFile.selected, TorrentFile.ui_status,
++        TorrentFile.is_checking, TorrentFile.media_present, TorrentFile.updated_at,
++    )
++    if db.get_bind().dialect.name == "postgresql":
++        active = TorrentFile.info_hash == any_(bindparam("workbench_active_hashes", hashes, type_=ARRAY(String)))
++    elif len(hashes) <= 100:
++        active = TorrentFile.info_hash.in_(hashes)
++    else:
++        return columns
++    return tuple(column if column.key in {"info_hash", "relative_path"}
++                 else case((active, column), else_=None).label(column.key) for column in columns)
++
++
+ def _chunks(values, size=500):
+     for index in range(0, len(values), size):
+         yield values[index:index + size]
+@@ -135,27 +191,23 @@ def list_hevc_workbench(
+     search = str(search or "").strip()[:200]
+     per_page = max(1, min(int(per_page), 100))
+     # Compact rows retain historical versions: they contribute SLA anchors.
+-    archives = db.execute(select(
++    archives = [_ArchiveRow(*row) for row in db.execute(select(
+         TorrentArchive.id, TorrentArchive.release_id, TorrentArchive.torrent_id,
+         TorrentArchive.info_hash, TorrentArchive.torrent_type, TorrentArchive.torrent_description,
+         TorrentArchive.quality_json, TorrentArchive.created_at, TorrentArchive.api_created_at,
+         TorrentArchive.api_present, TorrentArchive.superseded, TorrentArchive.ignore_hevc,
+         TorrentArchive.anime_name, TorrentArchive.release_alias,
+-    )).all()
+-    files = db.execute(select(
+-        TorrentFile.id, TorrentFile.release_id, TorrentFile.info_hash, TorrentFile.relative_path,
+-        TorrentFile.full_path, TorrentFile.size, TorrentFile.selected, TorrentFile.ui_status,
+-        TorrentFile.is_checking, TorrentFile.media_present, TorrentFile.updated_at,
+-    )).all()
+-    needs = {item.archive_id: item for item in find_unpaired_avc(
+-        archives, now=current, file_keys_by_archive_id=file_keys_by_archive_id(archives, files),
+-    )}
++    ))]
+     active = {}
+     for archive in sorted(archives, key=lambda item: item.id, reverse=True):
+         if not archive.api_present or archive.superseded or archive.info_hash in active:
+             continue
+         if classify_archive_codec(quality_json=archive.quality_json, torrent_type=archive.torrent_type) == "AVC":
+             active[archive.info_hash] = archive
++    files = [_FileRow(*row) for row in db.execute(select(*_file_projection(db, list(active))))]
++    needs = {item.archive_id: item for item in find_unpaired_avc(
++        archives, now=current, file_keys_by_archive_id=file_keys_by_archive_id(archives, files),
++    )}
+     receipts = _latest_receipts(db, sorted(active), current)
+     hash_jobs = set()
+     for params, in db.execute(select(Job.params_json).where(Job.type == "hash_torrent", Job.status.in_(("pending", "running", "stopping")))):

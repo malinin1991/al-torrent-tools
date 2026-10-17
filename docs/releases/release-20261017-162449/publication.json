@@ -1,0 +1,108 @@
+{
+  "published": true,
+  "registry_tags_verified": true,
+  "published_time_utc": "2026-10-17T16:34:56.433031+00:00",
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "release": "release-20261017-162449",
+  "tags": [
+    "release-20261017-162449",
+    "latest"
+  ],
+  "digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+  "previous_latest_digest": "sha256:f819949e816ed5c67c7121cc3f515fc5bd6d8dc639dbea02cd026b97d1fd9809",
+  "latest_promotion": {
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "create",
+      "--progress",
+      "plain",
+      "--metadata-file",
+      "/private/tmp/altt-publish-release-20261017-162449/latest-promotion-metadata.json",
+      "--tag",
+      "registry.mageek.su/al-torrent-tools:latest",
+      "registry.mageek.su/al-torrent-tools@sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137"
+    ],
+    "exit_code": 0,
+    "metadata": {
+      "containerimage.descriptor": {
+        "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+        "digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+        "size": 685
+      },
+      "image.name": "registry.mageek.su/al-torrent-tools"
+    }
+  },
+  "checks": [
+    {
+      "tag": "registry.mageek.su/al-torrent-tools:release-20261017-162449",
+      "argv": [
+        "docker",
+        "buildx",
+        "imagetools",
+        "inspect",
+        "--raw",
+        "registry.mageek.su/al-torrent-tools:release-20261017-162449"
+      ],
+      "exit_code": 0,
+      "digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+      "media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "platforms": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "digest": "sha256:ee10aa4b021be737b7a2f29d8569fcb019f37a9fd9d8a30dfc97767fbcc3b762",
+          "size": 3050,
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "digest": "sha256:81192459e37e722d43268bf4509633cb3810236ca3080263e84d689e03045120",
+          "size": 3050,
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        }
+      ]
+    },
+    {
+      "tag": "registry.mageek.su/al-torrent-tools:latest",
+      "argv": [
+        "docker",
+        "buildx",
+        "imagetools",
+        "inspect",
+        "--raw",
+        "registry.mageek.su/al-torrent-tools:latest"
+      ],
+      "exit_code": 0,
+      "digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+      "media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+      "platforms": [
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "digest": "sha256:ee10aa4b021be737b7a2f29d8569fcb019f37a9fd9d8a30dfc97767fbcc3b762",
+          "size": 3050,
+          "platform": {
+            "architecture": "arm64",
+            "os": "linux"
+          }
+        },
+        {
+          "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+          "digest": "sha256:81192459e37e722d43268bf4509633cb3810236ca3080263e84d689e03045120",
+          "size": 3050,
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          }
+        }
+      ]
+    }
+  ],
+  "unraid_deployed": false
+}

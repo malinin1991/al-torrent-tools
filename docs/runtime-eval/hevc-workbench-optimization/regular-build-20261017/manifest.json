@@ -1,0 +1,239 @@
+{
+  "created_utc": "2026-10-17T16:18:19.717540+00:00",
+  "run_id": "20261017-161151",
+  "status": "passed",
+  "source_files": 263,
+  "runtime_image_id": "sha256:0ac66f155e9197729bfb1b8dc219a3f341175a660df238b4f74544134fefae32",
+  "development_image_id": "sha256:0a835fd064c702ac9c6d4fb7a33d22e696f6d38354d404bfc1be95b0bcf2576f",
+  "pytest_passed": 1504,
+  "pytest_skipped": 1,
+  "skipped_reason": "Optional MiniJinja experiment is absent from production dependencies",
+  "source_is_working_tree_with_uncommitted_workbench_optimization": true,
+  "files": [
+    {
+      "name": "build-results.json",
+      "bytes": 2379,
+      "sha256": "cbc31d14f74207edb49cfbcc452774cf3f2a5df01803bedebb3f948b38ad824a"
+    },
+    {
+      "name": "cleanup.json",
+      "bytes": 725,
+      "sha256": "183bf9331781d1ceb54c18de7770fe64345c58d688932bcbf975771ba5bf40e3"
+    },
+    {
+      "name": "config.json",
+      "bytes": 477,
+      "sha256": "7158790e0953e31726251cf19089e526bbcc54597deed7e8a944830bc5d74d97"
+    },
+    {
+      "name": "development-image-inspect.json",
+      "bytes": 2028,
+      "sha256": "91b1f15a37b5c37fb663b68cb51384e616ff2158265035de166b270c67ee2b56"
+    },
+    {
+      "name": "development-probe.json",
+      "bytes": 2004,
+      "sha256": "33e507fb8a1b06dcf9b626f883c667fd01138e4a8dc90abe5453e5c7cacf15c5"
+    },
+    {
+      "name": "probe_image.py",
+      "bytes": 2830,
+      "sha256": "e997693a0ce208017a98518b291cfa5892e808d328b5016045521c9c6962cd1e"
+    },
+    {
+      "name": "runtime-api-smoke.json",
+      "bytes": 33926,
+      "sha256": "12e753f3a4e313dced3e65fd71edd05b92ec7b0b847e75a8a595b1506fd07375"
+    },
+    {
+      "name": "runtime-image-inspect.json",
+      "bytes": 2094,
+      "sha256": "804709191942eff59c18a1fb363915dc9596f5c806f23a9d3ea55c8cad327cae"
+    },
+    {
+      "name": "runtime-probe.json",
+      "bytes": 1881,
+      "sha256": "40ce9ff83a0ee0b7db9587ba9c527deb9f5c6f266b2ee099d6e4b7460a883bb7"
+    },
+    {
+      "name": "smoke_runtime_api.py",
+      "bytes": 3953,
+      "sha256": "7fc910a5343a679dc5f79259aff2a07c619cd71bbcd883f7cb3c6ec0061379de"
+    },
+    {
+      "name": "source-backend.tar.gz",
+      "bytes": 658499,
+      "sha256": "2f71eed9ee03027ebad3866464ba5e9dd62bb8057126959fa61ee7ad10fd199e"
+    },
+    {
+      "name": "source-manifest.json",
+      "bytes": 38173,
+      "sha256": "fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a"
+    },
+    {
+      "name": "workbench.patch",
+      "bytes": 5063,
+      "sha256": "9c948d358d697c08890af7b5d458fd0e3a26d985ee8baf2354ba87e2b953eadf"
+    },
+    {
+      "name": "logs/development-build.log",
+      "bytes": 12011,
+      "sha256": "8f191474350ff348b598c7047f409bb4521a7f33f6250be68b87f44aaa01b2b5"
+    },
+    {
+      "name": "logs/development-probe.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "logs/runtime-api-smoke.log",
+      "bytes": 5518,
+      "sha256": "6e53ad9af62399f41b053b10b42a89e53374b95fd399fce47c375f8ad96fdc8f"
+    },
+    {
+      "name": "logs/runtime-build.log",
+      "bytes": 38213,
+      "sha256": "dca02f6365c5ce60f2fc8ae3b2c39836bd8142468f503b27ee2f9ad0c1e51d65"
+    },
+    {
+      "name": "logs/runtime-probe.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "tests/attempt-02/attempt-reason.json",
+      "bytes": 479,
+      "sha256": "a0e446231bea0cbbd4e410282264263ed2fc3955148a4245b0106d32e69214bf"
+    },
+    {
+      "name": "tests/attempt-02/compileall.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "tests/attempt-02/expected-source-manifest.json",
+      "bytes": 38173,
+      "sha256": "fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a"
+    },
+    {
+      "name": "tests/attempt-02/pip-check.log",
+      "bytes": 30,
+      "sha256": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09"
+    },
+    {
+      "name": "tests/attempt-02/postgres-fixture.json",
+      "bytes": 979,
+      "sha256": "e50c8c62390cc549d586d22820077940b7ff0fc874895e7c29b6a47df2369421"
+    },
+    {
+      "name": "tests/attempt-02/pytest-junit.xml",
+      "bytes": 194338,
+      "sha256": "9af02265bdb39c8b902cdd17d8028760bca407f2d31c9e32552240f30b0f863e"
+    },
+    {
+      "name": "tests/attempt-02/pytest-runtime-summary.json",
+      "bytes": 60795,
+      "sha256": "1ae36b31e49b42fe09b3a80af2fd1a65ba232cd190acfb13b926da7c16c8b8cd"
+    },
+    {
+      "name": "tests/attempt-02/pytest.log",
+      "bytes": 2546,
+      "sha256": "1c5e19cc83ab38c79ca2270c5c97ca57027108764bffe0e719395908480398be"
+    },
+    {
+      "name": "tests/attempt-02/run_image_checks.py",
+      "bytes": 2857,
+      "sha256": "efd532788f63b47c829b1b80288e7e08d45f6e5bbd39c5fedcc050730327f98e"
+    },
+    {
+      "name": "tests/attempt-02/run_suite.py",
+      "bytes": 4061,
+      "sha256": "5c089ad5d1f1151b9cd0b143b03036684feabe20a7b0399832e587cf0a49ddde"
+    },
+    {
+      "name": "tests/attempt-02/test-commands.jsonl",
+      "bytes": 4330,
+      "sha256": "7592020cdc5811f49c456fc82798613f9d00ce627210044299a97b9a5e5342c2"
+    },
+    {
+      "name": "tests/attempt-02/test-invocation.json",
+      "bytes": 1298,
+      "sha256": "f9396d297d87af2bfaa7ea239f5e0f5fe94a3013db46b2b2cfc3fa00627aa137"
+    },
+    {
+      "name": "tests/compileall.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "tests/expected-source-manifest.json",
+      "bytes": 38173,
+      "sha256": "fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a"
+    },
+    {
+      "name": "tests/final-test-receipt.json",
+      "bytes": 1686,
+      "sha256": "5c023ada6f192342770aa668a87fef400feab545da42e6f7f1713b5eec02375b"
+    },
+    {
+      "name": "tests/finish_postgres_setup.py",
+      "bytes": 1814,
+      "sha256": "d99fba2941724eee03c9c8b42ba2b492c8d7ae35e16fc66bacb3cd908753f1cf"
+    },
+    {
+      "name": "tests/pip-check.log",
+      "bytes": 30,
+      "sha256": "9261363b733079a641c2e4cc9bc46ffa1d8336945a87f807b6cf68847dbc9b09"
+    },
+    {
+      "name": "tests/postgres-fixture.json",
+      "bytes": 979,
+      "sha256": "e50c8c62390cc549d586d22820077940b7ff0fc874895e7c29b6a47df2369421"
+    },
+    {
+      "name": "tests/prepare_postgres.py",
+      "bytes": 2923,
+      "sha256": "33c6f0fac68eb15911d77c3a867fd1e52bb8cda92120a6af1b5f15d9c92def60"
+    },
+    {
+      "name": "tests/pytest-junit.xml",
+      "bytes": 195821,
+      "sha256": "cfb7a85dc0096a1dd9f4aa63ae54f3e69a735abf2be5ac265d9338381d1f18bc"
+    },
+    {
+      "name": "tests/pytest-runtime-summary.json",
+      "bytes": 60813,
+      "sha256": "9a8da82a61ffa3771b2d87d05fb7c2429ff78f21e7cd6ee394b11e0944d927c6"
+    },
+    {
+      "name": "tests/pytest.log",
+      "bytes": 4137,
+      "sha256": "40dc45e9b08157a0ffdce221f24596e538d553f3ef27b95d1eb41ae6fdf2d854"
+    },
+    {
+      "name": "tests/run_image_checks.py",
+      "bytes": 3035,
+      "sha256": "efb368e2dc03182fdb156045468f2aa2ef4427f4630a4bca6bb8396f1e305561"
+    },
+    {
+      "name": "tests/run_suite.py",
+      "bytes": 4061,
+      "sha256": "5c089ad5d1f1151b9cd0b143b03036684feabe20a7b0399832e587cf0a49ddde"
+    },
+    {
+      "name": "tests/setup-commands.jsonl",
+      "bytes": 2587,
+      "sha256": "7ece5c781d4ad99569942fa670e0c41f23c7a43a9b2936cd60cdb876f238e4fd"
+    },
+    {
+      "name": "tests/test-commands.jsonl",
+      "bytes": 4774,
+      "sha256": "58d08cb3aef2510bc6410094543873f9489cdfe9b65bb6a1e9f35127a0b4d786"
+    },
+    {
+      "name": "tests/test-invocation.json",
+      "bytes": 1298,
+      "sha256": "a2c914843c31c80e260a2fa3de36d361b01d6ad8dc8ac17820ae8898f28d451b"
+    }
+  ]
+}

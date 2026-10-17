@@ -1,0 +1,2 @@
+# Removed from the final runtime after building the target-specific wheel.
+maturin==1.15.0

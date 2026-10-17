@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "docker",
+    "buildx",
+    "imagetools",
+    "create",
+    "--dry-run",
+    "--tag",
+    "registry.mageek.su/al-torrent-tools:latest",
+    "registry.mageek.su/al-torrent-tools@sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137"
+  ],
+  "exit_code": 0,
+  "candidate_digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+  "candidate_manifest_equal": true,
+  "published": false,
+  "stdout_sha256": "b7d47a833af3baae65c2378f640d741fba0f9ae96f11acedf45e4a3bd5e06a6c"
+}

@@ -1,0 +1,20 @@
+{
+  "release": "release-20261017-162449",
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "candidate_tag": "registry.mageek.su/al-torrent-tools:release-20261017-162449",
+  "latest_tag": "registry.mageek.su/al-torrent-tools:latest",
+  "root": "/private/tmp/altt-publish-release-20261017-162449",
+  "source": "/private/tmp/altt-publish-release-20261017-162449/backend",
+  "source_files": 263,
+  "source_manifest_sha256": "fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a",
+  "build_time_utc": "2026-10-17T16:24:49Z",
+  "client_date": "2026-10-17",
+  "git_commit": "4e78fcfb10de16abd8bebf13232196ce84c1d5d0",
+  "working_tree_included": true,
+  "previous_latest_digest": "sha256:f819949e816ed5c67c7121cc3f515fc5bd6d8dc639dbea02cd026b97d1fd9809",
+  "platforms": [
+    "linux/arm64",
+    "linux/amd64"
+  ],
+  "builder": "container"
+}

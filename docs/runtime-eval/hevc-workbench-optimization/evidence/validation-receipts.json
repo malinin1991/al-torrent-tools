@@ -1,0 +1,143 @@
+{
+  "pytest": [
+    {
+      "mode": "regular",
+      "psycopg_backend": "python",
+      "log": "logs/pytest-full-postgres-regular.log",
+      "summary": "1523 passed, 1 warning in 18.74s",
+      "counts": {
+        "passed": 1523,
+        "warning": 1
+      },
+      "exit_code": 0
+    },
+    {
+      "mode": "ft_off",
+      "psycopg_backend": "python",
+      "log": "logs/pytest-full-postgres-ft_off.log",
+      "summary": "1523 passed, 1 warning in 21.68s",
+      "counts": {
+        "passed": 1523,
+        "warning": 1
+      },
+      "exit_code": 0
+    },
+    {
+      "mode": "regular",
+      "psycopg_backend": "c",
+      "log": "logs/pytest-full-postgres-regular-c.log",
+      "summary": "1523 passed, 1 warning in 18.93s",
+      "counts": {
+        "passed": 1523,
+        "warning": 1
+      },
+      "exit_code": 0
+    },
+    {
+      "mode": "ft_off",
+      "psycopg_backend": "c",
+      "log": "logs/pytest-full-postgres-ft_off-c.log",
+      "summary": "1523 passed, 1 warning in 19.42s",
+      "counts": {
+        "passed": 1523,
+        "warning": 1
+      },
+      "exit_code": 0
+    }
+  ],
+  "differential": [
+    {
+      "file": "results/differential-regular.json",
+      "mode": "regular",
+      "psycopg_backend": "python",
+      "passed": true,
+      "cases": 40,
+      "service_calls": 80,
+      "writes": 0,
+      "flushes": 0,
+      "commits": 0
+    },
+    {
+      "file": "results/differential-ft_on.json",
+      "mode": "ft_on",
+      "psycopg_backend": "python",
+      "passed": true,
+      "cases": 40,
+      "service_calls": 80,
+      "writes": 0,
+      "flushes": 0,
+      "commits": 0
+    },
+    {
+      "file": "results/differential-ft_off.json",
+      "mode": "ft_off",
+      "psycopg_backend": "python",
+      "passed": true,
+      "cases": 40,
+      "service_calls": 80,
+      "writes": 0,
+      "flushes": 0,
+      "commits": 0
+    },
+    {
+      "file": "results/differential-regular-c.json",
+      "mode": "regular",
+      "psycopg_backend": "c",
+      "passed": true,
+      "cases": 40,
+      "service_calls": 80,
+      "writes": 0,
+      "flushes": 0,
+      "commits": 0
+    },
+    {
+      "file": "results/differential-ft_on-c.json",
+      "mode": "ft_on",
+      "psycopg_backend": "c",
+      "passed": true,
+      "cases": 40,
+      "service_calls": 80,
+      "writes": 0,
+      "flushes": 0,
+      "commits": 0
+    },
+    {
+      "file": "results/differential-ft_off-c.json",
+      "mode": "ft_off",
+      "psycopg_backend": "c",
+      "passed": true,
+      "cases": 40,
+      "service_calls": 80,
+      "writes": 0,
+      "flushes": 0,
+      "commits": 0
+    }
+  ],
+  "renderer_correctness": [
+    {
+      "file": "renderer-correctness-c/correctness-regular.json",
+      "mode": "regular",
+      "passed": true,
+      "cases": 54
+    },
+    {
+      "file": "renderer-correctness-c/correctness-ft_on.json",
+      "mode": "ft_on",
+      "passed": true,
+      "cases": 54
+    },
+    {
+      "file": "renderer-correctness-c/correctness-ft_off.json",
+      "mode": "ft_off",
+      "passed": true,
+      "cases": 54
+    }
+  ],
+  "totals": {
+    "full_test_suites": 4,
+    "passed_tests_across_suites": 6092,
+    "exact_context_cases": 240,
+    "service_calls": 480,
+    "renderer_html_cases": 162
+  }
+}

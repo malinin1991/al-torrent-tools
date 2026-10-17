@@ -1,3 +1,10 @@
 # Shell scripts must be LF — CRLF breaks `set -e` in Linux containers.
 *.sh text eol=lf
 *.bash text eol=lf
+
+# These captured artifacts are verified by SHA256SUMS. Preserve their exact
+# bytes on every platform, including original HTTP/log/patch whitespace.
+docs/runtime-eval/minijinja-workbench/evidence/** -text -whitespace
+docs/runtime-eval/hevc-workbench-optimization/evidence/** -text -whitespace
+docs/runtime-eval/hevc-workbench-optimization/regular-build-20261017/** -text -whitespace
+docs/releases/release-20261017-162449/** -text -whitespace

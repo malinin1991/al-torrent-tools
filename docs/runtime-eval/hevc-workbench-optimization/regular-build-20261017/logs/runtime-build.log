@@ -1,0 +1,456 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 4.14kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.15.0-slim-trixie
+#2 DONE 0.2s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 217B done
+#3 DONE 0.0s
+
+#4 [internal] load build context
+#4 transferring context: 99.92kB 0.0s done
+#4 DONE 0.0s
+
+#5 [base 1/7] FROM docker.io/library/python:3.15.0-slim-trixie@sha256:ea4f1f290e071bf7d28199cfb3e09f5dbad31b50e9c32fd58f2f2d7be915f3ae
+#5 resolve docker.io/library/python:3.15.0-slim-trixie@sha256:ea4f1f290e071bf7d28199cfb3e09f5dbad31b50e9c32fd58f2f2d7be915f3ae 0.0s done
+#5 CACHED
+
+#6 [base 2/7] RUN set -eux;     apt-get update;     apt-get install -y --no-install-recommends ca-certificates wget;     wget --https-only -q -O /tmp/repo-mediaarea.deb       https://mediaarea.net/repo/deb/repo-mediaarea_1.0-27_all.deb;     dpkg-deb -I /tmp/repo-mediaarea.deb >/dev/null;     dpkg -i /tmp/repo-mediaarea.deb;     apt-get update;     apt-get install -y --no-install-recommends mediainfo libmediainfo0v5 libzen0v5;     ldconfig;     mediainfo --Version;     ver="$(mediainfo --Version 2>&1 | sed -n 's/.*MediaInfoLib - v\([0-9][0-9.]*\).*/\1/p' | head -1)";     major="$(printf '%s' "$ver" | cut -d. -f1)";     if [ -z "$ver" ] || [ "$major" -lt 26 ]; then       echo "ERROR: expected MediaArea MediaInfo >= 26.x, got: '${ver:-unknown}'" >&2;       apt-cache policy mediainfo libmediainfo0v5 >&2 || true;       exit 1;     fi;     apt-get purge -y --auto-remove wget;     rm -f /tmp/repo-mediaarea.deb;     rm -rf /var/lib/apt/lists/*
+#6 0.120 + apt-get update
+#6 0.758 Hit:1 http://deb.debian.org/debian trixie InRelease
+#6 0.879 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#6 1.167 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#6 1.348 Get:4 http://deb.debian.org/debian trixie/main arm64 Packages [9614 kB]
+#6 3.312 Get:5 http://deb.debian.org/debian trixie-updates/main arm64 Packages [4424 B]
+#6 3.453 Get:6 http://deb.debian.org/debian-security trixie-security/main arm64 Packages [270 kB]
+#6 4.040 Fetched 9980 kB in 4s (2569 kB/s)
+#6 4.040 Reading package lists...
+#6 4.387 + apt-get install -y --no-install-recommends ca-certificates wget
+#6 4.400 Reading package lists...
+#6 4.753 Building dependency tree...
+#6 4.838 Reading state information...
+#6 4.950 ca-certificates is already the newest version (20250419).
+#6 4.950 The following additional packages will be installed:
+#6 4.950   libgnutls30t64 libidn2-0 libp11-kit0 libpsl5t64 libtasn1-6 libunistring5
+#6 4.951 Suggested packages:
+#6 4.951   gnutls-bin
+#6 4.951 Recommended packages:
+#6 4.951   publicsuffix
+#6 5.016 The following NEW packages will be installed:
+#6 5.016   libgnutls30t64 libidn2-0 libp11-kit0 libpsl5t64 libtasn1-6 libunistring5
+#6 5.016   wget
+#6 5.322 0 upgraded, 7 newly installed, 0 to remove and 0 not upgraded.
+#6 5.322 Need to get 3423 kB of archives.
+#6 5.322 After this operation, 12.7 MB of additional disk space will be used.
+#6 5.322 Get:1 http://deb.debian.org/debian trixie/main arm64 libunistring5 arm64 1.3-2 [453 kB]
+#6 5.957 Get:2 http://deb.debian.org/debian trixie/main arm64 libidn2-0 arm64 2.3.8-2 [107 kB]
+#6 6.138 Get:3 http://deb.debian.org/debian trixie/main arm64 libp11-kit0 arm64 0.25.5-3 [409 kB]
+#6 6.210 Get:4 http://deb.debian.org/debian trixie/main arm64 libtasn1-6 arm64 4.20.0-2+deb13u1 [47.3 kB]
+#6 6.212 Get:5 http://deb.debian.org/debian trixie/main arm64 libgnutls30t64 arm64 3.8.9-3+deb13u4 [1379 kB]
+#6 6.518 Get:6 http://deb.debian.org/debian trixie/main arm64 libpsl5t64 arm64 0.21.2-1.1+b1 [57.1 kB]
+#6 6.520 Get:7 http://deb.debian.org/debian trixie/main arm64 wget arm64 1.25.0-2 [970 kB]
+#6 7.214 debconf: unable to initialize frontend: Dialog
+#6 7.214 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#6 7.214 debconf: falling back to frontend: Readline
+#6 7.214 debconf: unable to initialize frontend: Readline
+#6 7.214 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/aarch64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/aarch64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/aarch64-linux-gnu/perl-base /usr/lib/aarch64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 7.)
+#6 7.214 debconf: falling back to frontend: Teletype
+#6 7.217 debconf: unable to initialize frontend: Teletype
+#6 7.217 debconf: (This frontend requires a controlling tty.)
+#6 7.217 debconf: falling back to frontend: Noninteractive
+#6 7.680 Fetched 3423 kB in 2s (1670 kB/s)
+#6 7.692 Selecting previously unselected package libunistring5:arm64.
+#6 7.692 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5657 files and directories currently installed.)
+#6 7.702 Preparing to unpack .../0-libunistring5_1.3-2_arm64.deb ...
+#6 7.704 Unpacking libunistring5:arm64 (1.3-2) ...
+#6 7.740 Selecting previously unselected package libidn2-0:arm64.
+#6 7.741 Preparing to unpack .../1-libidn2-0_2.3.8-2_arm64.deb ...
+#6 7.742 Unpacking libidn2-0:arm64 (2.3.8-2) ...
+#6 7.757 Selecting previously unselected package libp11-kit0:arm64.
+#6 7.758 Preparing to unpack .../2-libp11-kit0_0.25.5-3_arm64.deb ...
+#6 7.759 Unpacking libp11-kit0:arm64 (0.25.5-3) ...
+#6 7.785 Selecting previously unselected package libtasn1-6:arm64.
+#6 7.786 Preparing to unpack .../3-libtasn1-6_4.20.0-2+deb13u1_arm64.deb ...
+#6 7.787 Unpacking libtasn1-6:arm64 (4.20.0-2+deb13u1) ...
+#6 7.800 Selecting previously unselected package libgnutls30t64:arm64.
+#6 7.801 Preparing to unpack .../4-libgnutls30t64_3.8.9-3+deb13u4_arm64.deb ...
+#6 7.802 Unpacking libgnutls30t64:arm64 (3.8.9-3+deb13u4) ...
+#6 7.859 Selecting previously unselected package libpsl5t64:arm64.
+#6 7.859 Preparing to unpack .../5-libpsl5t64_0.21.2-1.1+b1_arm64.deb ...
+#6 7.860 Unpacking libpsl5t64:arm64 (0.21.2-1.1+b1) ...
+#6 7.872 Selecting previously unselected package wget.
+#6 7.873 Preparing to unpack .../6-wget_1.25.0-2_arm64.deb ...
+#6 7.874 Unpacking wget (1.25.0-2) ...
+#6 7.925 Setting up libp11-kit0:arm64 (0.25.5-3) ...
+#6 7.928 Setting up libunistring5:arm64 (1.3-2) ...
+#6 7.930 Setting up libtasn1-6:arm64 (4.20.0-2+deb13u1) ...
+#6 7.934 Setting up libidn2-0:arm64 (2.3.8-2) ...
+#6 7.936 Setting up libgnutls30t64:arm64 (3.8.9-3+deb13u4) ...
+#6 7.939 Setting up libpsl5t64:arm64 (0.21.2-1.1+b1) ...
+#6 7.944 Setting up wget (1.25.0-2) ...
+#6 7.950 Processing triggers for libc-bin (2.41-12+deb13u4) ...
+#6 7.974 + wget --https-only -q -O /tmp/repo-mediaarea.deb https://mediaarea.net/repo/deb/repo-mediaarea_1.0-27_all.deb
+#6 8.742 + dpkg-deb -I /tmp/repo-mediaarea.deb
+#6 8.749 + dpkg -i /tmp/repo-mediaarea.deb
+#6 8.762 Selecting previously unselected package repo-mediaarea.
+#6 8.766 (Reading database ... 5850 files and directories currently installed.)
+#6 8.767 Preparing to unpack /tmp/repo-mediaarea.deb ...
+#6 8.768 Unpacking repo-mediaarea (1.0-27) ...
+#6 8.778 Setting up repo-mediaarea (1.0-27) ...
+#6 8.794 + apt-get update
+#6 9.115 Hit:1 http://deb.debian.org/debian trixie InRelease
+#6 9.247 Hit:2 http://deb.debian.org/debian trixie-updates InRelease
+#6 9.388 Hit:3 http://deb.debian.org/debian-security trixie-security InRelease
+#6 9.851 Get:4 https://mediaarea.net/repo/deb/debian trixie InRelease [34.1 kB]
+#6 10.24 Get:5 https://mediaarea.net/repo/deb/debian trixie/main arm64 Packages [8416 B]
+#6 10.26 Fetched 42.5 kB in 1s (29.3 kB/s)
+#6 10.26 Reading package lists...
+#6 10.61 + apt-get install -y --no-install-recommends mediainfo libmediainfo0v5 libzen0v5
+#6 10.61 Reading package lists...
+#6 10.92 Building dependency tree...
+#6 11.01 Reading state information...
+#6 11.13 The following additional packages will be installed:
+#6 11.13   libbrotli1 libcom-err2 libcurl3t64-gnutls libgssapi-krb5-2 libk5crypto3
+#6 11.13   libkeyutils1 libkrb5-3 libkrb5support0 libldap2 libmms0 libnghttp2-14
+#6 11.13   libnghttp3-9 libngtcp2-16 libngtcp2-crypto-gnutls8 librtmp1 libsasl2-2
+#6 11.13   libsasl2-modules-db libssh2-1t64
+#6 11.13 Suggested packages:
+#6 11.13   krb5-doc krb5-user
+#6 11.13 Recommended packages:
+#6 11.13   krb5-locales libldap-common libsasl2-modules
+#6 11.20 The following NEW packages will be installed:
+#6 11.20   libbrotli1 libcom-err2 libcurl3t64-gnutls libgssapi-krb5-2 libk5crypto3
+#6 11.20   libkeyutils1 libkrb5-3 libkrb5support0 libldap2 libmediainfo0v5 libmms0
+#6 11.20   libnghttp2-14 libnghttp3-9 libngtcp2-16 libngtcp2-crypto-gnutls8 librtmp1
+#6 11.20   libsasl2-2 libsasl2-modules-db libssh2-1t64 libzen0v5 mediainfo
+#6 11.51 0 upgraded, 21 newly installed, 0 to remove and 0 not upgraded.
+#6 11.51 Need to get 5173 kB of archives.
+#6 11.51 After this operation, 17.7 MB of additional disk space will be used.
+#6 11.51 Get:1 http://deb.debian.org/debian trixie/main arm64 libbrotli1 arm64 1.1.0-2+b7 [308 kB]
+#6 11.78 Get:2 https://mediaarea.net/repo/deb/debian trixie/main arm64 libzen0v5 arm64 0.4.41-1 [97.9 kB]
+#6 12.10 Get:3 http://deb.debian.org/debian trixie/main arm64 libcom-err2 arm64 1.47.2-3+b12 [24.9 kB]
+#6 12.11 Get:4 http://deb.debian.org/debian trixie/main arm64 libkrb5support0 arm64 1.21.3-5+deb13u1 [32.5 kB]
+#6 12.11 Get:5 http://deb.debian.org/debian trixie/main arm64 libk5crypto3 arm64 1.21.3-5+deb13u1 [81.4 kB]
+#6 12.13 Get:6 http://deb.debian.org/debian trixie/main arm64 libkeyutils1 arm64 1.6.3-6 [9716 B]
+#6 12.14 Get:7 http://deb.debian.org/debian trixie/main arm64 libkrb5-3 arm64 1.21.3-5+deb13u1 [308 kB]
+#6 12.26 Get:8 http://deb.debian.org/debian trixie/main arm64 libgssapi-krb5-2 arm64 1.21.3-5+deb13u1 [128 kB]
+#6 12.28 Get:9 http://deb.debian.org/debian trixie/main arm64 libsasl2-modules-db arm64 2.1.28+dfsg1-9 [20.1 kB]
+#6 12.29 Get:10 http://deb.debian.org/debian trixie/main arm64 libsasl2-2 arm64 2.1.28+dfsg1-9 [55.6 kB]
+#6 12.29 Get:11 http://deb.debian.org/debian trixie/main arm64 libldap2 arm64 2.6.10+dfsg-1 [179 kB]
+#6 12.31 Get:12 http://deb.debian.org/debian trixie/main arm64 libnghttp2-14 arm64 1.64.0-1.1+deb13u1 [71.6 kB]
+#6 12.32 Get:13 http://deb.debian.org/debian trixie/main arm64 libnghttp3-9 arm64 1.8.0-1 [63.2 kB]
+#6 12.39 Get:14 http://deb.debian.org/debian trixie/main arm64 libngtcp2-16 arm64 1.11.0-1+deb13u1 [121 kB]
+#6 12.40 Get:15 http://deb.debian.org/debian trixie/main arm64 libngtcp2-crypto-gnutls8 arm64 1.11.0-1+deb13u1 [28.4 kB]
+#6 12.41 Get:16 http://deb.debian.org/debian trixie/main arm64 librtmp1 arm64 2.4+20151223.gitfa8646d.1-2+b5 [56.8 kB]
+#6 12.41 Get:17 http://deb.debian.org/debian trixie/main arm64 libssh2-1t64 arm64 1.11.1-1+deb13u2 [236 kB]
+#6 12.55 Get:18 https://mediaarea.net/repo/deb/debian trixie/main arm64 libmediainfo0v5 arm64 26.10-1 [2882 kB]
+#6 12.59 Get:19 http://deb.debian.org/debian-security trixie-security/main arm64 libcurl3t64-gnutls arm64 8.14.1-2+deb13u7 [354 kB]
+#6 12.63 Get:20 http://deb.debian.org/debian trixie/main arm64 libmms0 arm64 0.6.4-3+b2 [31.9 kB]
+#6 15.36 Get:21 https://mediaarea.net/repo/deb/debian trixie/main arm64 mediainfo arm64 26.10-1 [82.2 kB]
+#6 15.47 debconf: unable to initialize frontend: Dialog
+#6 15.47 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#6 15.47 debconf: falling back to frontend: Readline
+#6 15.47 debconf: unable to initialize frontend: Readline
+#6 15.47 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC entries checked: /etc/perl /usr/local/lib/aarch64-linux-gnu/perl/5.40.1 /usr/local/share/perl/5.40.1 /usr/lib/aarch64-linux-gnu/perl5/5.40 /usr/share/perl5 /usr/lib/aarch64-linux-gnu/perl-base /usr/lib/aarch64-linux-gnu/perl/5.40 /usr/share/perl/5.40 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 8, <STDIN> line 21.)
+#6 15.47 debconf: falling back to frontend: Teletype
+#6 15.47 debconf: unable to initialize frontend: Teletype
+#6 15.47 debconf: (This frontend requires a controlling tty.)
+#6 15.47 debconf: falling back to frontend: Noninteractive
+#6 15.90 Fetched 5173 kB in 4s (1244 kB/s)
+#6 15.91 Selecting previously unselected package libbrotli1:arm64.
+#6 15.91 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5855 files and directories currently installed.)
+#6 15.91 Preparing to unpack .../00-libbrotli1_1.1.0-2+b7_arm64.deb ...
+#6 15.92 Unpacking libbrotli1:arm64 (1.1.0-2+b7) ...
+#6 15.95 Selecting previously unselected package libcom-err2:arm64.
+#6 15.95 Preparing to unpack .../01-libcom-err2_1.47.2-3+b12_arm64.deb ...
+#6 15.95 Unpacking libcom-err2:arm64 (1.47.2-3+b12) ...
+#6 15.96 Selecting previously unselected package libkrb5support0:arm64.
+#6 15.97 Preparing to unpack .../02-libkrb5support0_1.21.3-5+deb13u1_arm64.deb ...
+#6 15.97 Unpacking libkrb5support0:arm64 (1.21.3-5+deb13u1) ...
+#6 15.98 Selecting previously unselected package libk5crypto3:arm64.
+#6 15.98 Preparing to unpack .../03-libk5crypto3_1.21.3-5+deb13u1_arm64.deb ...
+#6 15.98 Unpacking libk5crypto3:arm64 (1.21.3-5+deb13u1) ...
+#6 16.00 Selecting previously unselected package libkeyutils1:arm64.
+#6 16.00 Preparing to unpack .../04-libkeyutils1_1.6.3-6_arm64.deb ...
+#6 16.00 Unpacking libkeyutils1:arm64 (1.6.3-6) ...
+#6 16.01 Selecting previously unselected package libkrb5-3:arm64.
+#6 16.01 Preparing to unpack .../05-libkrb5-3_1.21.3-5+deb13u1_arm64.deb ...
+#6 16.01 Unpacking libkrb5-3:arm64 (1.21.3-5+deb13u1) ...
+#6 16.04 Selecting previously unselected package libgssapi-krb5-2:arm64.
+#6 16.04 Preparing to unpack .../06-libgssapi-krb5-2_1.21.3-5+deb13u1_arm64.deb ...
+#6 16.04 Unpacking libgssapi-krb5-2:arm64 (1.21.3-5+deb13u1) ...
+#6 16.06 Selecting previously unselected package libsasl2-modules-db:arm64.
+#6 16.06 Preparing to unpack .../07-libsasl2-modules-db_2.1.28+dfsg1-9_arm64.deb ...
+#6 16.06 Unpacking libsasl2-modules-db:arm64 (2.1.28+dfsg1-9) ...
+#6 16.07 Selecting previously unselected package libsasl2-2:arm64.
+#6 16.07 Preparing to unpack .../08-libsasl2-2_2.1.28+dfsg1-9_arm64.deb ...
+#6 16.07 Unpacking libsasl2-2:arm64 (2.1.28+dfsg1-9) ...
+#6 16.08 Selecting previously unselected package libldap2:arm64.
+#6 16.08 Preparing to unpack .../09-libldap2_2.6.10+dfsg-1_arm64.deb ...
+#6 16.08 Unpacking libldap2:arm64 (2.6.10+dfsg-1) ...
+#6 16.10 Selecting previously unselected package libnghttp2-14:arm64.
+#6 16.10 Preparing to unpack .../10-libnghttp2-14_1.64.0-1.1+deb13u1_arm64.deb ...
+#6 16.11 Unpacking libnghttp2-14:arm64 (1.64.0-1.1+deb13u1) ...
+#6 16.12 Selecting previously unselected package libnghttp3-9:arm64.
+#6 16.12 Preparing to unpack .../11-libnghttp3-9_1.8.0-1_arm64.deb ...
+#6 16.12 Unpacking libnghttp3-9:arm64 (1.8.0-1) ...
+#6 16.13 Selecting previously unselected package libngtcp2-16:arm64.
+#6 16.13 Preparing to unpack .../12-libngtcp2-16_1.11.0-1+deb13u1_arm64.deb ...
+#6 16.14 Unpacking libngtcp2-16:arm64 (1.11.0-1+deb13u1) ...
+#6 16.15 Selecting previously unselected package libngtcp2-crypto-gnutls8:arm64.
+#6 16.15 Preparing to unpack .../13-libngtcp2-crypto-gnutls8_1.11.0-1+deb13u1_arm64.deb ...
+#6 16.15 Unpacking libngtcp2-crypto-gnutls8:arm64 (1.11.0-1+deb13u1) ...
+#6 16.16 Selecting previously unselected package librtmp1:arm64.
+#6 16.16 Preparing to unpack .../14-librtmp1_2.4+20151223.gitfa8646d.1-2+b5_arm64.deb ...
+#6 16.16 Unpacking librtmp1:arm64 (2.4+20151223.gitfa8646d.1-2+b5) ...
+#6 16.18 Selecting previously unselected package libssh2-1t64:arm64.
+#6 16.18 Preparing to unpack .../15-libssh2-1t64_1.11.1-1+deb13u2_arm64.deb ...
+#6 16.18 Unpacking libssh2-1t64:arm64 (1.11.1-1+deb13u2) ...
+#6 16.20 Selecting previously unselected package libcurl3t64-gnutls:arm64.
+#6 16.20 Preparing to unpack .../16-libcurl3t64-gnutls_8.14.1-2+deb13u7_arm64.deb ...
+#6 16.20 Unpacking libcurl3t64-gnutls:arm64 (8.14.1-2+deb13u7) ...
+#6 16.23 Selecting previously unselected package libmms0:arm64.
+#6 16.23 Preparing to unpack .../17-libmms0_0.6.4-3+b2_arm64.deb ...
+#6 16.23 Unpacking libmms0:arm64 (0.6.4-3+b2) ...
+#6 16.24 Selecting previously unselected package libzen0v5:arm64.
+#6 16.24 Preparing to unpack .../18-libzen0v5_0.4.41-1_arm64.deb ...
+#6 16.24 Unpacking libzen0v5:arm64 (0.4.41-1) ...
+#6 16.26 Selecting previously unselected package libmediainfo0v5:arm64.
+#6 16.26 Preparing to unpack .../19-libmediainfo0v5_26.10-1_arm64.deb ...
+#6 16.26 Unpacking libmediainfo0v5:arm64 (26.10-1) ...
+#6 16.40 Selecting previously unselected package mediainfo.
+#6 16.40 Preparing to unpack .../20-mediainfo_26.10-1_arm64.deb ...
+#6 16.40 Unpacking mediainfo (26.10-1) ...
+#6 16.42 Setting up libkeyutils1:arm64 (1.6.3-6) ...
+#6 16.42 Setting up libbrotli1:arm64 (1.1.0-2+b7) ...
+#6 16.43 Setting up libnghttp2-14:arm64 (1.64.0-1.1+deb13u1) ...
+#6 16.43 Setting up libcom-err2:arm64 (1.47.2-3+b12) ...
+#6 16.43 Setting up libmms0:arm64 (0.6.4-3+b2) ...
+#6 16.44 Setting up libkrb5support0:arm64 (1.21.3-5+deb13u1) ...
+#6 16.44 Setting up libsasl2-modules-db:arm64 (2.1.28+dfsg1-9) ...
+#6 16.44 Setting up librtmp1:arm64 (2.4+20151223.gitfa8646d.1-2+b5) ...
+#6 16.44 Setting up libzen0v5:arm64 (0.4.41-1) ...
+#6 16.45 Setting up libk5crypto3:arm64 (1.21.3-5+deb13u1) ...
+#6 16.45 Setting up libsasl2-2:arm64 (2.1.28+dfsg1-9) ...
+#6 16.45 Setting up libnghttp3-9:arm64 (1.8.0-1) ...
+#6 16.46 Setting up libngtcp2-16:arm64 (1.11.0-1+deb13u1) ...
+#6 16.46 Setting up libkrb5-3:arm64 (1.21.3-5+deb13u1) ...
+#6 16.46 Setting up libssh2-1t64:arm64 (1.11.1-1+deb13u2) ...
+#6 16.46 Setting up libldap2:arm64 (2.6.10+dfsg-1) ...
+#6 16.47 Setting up libngtcp2-crypto-gnutls8:arm64 (1.11.0-1+deb13u1) ...
+#6 16.47 Setting up libgssapi-krb5-2:arm64 (1.21.3-5+deb13u1) ...
+#6 16.47 Setting up libcurl3t64-gnutls:arm64 (8.14.1-2+deb13u7) ...
+#6 16.48 Setting up libmediainfo0v5:arm64 (26.10-1) ...
+#6 16.48 Setting up mediainfo (26.10-1) ...
+#6 16.48 Processing triggers for libc-bin (2.41-12+deb13u4) ...
+#6 16.50 + ldconfig
+#6 16.50 + mediainfo --Version
+#6 16.51 MediaInfo Command line, 
+#6 16.51 MediaInfoLib - v26.10
+#6 16.51 + mediainfo --Version
+#6 16.51 + sed -n s/.*MediaInfoLib - v\([0-9][0-9.]*\).*/\1/p
+#6 16.51 + head -1
+#6 16.52 + ver=26.10
+#6 16.52 + printf %s 26.10
+#6 16.52 + cut -d. -f1
+#6 16.52 + major=26
+#6 16.52 + [ -z 26.10 ]
+#6 16.52 + [ 26 -lt 26 ]
+#6 16.52 + apt-get purge -y --auto-remove wget
+#6 16.52 Reading package lists...
+#6 16.83 Building dependency tree...
+#6 16.91 Reading state information...
+#6 17.04 The following packages will be REMOVED:
+#6 17.04   wget*
+#6 17.11 0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.
+#6 17.11 After this operation, 3871 kB disk space will be freed.
+#6 17.12 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6008 files and directories currently installed.)
+#6 17.12 Removing wget (1.25.0-2) ...
+#6 17.14 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5913 files and directories currently installed.)
+#6 17.14 Purging configuration files for wget (1.25.0-2) ...
+#6 17.16 + rm -f /tmp/repo-mediaarea.deb
+#6 17.16 + rm -rf /var/lib/apt/lists/auxfiles /var/lib/apt/lists/deb.debian.org_debian-security_dists_trixie-security_InRelease /var/lib/apt/lists/deb.debian.org_debian-security_dists_trixie-security_main_binary-arm64_Packages.lz4 /var/lib/apt/lists/deb.debian.org_debian_dists_trixie-updates_InRelease /var/lib/apt/lists/deb.debian.org_debian_dists_trixie-updates_main_binary-arm64_Packages.lz4 /var/lib/apt/lists/deb.debian.org_debian_dists_trixie_InRelease /var/lib/apt/lists/deb.debian.org_debian_dists_trixie_main_binary-arm64_Packages.lz4 /var/lib/apt/lists/lock /var/lib/apt/lists/mediaarea.net_repo_deb_debian_dists_trixie_InRelease /var/lib/apt/lists/mediaarea.net_repo_deb_debian_dists_trixie_main_binary-arm64_Packages.lz4 /var/lib/apt/lists/partial
+#6 DONE 17.2s
+
+#7 [base 3/7] WORKDIR /app
+#7 DONE 0.0s
+
+#8 [base 4/7] COPY requirements.txt /app/requirements.txt
+#8 DONE 0.0s
+
+#9 [base 5/7] COPY constraints.txt /app/constraints.txt
+#9 DONE 0.0s
+
+#10 [base 6/7] RUN set -eux;     pip install --no-cache-dir --only-binary=:all: -c /app/constraints.txt -r /app/requirements.txt;     python -m pip check;     python -c "import decimal, sys, sysconfig; assert not sysconfig.get_config_var('Py_GIL_DISABLED'); assert sys._is_gil_enabled(); assert not sys._jit.is_available(); assert str(decimal.Decimal('1.25') * 4) == '5.00'; print('regular CPython', sys.version, 'Decimal implementation', decimal.Decimal.__module__)";     python -c "from pathlib import Path; import pymediainfo; pkg=Path(pymediainfo.__file__).resolve().parent; paths=list(pkg.glob('libmediainfo*')); [p.unlink() for p in paths]; print('removed bundled:', ', '.join(p.name for p in paths) or '(none)')";     python -c "from pymediainfo import MediaInfo; _l,_h,ver,tup=MediaInfo._get_library(); print(f'pymediainfo uses libmediainfo {ver} from system'); assert tup and tup[0] >= 26, ver"
+#10 0.136 + pip install --no-cache-dir --only-binary=:all: -c /app/constraints.txt -r /app/requirements.txt
+#10 2.776 Collecting fastapi (from -r /app/requirements.txt (line 1))
+#10 3.398   Downloading fastapi-0.143.3-py3-none-any.whl.metadata (26 kB)
+#10 3.725 Collecting uvicorn (from -r /app/requirements.txt (line 2))
+#10 3.880   Downloading uvicorn-0.54.0-py3-none-any.whl.metadata (6.6 kB)
+#10 4.213 Collecting httptools (from -r /app/requirements.txt (line 4))
+#10 4.359   Downloading httptools-0.9.0-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (3.5 kB)
+#10 4.699 Collecting uvloop (from -r /app/requirements.txt (line 5))
+#10 4.853   Downloading uvloop-0.23.0-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (5.1 kB)
+#10 6.544 Collecting sqlalchemy (from -r /app/requirements.txt (line 6))
+#10 6.692   Downloading sqlalchemy-2.1.4-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (9.7 kB)
+#10 6.904 Collecting alembic (from -r /app/requirements.txt (line 7))
+#10 7.047   Downloading alembic-1.20.0-py3-none-any.whl.metadata (7.3 kB)
+#10 7.237 Collecting httpx (from -r /app/requirements.txt (line 9))
+#10 7.383   Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+#10 7.558 Collecting jinja2 (from -r /app/requirements.txt (line 10))
+#10 7.706   Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+#10 7.870 Collecting python-multipart (from -r /app/requirements.txt (line 11))
+#10 8.017   Downloading python_multipart-0.0.32-py3-none-any.whl.metadata (2.1 kB)
+#10 8.195 Collecting apscheduler (from -r /app/requirements.txt (line 12))
+#10 8.343   Downloading apscheduler-3.11.3-py3-none-any.whl.metadata (6.5 kB)
+#10 8.551 Collecting qbittorrent-api (from -r /app/requirements.txt (line 13))
+#10 8.699   Downloading qbittorrent_api-2026.10.0-py3-none-any.whl.metadata (22 kB)
+#10 8.917 Collecting pydantic-settings (from -r /app/requirements.txt (line 14))
+#10 9.060   Downloading pydantic_settings-2.16.0-py3-none-any.whl.metadata (4.0 kB)
+#10 9.282 Collecting python-telegram-bot>=21.0 (from -r /app/requirements.txt (line 15))
+#10 9.429   Downloading python_telegram_bot-22.8-py3-none-any.whl.metadata (17 kB)
+#10 9.950 Collecting blake3 (from -r /app/requirements.txt (line 16))
+#10 10.09   Downloading blake3-1.0.11-cp315-cp315-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (4.9 kB)
+#10 10.36 Collecting pymediainfo>=6.1.0 (from -r /app/requirements.txt (line 17))
+#10 10.51   Downloading pymediainfo-7.0.1-py3-none-manylinux_2_27_aarch64.whl.metadata (9.0 kB)
+#10 10.70 Collecting psycopg[binary] (from -r /app/requirements.txt (line 8))
+#10 10.86   Downloading psycopg-3.3.6-py3-none-any.whl.metadata (4.4 kB)
+#10 11.08 Collecting starlette>=0.46.0 (from fastapi->-r /app/requirements.txt (line 1))
+#10 11.23   Downloading starlette-1.8.0-py3-none-any.whl.metadata (6.6 kB)
+#10 11.86 Collecting pydantic>=2.9.0 (from fastapi->-r /app/requirements.txt (line 1))
+#10 12.00   Downloading pydantic-2.14.1-py3-none-any.whl.metadata (133 kB)
+#10 12.39 Collecting typing-extensions>=4.8.0 (from fastapi->-r /app/requirements.txt (line 1))
+#10 12.53   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+#10 12.69 Collecting typing-inspection>=0.4.2 (from fastapi->-r /app/requirements.txt (line 1))
+#10 12.84   Downloading typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+#10 13.00 Collecting annotated-doc>=0.0.2 (from fastapi->-r /app/requirements.txt (line 1))
+#10 13.14   Downloading annotated_doc-0.0.5-py3-none-any.whl.metadata (6.5 kB)
+#10 13.33 Collecting opentelemetry-api>=1.44.0 (from fastapi->-r /app/requirements.txt (line 1))
+#10 13.47   Downloading opentelemetry_api-1.45.1-py3-none-any.whl.metadata (1.4 kB)
+#10 13.67 Collecting click>=7.0 (from uvicorn->-r /app/requirements.txt (line 2))
+#10 13.82   Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+#10 13.98 Collecting h11>=0.8 (from uvicorn->-r /app/requirements.txt (line 2))
+#10 14.13   Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+#10 14.31 Collecting Mako (from alembic->-r /app/requirements.txt (line 7))
+#10 14.45   Downloading mako-1.4.3-py3-none-any.whl.metadata (2.9 kB)
+#10 15.28 Collecting psycopg-binary==3.3.6 (from psycopg[binary]->-r /app/requirements.txt (line 8))
+#10 15.43   Downloading psycopg_binary-3.3.6-cp315-cp315-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl.metadata (2.7 kB)
+#10 15.61 Collecting anyio (from httpx->-r /app/requirements.txt (line 9))
+#10 15.76   Downloading anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+#10 15.94 Collecting certifi (from httpx->-r /app/requirements.txt (line 9))
+#10 16.09   Downloading certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+#10 16.27 Collecting httpcore==1.* (from httpx->-r /app/requirements.txt (line 9))
+#10 16.42   Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+#10 16.59 Collecting idna (from httpx->-r /app/requirements.txt (line 9))
+#10 16.73   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+#10 17.11 Collecting MarkupSafe>=2.0 (from jinja2->-r /app/requirements.txt (line 10))
+#10 17.26   Downloading markupsafe-3.0.4-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (2.7 kB)
+#10 17.43 Collecting tzlocal>=3.0 (from apscheduler->-r /app/requirements.txt (line 12))
+#10 17.57   Downloading tzlocal-5.4.4-py3-none-any.whl.metadata (7.7 kB)
+#10 17.76 Collecting packaging (from qbittorrent-api->-r /app/requirements.txt (line 13))
+#10 17.90   Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+#10 18.12 Collecting requests>=2.16.0 (from qbittorrent-api->-r /app/requirements.txt (line 13))
+#10 18.27   Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+#10 18.47 Collecting urllib3>=1.24.2 (from qbittorrent-api->-r /app/requirements.txt (line 13))
+#10 18.61   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+#10 18.80 Collecting python-dotenv>=1.2.2 (from pydantic-settings->-r /app/requirements.txt (line 14))
+#10 18.94   Downloading python_dotenv-1.2.4-py3-none-any.whl.metadata (29 kB)
+#10 19.11 Collecting annotated-types>=0.6.0 (from pydantic>=2.9.0->fastapi->-r /app/requirements.txt (line 1))
+#10 19.26   Downloading annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+#10 22.52 Collecting pydantic-core==2.50.1 (from pydantic>=2.9.0->fastapi->-r /app/requirements.txt (line 1))
+#10 22.66   Downloading pydantic_core-2.50.1-cp315-cp315-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (6.5 kB)
+#10 23.28 Collecting charset_normalizer<4,>=2 (from requests>=2.16.0->qbittorrent-api->-r /app/requirements.txt (line 13))
+#10 23.43   Downloading charset_normalizer-3.5.2-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (46 kB)
+#10 23.60 Downloading fastapi-0.143.3-py3-none-any.whl (144 kB)
+#10 23.81 Downloading uvicorn-0.54.0-py3-none-any.whl (87 kB)
+#10 23.97 Downloading httptools-0.9.0-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (516 kB)
+#10 24.31 Downloading uvloop-0.23.0-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (4.4 MB)
+#10 25.08    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.4/4.4 MB 5.6 MB/s  0:00:00
+#10 25.23 Downloading sqlalchemy-2.1.4-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (4.6 MB)
+#10 26.08    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.6/4.6 MB 5.5 MB/s  0:00:00
+#10 26.23 Downloading alembic-1.20.0-py3-none-any.whl (268 kB)
+#10 26.43 Downloading psycopg-3.3.6-py3-none-any.whl (215 kB)
+#10 26.61 Downloading psycopg_binary-3.3.6-cp315-cp315-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl (6.8 MB)
+#10 27.87    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.8/6.8 MB 5.4 MB/s  0:00:01
+#10 28.02 Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+#10 28.17 Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+#10 28.33 Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+#10 28.50 Downloading python_multipart-0.0.32-py3-none-any.whl (30 kB)
+#10 28.65 Downloading apscheduler-3.11.3-py3-none-any.whl (66 kB)
+#10 28.80 Downloading qbittorrent_api-2026.10.0-py3-none-any.whl (73 kB)
+#10 28.96 Downloading pydantic_settings-2.16.0-py3-none-any.whl (80 kB)
+#10 29.12 Downloading python_telegram_bot-22.8-py3-none-any.whl (769 kB)
+#10 29.23    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 769.4/769.4 kB 7.5 MB/s  0:00:00
+#10 29.38 Downloading blake3-1.0.11-cp315-cp315-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (371 kB)
+#10 29.58 Downloading pymediainfo-7.0.1-py3-none-manylinux_2_27_aarch64.whl (5.8 MB)
+#10 31.35    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.8/5.8 MB 3.2 MB/s  0:00:01
+#10 31.50 Downloading annotated_doc-0.0.5-py3-none-any.whl (5.3 kB)
+#10 31.65 Downloading click-8.5.0-py3-none-any.whl (125 kB)
+#10 31.86 Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+#10 32.03 Downloading markupsafe-3.0.4-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (24 kB)
+#10 32.18 Downloading opentelemetry_api-1.45.1-py3-none-any.whl (60 kB)
+#10 32.37 Downloading pydantic-2.14.1-py3-none-any.whl (488 kB)
+#10 32.85 Downloading pydantic_core-2.50.1-cp315-cp315-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (2.0 MB)
+#10 34.51    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.0/2.0 MB 1.2 MB/s  0:00:01
+#10 34.65 Downloading annotated_types-0.8.0-py3-none-any.whl (13 kB)
+#10 34.83 Downloading python_dotenv-1.2.4-py3-none-any.whl (23 kB)
+#10 34.99 Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+#10 35.20 Downloading charset_normalizer-3.5.2-cp315-cp315-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (248 kB)
+#10 35.70 Downloading idna-3.20-py3-none-any.whl (69 kB)
+#10 35.96 Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+#10 36.38 Downloading certifi-2026.7.22-py3-none-any.whl (136 kB)
+#10 36.82 Downloading starlette-1.8.0-py3-none-any.whl (79 kB)
+#10 37.11 Downloading anyio-4.15.1-py3-none-any.whl (132 kB)
+#10 37.49 Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+#10 37.71 Downloading typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+#10 37.88 Downloading tzlocal-5.4.4-py3-none-any.whl (18 kB)
+#10 38.05 Downloading mako-1.4.3-py3-none-any.whl (80 kB)
+#10 38.34 Downloading packaging-26.3-py3-none-any.whl (129 kB)
+#10 38.86 Installing collected packages: uvloop, urllib3, tzlocal, typing-extensions, python-multipart, python-dotenv, pymediainfo, psycopg-binary, psycopg, packaging, MarkupSafe, idna, httptools, h11, click, charset_normalizer, certifi, blake3, annotated-types, annotated-doc, uvicorn, typing-inspection, sqlalchemy, requests, pydantic-core, opentelemetry-api, Mako, jinja2, httpcore, apscheduler, anyio, starlette, qbittorrent-api, pydantic, httpx, alembic, python-telegram-bot, pydantic-settings, fastapi
+#10 41.67 
+#10 41.67 Successfully installed Mako-1.4.3 MarkupSafe-3.0.4 alembic-1.20.0 annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.15.1 apscheduler-3.11.3 blake3-1.0.11 certifi-2026.7.22 charset_normalizer-3.5.2 click-8.5.0 fastapi-0.143.3 h11-0.16.0 httpcore-1.0.9 httptools-0.9.0 httpx-0.28.1 idna-3.20 jinja2-3.1.6 opentelemetry-api-1.45.1 packaging-26.3 psycopg-3.3.6 psycopg-binary-3.3.6 pydantic-2.14.1 pydantic-core-2.50.1 pydantic-settings-2.16.0 pymediainfo-7.0.1 python-dotenv-1.2.4 python-multipart-0.0.32 python-telegram-bot-22.8 qbittorrent-api-2026.10.0 requests-2.34.2 sqlalchemy-2.1.4 starlette-1.8.0 typing-extensions-4.16.0 typing-inspection-0.4.4 tzlocal-5.4.4 urllib3-2.8.0 uvicorn-0.54.0 uvloop-0.23.0
+#10 41.67 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#10 41.83 + python -m pip check
+#10 41.96 No broken requirements found.
+#10 41.98 + python -c import decimal, sys, sysconfig; assert not sysconfig.get_config_var('Py_GIL_DISABLED'); assert sys._is_gil_enabled(); assert not sys._jit.is_available(); assert str(decimal.Decimal('1.25') * 4) == '5.00'; print('regular CPython', sys.version, 'Decimal implementation', decimal.Decimal.__module__)
+#10 42.00 regular CPython 3.15.0 (main, Oct 12 2026, 22:32:55) [GCC 14.2.0] Decimal implementation decimal
+#10 42.00 + python -c from pathlib import Path; import pymediainfo; pkg=Path(pymediainfo.__file__).resolve().parent; paths=list(pkg.glob('libmediainfo*')); [p.unlink() for p in paths]; print('removed bundled:', ', '.join(p.name for p in paths) or '(none)')
+#10 42.05 removed bundled: libmediainfo.so.0
+#10 42.06 + python -c from pymediainfo import MediaInfo; _l,_h,ver,tup=MediaInfo._get_library(); print(f'pymediainfo uses libmediainfo {ver} from system'); assert tup and tup[0] >= 26, ver
+#10 42.09 pymediainfo uses libmediainfo 26.10 from system
+#10 DONE 42.2s
+
+#11 [base 7/7] RUN set -eux;     bt="2026-10-17T16:11:51Z";     if [ -z "$bt" ]; then bt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi;     printf '%s' "$bt" > /etc/altt_build_time;     printf '%s' "4e78fcfb10de16abd8bebf13232196ce84c1d5d0" > /etc/altt_git_sha
+#11 0.137 + bt=2026-10-17T16:11:51Z
+#11 0.137 + [ -z 2026-10-17T16:11:51Z ]
+#11 0.137 + printf %s 2026-10-17T16:11:51Z
+#11 0.137 + printf %s 4e78fcfb10de16abd8bebf13232196ce84c1d5d0
+#11 DONE 0.1s
+
+#12 [runtime 1/4] COPY alembic.ini worker.py /app/
+#12 DONE 0.0s
+
+#13 [runtime 2/4] COPY alembic /app/alembic
+#13 DONE 0.0s
+
+#14 [runtime 3/4] COPY app /app/app
+#14 DONE 0.0s
+
+#15 [runtime 4/4] COPY scripts/entrypoint.sh scripts/migrate_with_lock.py scripts/healthcheck_worker.py scripts/healthcheck_telegram.py scripts/profile_runtime.py scripts/repair_encoder_receipts.py /app/scripts/
+#15 DONE 0.0s
+
+#16 exporting to image
+#16 exporting layers
+#16 exporting layers 2.8s done
+#16 exporting manifest sha256:129cdee6f05fd1c5aaf6e161ee6f4f548ff2f54e694aeabb0e5e71e595498b91 done
+#16 exporting config sha256:cb9b2a5c8bd5d388ba504fa2183bb30d50892154ecdf0ee738d1dc1a66400be4 done
+#16 exporting attestation manifest sha256:d3319adc9c5f2b3d3252aeb9b6316a2c416be0f190a21f046801e77cdc5cd3e9 done
+#16 exporting manifest list sha256:0ac66f155e9197729bfb1b8dc219a3f341175a660df238b4f74544134fefae32 done
+#16 naming to docker.io/library/altt-workbench:py315-20261017-161151 done
+#16 unpacking to docker.io/library/altt-workbench:py315-20261017-161151
+#16 unpacking to docker.io/library/altt-workbench:py315-20261017-161151 0.7s done
+#16 DONE 3.6s

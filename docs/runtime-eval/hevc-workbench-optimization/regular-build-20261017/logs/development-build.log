@@ -1,0 +1,117 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 4.14kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.15.0-slim-trixie
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 217B done
+#3 DONE 0.0s
+
+#4 [base 1/7] FROM docker.io/library/python:3.15.0-slim-trixie@sha256:ea4f1f290e071bf7d28199cfb3e09f5dbad31b50e9c32fd58f2f2d7be915f3ae
+#4 resolve docker.io/library/python:3.15.0-slim-trixie@sha256:ea4f1f290e071bf7d28199cfb3e09f5dbad31b50e9c32fd58f2f2d7be915f3ae 0.0s done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 1.53MB 0.0s done
+#5 DONE 0.0s
+
+#6 [base 6/7] RUN set -eux;     pip install --no-cache-dir --only-binary=:all: -c /app/constraints.txt -r /app/requirements.txt;     python -m pip check;     python -c "import decimal, sys, sysconfig; assert not sysconfig.get_config_var('Py_GIL_DISABLED'); assert sys._is_gil_enabled(); assert not sys._jit.is_available(); assert str(decimal.Decimal('1.25') * 4) == '5.00'; print('regular CPython', sys.version, 'Decimal implementation', decimal.Decimal.__module__)";     python -c "from pathlib import Path; import pymediainfo; pkg=Path(pymediainfo.__file__).resolve().parent; paths=list(pkg.glob('libmediainfo*')); [p.unlink() for p in paths]; print('removed bundled:', ', '.join(p.name for p in paths) or '(none)')";     python -c "from pymediainfo import MediaInfo; _l,_h,ver,tup=MediaInfo._get_library(); print(f'pymediainfo uses libmediainfo {ver} from system'); assert tup and tup[0] >= 26, ver"
+#6 CACHED
+
+#7 [base 2/7] RUN set -eux;     apt-get update;     apt-get install -y --no-install-recommends ca-certificates wget;     wget --https-only -q -O /tmp/repo-mediaarea.deb       https://mediaarea.net/repo/deb/repo-mediaarea_1.0-27_all.deb;     dpkg-deb -I /tmp/repo-mediaarea.deb >/dev/null;     dpkg -i /tmp/repo-mediaarea.deb;     apt-get update;     apt-get install -y --no-install-recommends mediainfo libmediainfo0v5 libzen0v5;     ldconfig;     mediainfo --Version;     ver="$(mediainfo --Version 2>&1 | sed -n 's/.*MediaInfoLib - v\([0-9][0-9.]*\).*/\1/p' | head -1)";     major="$(printf '%s' "$ver" | cut -d. -f1)";     if [ -z "$ver" ] || [ "$major" -lt 26 ]; then       echo "ERROR: expected MediaArea MediaInfo >= 26.x, got: '${ver:-unknown}'" >&2;       apt-cache policy mediainfo libmediainfo0v5 >&2 || true;       exit 1;     fi;     apt-get purge -y --auto-remove wget;     rm -f /tmp/repo-mediaarea.deb;     rm -rf /var/lib/apt/lists/*
+#7 CACHED
+
+#8 [base 5/7] COPY constraints.txt /app/constraints.txt
+#8 CACHED
+
+#9 [base 3/7] WORKDIR /app
+#9 CACHED
+
+#10 [base 4/7] COPY requirements.txt /app/requirements.txt
+#10 CACHED
+
+#11 [base 7/7] RUN set -eux;     bt="2026-10-17T16:11:51Z";     if [ -z "$bt" ]; then bt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi;     printf '%s' "$bt" > /etc/altt_build_time;     printf '%s' "4e78fcfb10de16abd8bebf13232196ce84c1d5d0" > /etc/altt_git_sha
+#11 CACHED
+
+#12 [development 1/3] COPY requirements-dev.txt /app/requirements-dev.txt
+#12 DONE 0.0s
+
+#13 [development 2/3] RUN pip install --no-cache-dir --only-binary=:all: -c /app/constraints.txt -r /app/requirements-dev.txt
+#13 0.993 Requirement already satisfied: fastapi in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 1)) (0.143.3)
+#13 0.994 Requirement already satisfied: uvicorn in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 2)) (0.54.0)
+#13 0.994 Requirement already satisfied: httptools in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 4)) (0.9.0)
+#13 0.994 Requirement already satisfied: uvloop in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 5)) (0.23.0)
+#13 0.994 Requirement already satisfied: sqlalchemy in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 6)) (2.1.4)
+#13 0.994 Requirement already satisfied: alembic in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 7)) (1.20.0)
+#13 0.997 Requirement already satisfied: httpx in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 9)) (0.28.1)
+#13 0.997 Requirement already satisfied: jinja2 in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 10)) (3.1.6)
+#13 0.997 Requirement already satisfied: python-multipart in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 11)) (0.0.32)
+#13 0.997 Requirement already satisfied: apscheduler in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 12)) (3.11.3)
+#13 0.997 Requirement already satisfied: qbittorrent-api in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 13)) (2026.10.0)
+#13 0.997 Requirement already satisfied: pydantic-settings in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 14)) (2.16.0)
+#13 0.997 Requirement already satisfied: python-telegram-bot>=21.0 in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 15)) (22.8)
+#13 0.997 Requirement already satisfied: blake3 in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 16)) (1.0.11)
+#13 0.997 Requirement already satisfied: pymediainfo>=6.1.0 in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 17)) (7.0.1)
+#13 1.611 Collecting pytest (from -r /app/requirements-dev.txt (line 2))
+#13 2.236   Downloading pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+#13 2.637 Collecting watchfiles (from -r /app/requirements-dev.txt (line 4))
+#13 2.780   Downloading watchfiles-1.3.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (4.9 kB)
+#13 2.788 Requirement already satisfied: psycopg[binary] in /usr/local/lib/python3.15/site-packages (from -r /app/requirements.txt (line 8)) (3.3.6)
+#13 2.789 Requirement already satisfied: starlette>=0.46.0 in /usr/local/lib/python3.15/site-packages (from fastapi->-r /app/requirements.txt (line 1)) (1.8.0)
+#13 2.790 Requirement already satisfied: pydantic>=2.9.0 in /usr/local/lib/python3.15/site-packages (from fastapi->-r /app/requirements.txt (line 1)) (2.14.1)
+#13 2.790 Requirement already satisfied: typing-extensions>=4.8.0 in /usr/local/lib/python3.15/site-packages (from fastapi->-r /app/requirements.txt (line 1)) (4.16.0)
+#13 2.790 Requirement already satisfied: typing-inspection>=0.4.2 in /usr/local/lib/python3.15/site-packages (from fastapi->-r /app/requirements.txt (line 1)) (0.4.4)
+#13 2.791 Requirement already satisfied: annotated-doc>=0.0.2 in /usr/local/lib/python3.15/site-packages (from fastapi->-r /app/requirements.txt (line 1)) (0.0.5)
+#13 2.791 Requirement already satisfied: opentelemetry-api>=1.44.0 in /usr/local/lib/python3.15/site-packages (from fastapi->-r /app/requirements.txt (line 1)) (1.45.1)
+#13 2.793 Requirement already satisfied: click>=7.0 in /usr/local/lib/python3.15/site-packages (from uvicorn->-r /app/requirements.txt (line 2)) (8.5.0)
+#13 2.793 Requirement already satisfied: h11>=0.8 in /usr/local/lib/python3.15/site-packages (from uvicorn->-r /app/requirements.txt (line 2)) (0.16.0)
+#13 2.798 Requirement already satisfied: Mako in /usr/local/lib/python3.15/site-packages (from alembic->-r /app/requirements.txt (line 7)) (1.4.3)
+#13 2.799 Requirement already satisfied: psycopg-binary==3.3.6 in /usr/local/lib/python3.15/site-packages (from psycopg[binary]->-r /app/requirements.txt (line 8)) (3.3.6)
+#13 2.801 Requirement already satisfied: anyio in /usr/local/lib/python3.15/site-packages (from httpx->-r /app/requirements.txt (line 9)) (4.15.1)
+#13 2.801 Requirement already satisfied: certifi in /usr/local/lib/python3.15/site-packages (from httpx->-r /app/requirements.txt (line 9)) (2026.7.22)
+#13 2.801 Requirement already satisfied: httpcore==1.* in /usr/local/lib/python3.15/site-packages (from httpx->-r /app/requirements.txt (line 9)) (1.0.9)
+#13 2.801 Requirement already satisfied: idna in /usr/local/lib/python3.15/site-packages (from httpx->-r /app/requirements.txt (line 9)) (3.20)
+#13 2.803 Requirement already satisfied: MarkupSafe>=2.0 in /usr/local/lib/python3.15/site-packages (from jinja2->-r /app/requirements.txt (line 10)) (3.0.4)
+#13 2.804 Requirement already satisfied: tzlocal>=3.0 in /usr/local/lib/python3.15/site-packages (from apscheduler->-r /app/requirements.txt (line 12)) (5.4.4)
+#13 2.806 Requirement already satisfied: packaging in /usr/local/lib/python3.15/site-packages (from qbittorrent-api->-r /app/requirements.txt (line 13)) (26.3)
+#13 2.806 Requirement already satisfied: requests>=2.16.0 in /usr/local/lib/python3.15/site-packages (from qbittorrent-api->-r /app/requirements.txt (line 13)) (2.34.2)
+#13 2.807 Requirement already satisfied: urllib3>=1.24.2 in /usr/local/lib/python3.15/site-packages (from qbittorrent-api->-r /app/requirements.txt (line 13)) (2.8.0)
+#13 2.808 Requirement already satisfied: python-dotenv>=1.2.2 in /usr/local/lib/python3.15/site-packages (from pydantic-settings->-r /app/requirements.txt (line 14)) (1.2.4)
+#13 2.959 Collecting iniconfig>=1.0.1 (from pytest->-r /app/requirements-dev.txt (line 2))
+#13 3.107   Downloading iniconfig-2.3.1-py3-none-any.whl.metadata (2.8 kB)
+#13 3.262 Collecting pluggy<2,>=1.5 (from pytest->-r /app/requirements-dev.txt (line 2))
+#13 3.405   Downloading pluggy-1.7.0-py3-none-any.whl.metadata (5.0 kB)
+#13 3.566 Collecting pygments>=2.7.2 (from pytest->-r /app/requirements-dev.txt (line 2))
+#13 3.708   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+#13 3.718 Requirement already satisfied: annotated-types>=0.6.0 in /usr/local/lib/python3.15/site-packages (from pydantic>=2.9.0->fastapi->-r /app/requirements.txt (line 1)) (0.8.0)
+#13 3.718 Requirement already satisfied: pydantic-core==2.50.1 in /usr/local/lib/python3.15/site-packages (from pydantic>=2.9.0->fastapi->-r /app/requirements.txt (line 1)) (2.50.1)
+#13 3.721 Requirement already satisfied: charset_normalizer<4,>=2 in /usr/local/lib/python3.15/site-packages (from requests>=2.16.0->qbittorrent-api->-r /app/requirements.txt (line 13)) (3.5.2)
+#13 3.870 Downloading pytest-9.1.1-py3-none-any.whl (386 kB)
+#13 4.481 Downloading pluggy-1.7.0-py3-none-any.whl (27 kB)
+#13 4.626 Downloading watchfiles-1.3.0-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (454 kB)
+#13 4.916 Downloading iniconfig-2.3.1-py3-none-any.whl (7.6 kB)
+#13 5.059 Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+#13 5.247    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 6.6 MB/s  0:00:00
+#13 5.282 Installing collected packages: pygments, pluggy, iniconfig, watchfiles, pytest
+#13 5.968 
+#13 5.969 Successfully installed iniconfig-2.3.1 pluggy-1.7.0 pygments-2.21.0 pytest-9.1.1 watchfiles-1.3.0
+#13 5.969 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+#13 DONE 6.1s
+
+#14 [development 3/3] COPY . /app
+#14 DONE 0.0s
+
+#15 exporting to image
+#15 exporting layers
+#15 exporting layers 0.4s done
+#15 exporting manifest sha256:106ff9d76959d5a9457d6fcc1b889bb479692c6adf89c231f89d5a91f7f73de2 done
+#15 exporting config sha256:6c54421f5f985c6eb1a1a40e43e071b39db6db4632b3fec8de13ba53aa84adc3 done
+#15 exporting attestation manifest sha256:c7fc318ddfbc2fd558eae647b6fac52ec74d23aa687fedb04ca0c72951fa1c73 done
+#15 exporting manifest list sha256:0a835fd064c702ac9c6d4fb7a33d22e696f6d38354d404bfc1be95b0bcf2576f done
+#15 naming to docker.io/library/altt-workbench-dev:py315-20261017-161151 done
+#15 unpacking to docker.io/library/altt-workbench-dev:py315-20261017-161151 0.1s done
+#15 DONE 0.6s

@@ -97,7 +97,7 @@ Compose запускает PostgreSQL, API, worker и два Telegram-бота. 
 
 ## Сборка образа и деплой на Unraid
 
-Публикация 17.10.2026: `registry.mageek.su/al-torrent-tools:latest` и `release-20261017-043413` включают общий SSE-опрос подписчиков из коммита `1672083`. Обе архитектуры прошли по 1464 теста без пропусков; реальные HTTP/SSE-проверки подтвердили один опрос для двух клиентов и остановку без подписчиков. Digest, состав и проверки — [отчёт релиза](docs/releases/release-20261017-043413.json). На Unraid этот шаг образ не разворачивает.
+Публикация 17.10.2026: `registry.mageek.su/al-torrent-tools:latest` и `release-20261017-162449` доступны для Linux ARM64/AMD64 и включают оптимизацию HEVC workbench из рабочего снимка на основе HEAD `4e78fcf`. Сохранён обычный CPython 3.15 с GIL. Полный suite на ARM64: **1504 passed, 1 optional MiniJinja skip**. Обе архитектуры прошли проверки runtime, миграций и пяти HTTP-сценариев; AMD64 проверен под эмуляцией. Digest, точный состав снимка и результаты — [отчёт релиза](docs/releases/release-20261017-162449.json). На Unraid образ ещё не развёрнут.
 
 Один образ используется для `api`, `worker`, `telegram-bot` и `telegram-hevc-bot`. Контекст сборки — `./backend`. Публикуемый target по умолчанию — `runtime`: рабочие исходники, миграции и runtime-зависимости. Локальный `docker-compose.yml` выбирает target `development` с тестами, `pytest`, `watchfiles` и исследовательскими скриптами.
 

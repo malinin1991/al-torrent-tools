@@ -1,0 +1,227 @@
+{
+  "pip": {
+    "version": "26.2.1",
+    "file_count": 480,
+    "code_metadata_sha256": "a605846e5b7125dc7cf0fff0bdd919a6c93b8a22613fa6688ad38ca49b052b9a"
+  },
+  "pygments": {
+    "version": "2.21.0",
+    "file_count": 352,
+    "code_metadata_sha256": "05f41d4d73ed0b4d57dc4ce5cad141e113ab5bfd19185557eefcafca3d4bb958"
+  },
+  "iniconfig": {
+    "version": "2.3.1",
+    "file_count": 12,
+    "code_metadata_sha256": "799d9e4630b02256b6be4ead9930bbf02fb29cf60aaaafb8cae6e17825656ac3"
+  },
+  "watchfiles": {
+    "version": "1.3.0",
+    "file_count": 19,
+    "code_metadata_sha256": "299aa992b97ceefaa120d7ccfe3a922bfff76d631ec48ca80d0ba21cc05a8a6b"
+  },
+  "pluggy": {
+    "version": "1.7.0",
+    "file_count": 21,
+    "code_metadata_sha256": "dbd83f18bfa653e5cfcb1e30a37960e18388f8af9945762aaf18471e00f52b95"
+  },
+  "pytest": {
+    "version": "9.1.1",
+    "file_count": 93,
+    "code_metadata_sha256": "0b5b4529bf318f8ef4449ff4d5bcc9d9186ef3a3bfa290593e541ffcd8b7206f"
+  },
+  "packaging": {
+    "version": "26.3",
+    "file_count": 30,
+    "code_metadata_sha256": "382a6f46b3ff006b6a4cfa29fcf8951c2148cf2cc533a38d57f1130608d02e0c"
+  },
+  "annotated-types": {
+    "version": "0.8.0",
+    "file_count": 8,
+    "code_metadata_sha256": "bc2483f95978f5f45cd4644c069623c921a85392e3448b301097292fa3eac31c"
+  },
+  "opentelemetry-api": {
+    "version": "1.45.1",
+    "file_count": 48,
+    "code_metadata_sha256": "87b7d839a6122bacaa08f8d772fd6fef9ae9400fe48e81c5d52e73c25dc4e2b1"
+  },
+  "charset-normalizer": {
+    "version": "3.5.2",
+    "file_count": 23,
+    "code_metadata_sha256": "e93d56093c0479739a10fcdbd2bd131eae0b95911322c54a742867d27d9169d2"
+  },
+  "click": {
+    "version": "8.5.0",
+    "file_count": 23,
+    "code_metadata_sha256": "2d32431e6130649e156e6960ff6096a47bcc757aee7cce451f60550b33741db5"
+  },
+  "psycopg": {
+    "version": "3.3.6",
+    "file_count": 92,
+    "code_metadata_sha256": "6f6f4b858f1c4dbb1522949261bb91587b4d56ede3a93f9af41c135281921f3b"
+  },
+  "python-multipart": {
+    "version": "0.0.32",
+    "file_count": 15,
+    "code_metadata_sha256": "a030a24c57c9907cb555b08cd78043828ddf0e688854b658943081348856eaa9"
+  },
+  "pydantic": {
+    "version": "2.14.1",
+    "file_count": 112,
+    "code_metadata_sha256": "94d11087cb839e280415eaa783f083894154ddb9f9930b52b5d7294f3c501058"
+  },
+  "urllib3": {
+    "version": "2.8.0",
+    "file_count": 43,
+    "code_metadata_sha256": "ede8b608c0a1ed904210ff8404533bcd7769851d92fe3607b9ce6b24316fca3d"
+  },
+  "h11": {
+    "version": "0.16.0",
+    "file_count": 18,
+    "code_metadata_sha256": "2aa51fe8d37956601f3255e56bd33759a79342c9cc9ae8d6e1ca904ea9ca9780"
+  },
+  "jinja2": {
+    "version": "3.1.6",
+    "file_count": 33,
+    "code_metadata_sha256": "407d019ec700b13ddc5b4cb8fc63df50454713f9892f7601aa4d7adae5e29110"
+  },
+  "qbittorrent-api": {
+    "version": "2026.10.0",
+    "file_count": 25,
+    "code_metadata_sha256": "c32ab29bcbd5f9fa598e9cd8d53df110078244602422efe8608a13b16f901a1c"
+  },
+  "certifi": {
+    "version": "2026.7.22",
+    "file_count": 13,
+    "code_metadata_sha256": "7b3b5696c3a891fb144eb574a59160b2af80abb384df3b4906eadd8086dde8bc"
+  },
+  "blake3": {
+    "version": "1.0.11",
+    "file_count": 11,
+    "code_metadata_sha256": "bc294f197d033c53b87ba89a2ff404965e6c6de023f90d47d07c6fcb82c88fc5"
+  },
+  "typing-extensions": {
+    "version": "4.16.0",
+    "file_count": 6,
+    "code_metadata_sha256": "91b274f6a764db500416ce29d00ce0f033287ef33a085961aca828bbbe7706ac"
+  },
+  "requests": {
+    "version": "2.34.2",
+    "file_count": 27,
+    "code_metadata_sha256": "b607ece9a1f13461b20d0ed33ded6dcad85489946908266e2bc508ad69f9f7b9"
+  },
+  "tzlocal": {
+    "version": "5.4.4",
+    "file_count": 12,
+    "code_metadata_sha256": "1264c421f696442175dc7a97a89f65c94a9808837188bb18edfe443f1e60b99f"
+  },
+  "psycopg-binary": {
+    "version": "3.3.6",
+    "file_count": 33,
+    "code_metadata_sha256": "c5e98c98b748d86054521f831813cca52c5521012d5b065fe7aa773ec9f301f7"
+  },
+  "pydantic-settings": {
+    "version": "2.16.0",
+    "file_count": 29,
+    "code_metadata_sha256": "b8a765e7aa0b17a218f25ca170b4855acd826b2b97f23b37c30db009675a7830"
+  },
+  "uvicorn": {
+    "version": "0.54.0",
+    "file_count": 54,
+    "code_metadata_sha256": "c25a8e16eca9e3888cdbe854e9470f4ac291765711192bb960e1c08fd6175140"
+  },
+  "python-dotenv": {
+    "version": "1.2.4",
+    "file_count": 17,
+    "code_metadata_sha256": "e1640eef4b55546780a6a7e3aa44e5b047a454fc9ce2323ca8478aacdbbf8c25"
+  },
+  "alembic": {
+    "version": "1.20.0",
+    "file_count": 106,
+    "code_metadata_sha256": "25e880c076bfa6e957c6be528cda5e851c78edc4cac1ac8f5a784b6c8a2a0d6c"
+  },
+  "pymediainfo": {
+    "version": "7.0.1",
+    "file_count": 10,
+    "code_metadata_sha256": "2e2e04a883cd4405d202feda1ad9b593b4aa37e09b5fccb2ddd921d158291eac"
+  },
+  "fastapi": {
+    "version": "0.143.3",
+    "file_count": 68,
+    "code_metadata_sha256": "72f14fcde1f35ea7fff93cd7d7dcd0cafc4dc65aea2e1621465bb01f3bb01592"
+  },
+  "markupsafe": {
+    "version": "3.0.4",
+    "file_count": 12,
+    "code_metadata_sha256": "85d1863642e36f07d5036784234a06353947888375c8e59588dd03fb2bfd2f42"
+  },
+  "annotated-doc": {
+    "version": "0.0.5",
+    "file_count": 9,
+    "code_metadata_sha256": "62a8da6bff3dc02cc6e11739b03af1dfc0e3c7e97ca02e63973a47937796d49b"
+  },
+  "mako": {
+    "version": "1.4.3",
+    "file_count": 41,
+    "code_metadata_sha256": "3370fe4bed4ee336921a537fe4aec3ca85086787a6f875560d20a079ad584540"
+  },
+  "sqlalchemy": {
+    "version": "2.1.4",
+    "file_count": 278,
+    "code_metadata_sha256": "cbaaea41eacfa0eece96a858c38a7815a296eac8289ef7b17a35feff7f6ff635"
+  },
+  "python-telegram-bot": {
+    "version": "22.8",
+    "file_count": 242,
+    "code_metadata_sha256": "078da0e272545098b1c4b6890a9050f7d5bf770d80014bdb46ee09be6eeb8b9d"
+  },
+  "pydantic-core": {
+    "version": "2.50.1",
+    "file_count": 12,
+    "code_metadata_sha256": "ccb26c7d7a75b17ffa26547b12a8e8225d42db78cca4d7ac568ea1175fd680e0"
+  },
+  "httpcore": {
+    "version": "1.0.9",
+    "file_count": 37,
+    "code_metadata_sha256": "daed245fd5d51ffe5fb0e5212ad91255e7544f0a69a41e61a86d5b910d9d7fdd"
+  },
+  "httpx": {
+    "version": "0.28.1",
+    "file_count": 32,
+    "code_metadata_sha256": "ee97a956bbf923f7a722f61aad2e9dce364a8323cc1c7a9fcab9d01b9b20b68e"
+  },
+  "starlette": {
+    "version": "1.8.0",
+    "file_count": 42,
+    "code_metadata_sha256": "07bba03d922f8ac038ab0b776f36d0e2cca5b8a1a5a8d81fe59bb860737ccbdd"
+  },
+  "typing-inspection": {
+    "version": "0.4.4",
+    "file_count": 10,
+    "code_metadata_sha256": "033b7e6634a568c9c6bfe4722437db07a9041cf7074d359b46ddb1f54ac42535"
+  },
+  "apscheduler": {
+    "version": "3.11.3",
+    "file_count": 49,
+    "code_metadata_sha256": "a40a4340a4930f2afb500b54f677370ac5466e288bcfd1aa01318af4bea3b96d"
+  },
+  "uvloop": {
+    "version": "0.23.0",
+    "file_count": 65,
+    "code_metadata_sha256": "b052bd4c46617cf4f5b2c5af7015e5811d4c3966c966a75f338a0268d770afd9"
+  },
+  "idna": {
+    "version": "3.20",
+    "file_count": 18,
+    "code_metadata_sha256": "7e4d750d38937eb9522ccbed377aecb14397e8e081e2115498d7c1bd4c7a21a1"
+  },
+  "anyio": {
+    "version": "4.15.1",
+    "file_count": 54,
+    "code_metadata_sha256": "fd3df96e0e65a36584d2a18185a31682a407eb48fdbbe95f45d38ba0d2fc133a"
+  },
+  "httptools": {
+    "version": "0.9.0",
+    "file_count": 24,
+    "code_metadata_sha256": "0a78fd068142dff7834c419ba4b89b4e765658ed7ecfdb1a6c19faa5346ecc03"
+  }
+}

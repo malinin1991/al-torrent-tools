@@ -1,0 +1,114 @@
+#0 building with "container" instance using docker-container driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 4.14kB 0.0s done
+#1 DONE 0.0s
+
+#2 [linux/amd64 internal] load metadata for docker.io/library/python:3.15.0-slim-trixie
+#2 ...
+
+#3 [linux/arm64 internal] load metadata for docker.io/library/python:3.15.0-slim-trixie
+#3 DONE 2.5s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 217B done
+#4 DONE 0.0s
+
+#2 [linux/amd64 internal] load metadata for docker.io/library/python:3.15.0-slim-trixie
+#2 DONE 2.7s
+
+#5 [linux/amd64 base 1/7] FROM docker.io/library/python:3.15.0-slim-trixie@sha256:2da676046630d7bf14c6764ae1143dc7fa0377a53f94bf5a642f0b214aca5bce
+#5 resolve docker.io/library/python:3.15.0-slim-trixie@sha256:2da676046630d7bf14c6764ae1143dc7fa0377a53f94bf5a642f0b214aca5bce 0.0s done
+#5 DONE 0.0s
+
+#6 [linux/arm64 base 1/7] FROM docker.io/library/python:3.15.0-slim-trixie@sha256:2da676046630d7bf14c6764ae1143dc7fa0377a53f94bf5a642f0b214aca5bce
+#6 resolve docker.io/library/python:3.15.0-slim-trixie@sha256:2da676046630d7bf14c6764ae1143dc7fa0377a53f94bf5a642f0b214aca5bce 0.0s done
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 1.56MB 0.1s done
+#7 DONE 0.1s
+
+#8 [linux/amd64 base 3/7] WORKDIR /app
+#8 CACHED
+
+#9 [linux/amd64 base 2/7] RUN set -eux;     apt-get update;     apt-get install -y --no-install-recommends ca-certificates wget;     wget --https-only -q -O /tmp/repo-mediaarea.deb       https://mediaarea.net/repo/deb/repo-mediaarea_1.0-27_all.deb;     dpkg-deb -I /tmp/repo-mediaarea.deb >/dev/null;     dpkg -i /tmp/repo-mediaarea.deb;     apt-get update;     apt-get install -y --no-install-recommends mediainfo libmediainfo0v5 libzen0v5;     ldconfig;     mediainfo --Version;     ver="$(mediainfo --Version 2>&1 | sed -n 's/.*MediaInfoLib - v\([0-9][0-9.]*\).*/\1/p' | head -1)";     major="$(printf '%s' "$ver" | cut -d. -f1)";     if [ -z "$ver" ] || [ "$major" -lt 26 ]; then       echo "ERROR: expected MediaArea MediaInfo >= 26.x, got: '${ver:-unknown}'" >&2;       apt-cache policy mediainfo libmediainfo0v5 >&2 || true;       exit 1;     fi;     apt-get purge -y --auto-remove wget;     rm -f /tmp/repo-mediaarea.deb;     rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [linux/amd64 base 4/7] COPY requirements.txt /app/requirements.txt
+#10 CACHED
+
+#11 [linux/amd64 base 5/7] COPY constraints.txt /app/constraints.txt
+#11 CACHED
+
+#12 [linux/arm64 base 2/7] RUN set -eux;     apt-get update;     apt-get install -y --no-install-recommends ca-certificates wget;     wget --https-only -q -O /tmp/repo-mediaarea.deb       https://mediaarea.net/repo/deb/repo-mediaarea_1.0-27_all.deb;     dpkg-deb -I /tmp/repo-mediaarea.deb >/dev/null;     dpkg -i /tmp/repo-mediaarea.deb;     apt-get update;     apt-get install -y --no-install-recommends mediainfo libmediainfo0v5 libzen0v5;     ldconfig;     mediainfo --Version;     ver="$(mediainfo --Version 2>&1 | sed -n 's/.*MediaInfoLib - v\([0-9][0-9.]*\).*/\1/p' | head -1)";     major="$(printf '%s' "$ver" | cut -d. -f1)";     if [ -z "$ver" ] || [ "$major" -lt 26 ]; then       echo "ERROR: expected MediaArea MediaInfo >= 26.x, got: '${ver:-unknown}'" >&2;       apt-cache policy mediainfo libmediainfo0v5 >&2 || true;       exit 1;     fi;     apt-get purge -y --auto-remove wget;     rm -f /tmp/repo-mediaarea.deb;     rm -rf /var/lib/apt/lists/*
+#12 CACHED
+
+#13 [linux/arm64 base 4/7] COPY requirements.txt /app/requirements.txt
+#13 CACHED
+
+#14 [linux/arm64 base 3/7] WORKDIR /app
+#14 CACHED
+
+#15 [linux/arm64 base 5/7] COPY constraints.txt /app/constraints.txt
+#15 CACHED
+
+#16 [linux/arm64 base 6/7] RUN set -eux;     pip install --no-cache-dir --only-binary=:all: -c /app/constraints.txt -r /app/requirements.txt;     python -m pip check;     python -c "import decimal, sys, sysconfig; assert not sysconfig.get_config_var('Py_GIL_DISABLED'); assert sys._is_gil_enabled(); assert not sys._jit.is_available(); assert str(decimal.Decimal('1.25') * 4) == '5.00'; print('regular CPython', sys.version, 'Decimal implementation', decimal.Decimal.__module__)";     python -c "from pathlib import Path; import pymediainfo; pkg=Path(pymediainfo.__file__).resolve().parent; paths=list(pkg.glob('libmediainfo*')); [p.unlink() for p in paths]; print('removed bundled:', ', '.join(p.name for p in paths) or '(none)')";     python -c "from pymediainfo import MediaInfo; _l,_h,ver,tup=MediaInfo._get_library(); print(f'pymediainfo uses libmediainfo {ver} from system'); assert tup and tup[0] >= 26, ver"
+#16 CACHED
+
+#17 [linux/amd64 base 6/7] RUN set -eux;     pip install --no-cache-dir --only-binary=:all: -c /app/constraints.txt -r /app/requirements.txt;     python -m pip check;     python -c "import decimal, sys, sysconfig; assert not sysconfig.get_config_var('Py_GIL_DISABLED'); assert sys._is_gil_enabled(); assert not sys._jit.is_available(); assert str(decimal.Decimal('1.25') * 4) == '5.00'; print('regular CPython', sys.version, 'Decimal implementation', decimal.Decimal.__module__)";     python -c "from pathlib import Path; import pymediainfo; pkg=Path(pymediainfo.__file__).resolve().parent; paths=list(pkg.glob('libmediainfo*')); [p.unlink() for p in paths]; print('removed bundled:', ', '.join(p.name for p in paths) or '(none)')";     python -c "from pymediainfo import MediaInfo; _l,_h,ver,tup=MediaInfo._get_library(); print(f'pymediainfo uses libmediainfo {ver} from system'); assert tup and tup[0] >= 26, ver"
+#17 CACHED
+
+#18 [linux/amd64 base 7/7] RUN set -eux;     bt="2026-10-17T16:24:49Z";     if [ -z "$bt" ]; then bt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi;     printf '%s' "$bt" > /etc/altt_build_time;     printf '%s' "4e78fcfb10de16abd8bebf13232196ce84c1d5d0" > /etc/altt_git_sha
+#18 0.262 + bt=2026-10-17T16:24:49Z
+#18 0.263 + [ -z 2026-10-17T16:24:49Z ]
+#18 0.264 + printf %s 2026-10-17T16:24:49Z
+#18 0.265 + printf %s 4e78fcfb10de16abd8bebf13232196ce84c1d5d0
+#18 DONE 0.3s
+
+#19 [linux/arm64 base 7/7] RUN set -eux;     bt="2026-10-17T16:24:49Z";     if [ -z "$bt" ]; then bt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi;     printf '%s' "$bt" > /etc/altt_build_time;     printf '%s' "4e78fcfb10de16abd8bebf13232196ce84c1d5d0" > /etc/altt_git_sha
+#19 0.207 + bt=2026-10-17T16:24:49Z
+#19 0.207 + [ -z 2026-10-17T16:24:49Z ]
+#19 0.207 + printf %s 2026-10-17T16:24:49Z
+#19 0.207 + printf %s 4e78fcfb10de16abd8bebf13232196ce84c1d5d0
+#19 DONE 0.2s
+
+#20 [linux/arm64 runtime 1/4] COPY alembic.ini worker.py /app/
+#20 DONE 0.0s
+
+#21 [linux/arm64 runtime 2/4] COPY alembic /app/alembic
+#21 DONE 0.0s
+
+#22 [linux/amd64 runtime 1/4] COPY alembic.ini worker.py /app/
+#22 DONE 0.0s
+
+#23 [linux/amd64 runtime 2/4] COPY alembic /app/alembic
+#23 DONE 0.0s
+
+#24 [linux/arm64 runtime 3/4] COPY app /app/app
+#24 DONE 0.0s
+
+#25 [linux/amd64 runtime 3/4] COPY app /app/app
+#25 DONE 0.0s
+
+#26 [linux/arm64 runtime 4/4] COPY scripts/entrypoint.sh scripts/migrate_with_lock.py scripts/healthcheck_worker.py scripts/healthcheck_telegram.py scripts/profile_runtime.py scripts/repair_encoder_receipts.py /app/scripts/
+#26 DONE 0.0s
+
+#27 [linux/amd64 runtime 4/4] COPY scripts/entrypoint.sh scripts/migrate_with_lock.py scripts/healthcheck_worker.py scripts/healthcheck_telegram.py scripts/profile_runtime.py scripts/repair_encoder_receipts.py /app/scripts/
+#27 DONE 0.0s
+
+#28 exporting to image
+#28 exporting layers 0.1s done
+#28 exporting manifest sha256:ee10aa4b021be737b7a2f29d8569fcb019f37a9fd9d8a30dfc97767fbcc3b762 done
+#28 exporting config sha256:e465cb0c247a4913a039916edca93a099002acc5f05d5372504bf79ca075e3b4 done
+#28 exporting manifest sha256:81192459e37e722d43268bf4509633cb3810236ca3080263e84d689e03045120 done
+#28 exporting config sha256:a0457e283d01e84fb32ebc5319d8d13ed2042bc2603facd5f11b6ae0177f7c69 done
+#28 exporting manifest list sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137 done
+#28 pushing layers
+#28 pushing layers 0.7s done
+#28 pushing manifest for registry.mageek.su/al-torrent-tools:release-20261017-162449@sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137
+#28 pushing manifest for registry.mageek.su/al-torrent-tools:release-20261017-162449@sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137 0.6s done
+#28 DONE 1.4s
+
+#29 resolving provenance for metadata file
+#29 DONE 0.0s

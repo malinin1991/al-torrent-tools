@@ -1,0 +1,9 @@
+{
+  "Architecture": "aarch64",
+  "NCPU": 10,
+  "MemTotal": 8216862720,
+  "OperatingSystem": "Docker Desktop",
+  "OSType": "linux",
+  "KernelVersion": "6.12.76-linuxkit",
+  "ServerVersion": "29.5.3"
+}

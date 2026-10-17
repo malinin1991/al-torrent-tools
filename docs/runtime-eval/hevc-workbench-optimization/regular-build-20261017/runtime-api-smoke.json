@@ -1,0 +1,206 @@
+{
+  "created_utc": "2026-10-17T16:14:32.272741+00:00",
+  "commands": [
+    {
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "altt-workbench:py315-20261017-161151"
+      ],
+      "exit_code": 0,
+      "stdout": "[\n    {\n        \"Id\": \"sha256:0ac66f155e9197729bfb1b8dc219a3f341175a660df238b4f74544134fefae32\",\n        \"RepoTags\": [\n            \"altt-workbench:py315-20261017-161151\"\n        ],\n        \"RepoDigests\": [\n            \"altt-workbench@sha256:0ac66f155e9197729bfb1b8dc219a3f341175a660df238b4f74544134fefae32\"\n        ],\n        \"Comment\": \"buildkit.dockerfile.v0\",\n        \"Created\": \"2026-10-17T16:13:23.147640961Z\",\n        \"Config\": {\n            \"Env\": [\n                \"PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\",\n                \"PYTHON_VERSION=3.15.0\",\n                \"PYTHON_SHA256=ba4bed1ba346b916890b76d9e320451420aa69f6408997d33c66482eeae3d575\",\n                \"APP_BUILD_TIME_FILE=/etc/altt_build_time\",\n                \"APP_GIT_SHA_FILE=/etc/altt_git_sha\"\n            ],\n            \"Cmd\": [\n                \"python3\"\n            ],\n            \"WorkingDir\": \"/app\"\n        },\n        \"Architecture\": \"arm64\",\n        \"Os\": \"linux\",\n        \"Size\": 90572863,\n        \"RootFS\": {\n            \"Type\": \"layers\",\n            \"Layers\": [\n                \"sha256:258ba1f62b513e7bb7492d3cc8ce445e4ef176a14980f193f789b6d7270ae61c\",\n                \"sha256:9d55090f910a382c23ac48b73a8649daf4ce759c681e88c2e5490332ef8bbd46\",\n                \"sha256:fd37ea3b1c9fcd6b277eb7d2f5b2af5156aa2367e235b93a62a640efb16c0db0\",\n                \"sha256:89af365188d83a18a95c6762e6b77a7656e0786fcb3eec065d1e3ac2e522f0dd\",\n                \"sha256:04b28d12422426028148ec2b13ea6b7ee9572caaa568b1975ea239536b6a4c60\",\n                \"sha256:b86fdc89282e826b468171b2b545a78583b9eab855e27e438805ed3f11382716\",\n                \"sha256:241fd4826a704f2c4265f018730a40278f845d7fa38ea824b82dd8f82a5b1398\",\n                \"sha256:e7360d0d9731e3e365fb943625cecf31329ef77fbbb6abd6c4cb344d0eb6acd0\",\n                \"sha256:510982f4e8ca633876776462c1a33ead5d6be98a0dfa1ab1b2b7856914a58c5c\",\n                \"sha256:35286fd3c49fdc87439116481d3a5e829d3e400de27ac642b1325845812cc2fe\",\n                \"sha256:b152781fcbf3437416068dc92cf668d6cc91c820d452f8fa11e71427a7e9e48d\",\n                \"sha256:ee24ba9a84efa0a69d7503d1b8537784fc3c45571b3f07e9f65cff71e2196480\",\n                \"sha256:02a9bbc571d16e10458de0860ec9d7b52500b4a8b0544c34e7c01d37ac61a8fd\",\n                \"sha256:479731a93c131db6bbe3a094753391e48d15f20b719432e0a3a1f256aa7d366a\"\n            ]\n        },\n        \"Metadata\": {\n            \"LastTagTime\": \"2026-10-17T16:13:25.969748462Z\"\n        },\n        \"Descriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.index.v1+json\",\n            \"digest\": \"sha256:0ac66f155e9197729bfb1b8dc219a3f341175a660df238b4f74544134fefae32\",\n            \"size\": 856\n        },\n        \"Identity\": {\n            \"Build\": [\n                {\n                    \"Ref\": \"ajvxqrgpdrvtfemk2v7dansoc\",\n                    \"CreatedAt\": \"2026-10-17T16:13:26.715545379Z\"\n                }\n            ]\n        }\n    }\n]\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "inspect",
+        "altt-regular-workbench-pg-20261017-161151"
+      ],
+      "exit_code": 0,
+      "stdout": "[\n    {\n        \"Id\": \"6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d\",\n        \"Created\": \"2026-10-17T16:13:19.377758667Z\",\n        \"Path\": \"docker-entrypoint.sh\",\n        \"Args\": [\n            \"-c\",\n            \"fsync=on\",\n            \"-c\",\n            \"full_page_writes=on\",\n            \"-c\",\n            \"synchronous_commit=on\"\n        ],\n        \"State\": {\n            \"Status\": \"running\",\n            \"Running\": true,\n            \"Paused\": false,\n            \"Restarting\": false,\n            \"OOMKilled\": false,\n            \"Dead\": false,\n            \"Pid\": 24036,\n            \"ExitCode\": 0,\n            \"Error\": \"\",\n            \"StartedAt\": \"2026-10-17T16:13:19.460868959Z\",\n            \"FinishedAt\": \"0001-01-01T00:00:00Z\"\n        },\n        \"Image\": \"sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d\",\n        \"ResolvConfPath\": \"/var/lib/docker/containers/6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d/resolv.conf\",\n        \"HostnamePath\": \"/var/lib/docker/containers/6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d/hostname\",\n        \"HostsPath\": \"/var/lib/docker/containers/6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d/hosts\",\n        \"LogPath\": \"/var/lib/docker/containers/6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d/6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d-json.log\",\n        \"Name\": \"/altt-regular-workbench-pg-20261017-161151\",\n        \"RestartCount\": 0,\n        \"Driver\": \"overlayfs\",\n        \"Platform\": \"linux\",\n        \"MountLabel\": \"\",\n        \"ProcessLabel\": \"\",\n        \"AppArmorProfile\": \"\",\n        \"ExecIDs\": null,\n        \"HostConfig\": {\n            \"Binds\": null,\n            \"ContainerIDFile\": \"\",\n            \"LogConfig\": {\n                \"Type\": \"json-file\",\n                \"Config\": {}\n            },\n            \"NetworkMode\": \"altt-regular-workbench-tests-20261017-161151\",\n            \"PortBindings\": {},\n            \"RestartPolicy\": {\n                \"Name\": \"no\",\n                \"MaximumRetryCount\": 0\n            },\n            \"AutoRemove\": false,\n            \"VolumeDriver\": \"\",\n            \"VolumesFrom\": null,\n            \"ConsoleSize\": [\n                0,\n                0\n            ],\n            \"CapAdd\": null,\n            \"CapDrop\": null,\n            \"CgroupnsMode\": \"private\",\n            \"Dns\": null,\n            \"DnsOptions\": [],\n            \"DnsSearch\": [],\n            \"ExtraHosts\": null,\n            \"GroupAdd\": null,\n            \"IpcMode\": \"private\",\n            \"Cgroup\": \"\",\n            \"Links\": null,\n            \"OomScoreAdj\": 0,\n            \"PidMode\": \"\",\n            \"Privileged\": false,\n            \"PublishAllPorts\": false,\n            \"ReadonlyRootfs\": false,\n            \"SecurityOpt\": null,\n            \"Tmpfs\": {\n                \"/var/lib/postgresql/data\": \"rw,size=536870912\"\n            },\n            \"UTSMode\": \"\",\n            \"UsernsMode\": \"\",\n            \"ShmSize\": 134217728,\n            \"Runtime\": \"runc\",\n            \"Isolation\": \"\",\n            \"CpuShares\": 0,\n            \"Memory\": 0,\n            \"NanoCpus\": 0,\n            \"CgroupParent\": \"\",\n            \"BlkioWeight\": 0,\n            \"BlkioWeightDevice\": [],\n            \"BlkioDeviceReadBps\": [],\n            \"BlkioDeviceWriteBps\": [],\n            \"BlkioDeviceReadIOps\": [],\n            \"BlkioDeviceWriteIOps\": [],\n            \"CpuPeriod\": 0,\n            \"CpuQuota\": 0,\n            \"CpuRealtimePeriod\": 0,\n            \"CpuRealtimeRuntime\": 0,\n            \"CpusetCpus\": \"\",\n            \"CpusetMems\": \"\",\n            \"Devices\": [],\n            \"DeviceCgroupRules\": null,\n            \"DeviceRequests\": null,\n            \"MemoryReservation\": 0,\n            \"MemorySwap\": 0,\n            \"MemorySwappiness\": null,\n            \"OomKillDisable\": null,\n            \"PidsLimit\": null,\n            \"Ulimits\": [],\n            \"CpuCount\": 0,\n            \"CpuPercent\": 0,\n            \"IOMaximumIOps\": 0,\n            \"IOMaximumBandwidth\": 0,\n            \"MaskedPaths\": [\n                \"/proc/acpi\",\n                \"/proc/asound\",\n                \"/proc/interrupts\",\n                \"/proc/kcore\",\n                \"/proc/keys\",\n                \"/proc/latency_stats\",\n                \"/proc/sched_debug\",\n                \"/proc/scsi\",\n                \"/proc/timer_list\",\n                \"/proc/timer_stats\",\n                \"/sys/devices/virtual/powercap\",\n                \"/sys/firmware\"\n            ],\n            \"ReadonlyPaths\": [\n                \"/proc/bus\",\n                \"/proc/fs\",\n                \"/proc/irq\",\n                \"/proc/sys\",\n                \"/proc/sysrq-trigger\"\n            ]\n        },\n        \"Storage\": {\n            \"RootFS\": {\n                \"Snapshot\": {\n                    \"Name\": \"overlayfs\"\n                }\n            }\n        },\n        \"Mounts\": [],\n        \"Config\": {\n            \"Hostname\": \"6a3facbb3535\",\n            \"Domainname\": \"\",\n            \"User\": \"\",\n            \"AttachStdin\": false,\n            \"AttachStdout\": false,\n            \"AttachStderr\": false,\n            \"ExposedPorts\": {\n                \"5432/tcp\": {}\n            },\n            \"Tty\": false,\n            \"OpenStdin\": false,\n            \"StdinOnce\": false,\n            \"Env\": [\n                \"POSTGRES_HOST_AUTH_METHOD=trust\",\n                \"POSTGRES_USER=postgres\",\n                \"POSTGRES_DB=altt_workbench_test\",\n                \"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/16/bin\",\n                \"GOSU_VERSION=1.19\",\n                \"LANG=en_US.utf8\",\n                \"PG_MAJOR=16\",\n                \"PG_VERSION=16.15-1.pgdg13+2\",\n                \"PGDATA=/var/lib/postgresql/data\"\n            ],\n            \"Cmd\": [\n                \"-c\",\n                \"fsync=on\",\n                \"-c\",\n                \"full_page_writes=on\",\n                \"-c\",\n                \"synchronous_commit=on\"\n            ],\n            \"Image\": \"sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d\",\n            \"Volumes\": {\n                \"/var/lib/postgresql/data\": {}\n            },\n            \"WorkingDir\": \"\",\n            \"Entrypoint\": [\n                \"docker-entrypoint.sh\"\n            ],\n            \"Labels\": {\n                \"altt.regular-workbench\": \"20261017-161151\"\n            },\n            \"StopSignal\": \"SIGINT\",\n            \"StopTimeout\": 1\n        },\n        \"NetworkSettings\": {\n            \"SandboxID\": \"d2357f33551d1abea2cf80bbd3003cbd2889b397e4a7f19c197b4f855f4bb63e\",\n            \"SandboxKey\": \"/var/run/docker/netns/d2357f33551d\",\n            \"Ports\": {\n                \"5432/tcp\": null\n            },\n            \"Networks\": {\n                \"altt-regular-workbench-tests-20261017-161151\": {\n                    \"IPAMConfig\": null,\n                    \"Links\": null,\n                    \"Aliases\": null,\n                    \"DriverOpts\": null,\n                    \"GwPriority\": 0,\n                    \"NetworkID\": \"ba71fa4285f5d634a67a0a514580b5d9a23f99e4e524064a34ae6180bd220067\",\n                    \"EndpointID\": \"fff4c6bc2456b20626349f0a0fcae257c677f43c8958767e3f5b20d129f96696\",\n                    \"Gateway\": \"\",\n                    \"IPAddress\": \"172.20.0.2\",\n                    \"MacAddress\": \"2e:49:c5:13:6d:70\",\n                    \"IPPrefixLen\": 16,\n                    \"IPv6Gateway\": \"\",\n                    \"GlobalIPv6Address\": \"\",\n                    \"GlobalIPv6PrefixLen\": 0,\n                    \"DNSNames\": [\n                        \"altt-regular-workbench-pg-20261017-161151\",\n                        \"6a3facbb3535\"\n                    ]\n                }\n            }\n        },\n        \"ImageManifestDescriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.manifest.v1+json\",\n            \"digest\": \"sha256:ac51821423566931ecf50eb51ee9201d794d8632d33a2f23432ec47ff63a0fd4\",\n            \"size\": 3630,\n            \"annotations\": {\n                \"com.docker.official-images.bashbrew.arch\": \"arm64v8\",\n                \"org.opencontainers.image.base.digest\": \"sha256:a2ca65377c251208de42e1a2722cb949211236c161b634f6f3663754e2d06850\",\n                \"org.opencontainers.image.base.name\": \"debian:trixie-slim\",\n                \"org.opencontainers.image.created\": \"2026-10-06T01:35:52Z\",\n                \"org.opencontainers.image.revision\": \"9d15534160ade17f2b6c455a39ee967c49b1937d\",\n                \"org.opencontainers.image.source\": \"https://github.com/docker-library/postgres.git#9d15534160ade17f2b6c455a39ee967c49b1937d:16/trixie\",\n                \"org.opencontainers.image.url\": \"https://hub.docker.com/_/postgres\",\n                \"org.opencontainers.image.version\": \"16.15\"\n            },\n            \"platform\": {\n                \"architecture\": \"arm64\",\n                \"os\": \"linux\",\n                \"variant\": \"v8\"\n            }\n        }\n    }\n]\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "altt-regular-workbench-pg-20261017-161151",
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "CREATE DATABASE altt_workbench_smoke"
+      ],
+      "exit_code": 0,
+      "stdout": "CREATE DATABASE\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "--detach",
+        "--name",
+        "altt-workbench-api-smoke-20261017-161151",
+        "--label",
+        "altt.regular-workbench=20261017-161151",
+        "--network",
+        "altt-regular-workbench-tests-20261017-161151",
+        "--read-only",
+        "--tmpfs",
+        "/tmp",
+        "--tmpfs",
+        "/anilibria",
+        "--env",
+        "DATABASE_URL=postgresql+psycopg://postgres@altt-regular-workbench-pg-20261017-161151:5432/altt_workbench_smoke",
+        "--env",
+        "APP_ENV=prod",
+        "--env",
+        "SECRET_KEY=disposable-workbench-smoke-key",
+        "--env",
+        "TORRENT_STORAGE_DIR=/tmp/torrents",
+        "--env",
+        "ANILIBRIA_MEDIA_ROOT=/anilibria",
+        "--env",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "sha256:0ac66f155e9197729bfb1b8dc219a3f341175a660df238b4f74544134fefae32",
+        "sh",
+        "/app/scripts/entrypoint.sh",
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+        "--loop",
+        "uvloop",
+        "--http",
+        "httptools"
+      ],
+      "exit_code": 0,
+      "stdout": "fc7c109b56237569bae4c171e4cd38cf132dd009c3d497c5b945d97a91e7d8a0\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "altt-workbench-api-smoke-20261017-161151",
+        "python",
+        "-c",
+        "\nimport hashlib,json,urllib.request\nresults=[]\nfor path in ['/health/live','/hevc-workbench','/hevc-workbench/live?view=all&page=1&per_page=30']:\n    with urllib.request.urlopen('http://127.0.0.1:8000'+path,timeout=5) as response:\n        body=response.read()\n        assert response.status==200\n        if path=='/health/live': assert json.loads(body)=={'status':'ok'}\n        else: assert 'HEVC' in body.decode('utf-8')\n        results.append({'path':path,'status':response.status,'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest(),'content_type':response.headers['Content-Type']})\nprint(json.dumps(results))\n"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 1335, in do_open\n    h.request(req.get_method(), req.selector, req.data, headers,\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n              encode_chunked=req.has_header('Transfer-encoding'))\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1398, in request\n    self._send_request(method, url, body, headers, encode_chunked)\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1444, in _send_request\n    self.endheaders(body, encode_chunked=encode_chunked)\n    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1393, in endheaders\n    self._send_output(message_body, encode_chunked=encode_chunked)\n    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1153, in _send_output\n    self.send(msg)\n    ~~~~~~~~~^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1097, in send\n    self.connect()\n    ~~~~~~~~~~~~^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1063, in connect\n    self.sock = self._create_connection(\n                ~~~~~~~~~~~~~~~~~~~~~~~^\n        (self.host,self.port), self.timeout, self.source_address)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/socket.py\", line 883, in create_connection\n    raise exceptions[0]\n  File \"/usr/local/lib/python3.15/socket.py\", line 868, in create_connection\n    sock.connect(sa)\n    ~~~~~~~~~~~~^^^^\nConnectionRefusedError: [Errno 111] Connection refused\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"<string>\", line 5, in <module>\n    with urllib.request.urlopen('http://127.0.0.1:8000'+path,timeout=5) as response:\n         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 187, in urlopen\n    return opener.open(url, data, timeout)\n           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 489, in open\n    response = self._open(req, data)\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 506, in _open\n    result = self._call_chain(self.handle_open, protocol, protocol +\n                              '_open', req)\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 466, in _call_chain\n    result = func(*args)\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 1364, in http_open\n    return self.do_open(http.client.HTTPConnection, req)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 1338, in do_open\n    raise URLError(err)\nurllib.error.URLError: <urlopen error [Errno 111] Connection refused>\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "altt-workbench-api-smoke-20261017-161151",
+        "python",
+        "-c",
+        "\nimport hashlib,json,urllib.request\nresults=[]\nfor path in ['/health/live','/hevc-workbench','/hevc-workbench/live?view=all&page=1&per_page=30']:\n    with urllib.request.urlopen('http://127.0.0.1:8000'+path,timeout=5) as response:\n        body=response.read()\n        assert response.status==200\n        if path=='/health/live': assert json.loads(body)=={'status':'ok'}\n        else: assert 'HEVC' in body.decode('utf-8')\n        results.append({'path':path,'status':response.status,'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest(),'content_type':response.headers['Content-Type']})\nprint(json.dumps(results))\n"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 1335, in do_open\n    h.request(req.get_method(), req.selector, req.data, headers,\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n              encode_chunked=req.has_header('Transfer-encoding'))\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1398, in request\n    self._send_request(method, url, body, headers, encode_chunked)\n    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1444, in _send_request\n    self.endheaders(body, encode_chunked=encode_chunked)\n    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1393, in endheaders\n    self._send_output(message_body, encode_chunked=encode_chunked)\n    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1153, in _send_output\n    self.send(msg)\n    ~~~~~~~~~^^^^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1097, in send\n    self.connect()\n    ~~~~~~~~~~~~^^\n  File \"/usr/local/lib/python3.15/http/client.py\", line 1063, in connect\n    self.sock = self._create_connection(\n                ~~~~~~~~~~~~~~~~~~~~~~~^\n        (self.host,self.port), self.timeout, self.source_address)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/socket.py\", line 883, in create_connection\n    raise exceptions[0]\n  File \"/usr/local/lib/python3.15/socket.py\", line 868, in create_connection\n    sock.connect(sa)\n    ~~~~~~~~~~~~^^^^\nConnectionRefusedError: [Errno 111] Connection refused\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"<string>\", line 5, in <module>\n    with urllib.request.urlopen('http://127.0.0.1:8000'+path,timeout=5) as response:\n         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 187, in urlopen\n    return opener.open(url, data, timeout)\n           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 489, in open\n    response = self._open(req, data)\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 506, in _open\n    result = self._call_chain(self.handle_open, protocol, protocol +\n                              '_open', req)\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 466, in _call_chain\n    result = func(*args)\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 1364, in http_open\n    return self.do_open(http.client.HTTPConnection, req)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.15/urllib/request.py\", line 1338, in do_open\n    raise URLError(err)\nurllib.error.URLError: <urlopen error [Errno 111] Connection refused>\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "altt-workbench-api-smoke-20261017-161151",
+        "python",
+        "-c",
+        "\nimport hashlib,json,urllib.request\nresults=[]\nfor path in ['/health/live','/hevc-workbench','/hevc-workbench/live?view=all&page=1&per_page=30']:\n    with urllib.request.urlopen('http://127.0.0.1:8000'+path,timeout=5) as response:\n        body=response.read()\n        assert response.status==200\n        if path=='/health/live': assert json.loads(body)=={'status':'ok'}\n        else: assert 'HEVC' in body.decode('utf-8')\n        results.append({'path':path,'status':response.status,'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest(),'content_type':response.headers['Content-Type']})\nprint(json.dumps(results))\n"
+      ],
+      "exit_code": 0,
+      "stdout": "[{\"path\": \"/health/live\", \"status\": 200, \"bytes\": 15, \"sha256\": \"a29ee2b15c494311c52521766e44af56a3ad2248e7a8ab465e5206463c13d288\", \"content_type\": \"application/json\"}, {\"path\": \"/hevc-workbench\", \"status\": 200, \"bytes\": 100156, \"sha256\": \"ee7b4fa423e0845cc76ef5c2ea2ddccdeb04ae5ec083d5f28b27dff3b079961a\", \"content_type\": \"text/html; charset=utf-8\"}, {\"path\": \"/hevc-workbench/live?view=all&page=1&per_page=30\", \"status\": 200, \"bytes\": 1848, \"sha256\": \"1a05fd924f66f51cfb43d941e6dadb3de9cec27f6d845eb26dbb273bc8cc1886\", \"content_type\": \"text/html; charset=utf-8\"}]\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "exec",
+        "altt-regular-workbench-pg-20261017-161151",
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "altt_workbench_smoke",
+        "-Atc",
+        "SELECT version_num FROM alembic_version"
+      ],
+      "exit_code": 0,
+      "stdout": "0027_encoder_job_tracking\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "logs",
+        "altt-workbench-api-smoke-20261017-161151"
+      ],
+      "exit_code": 0,
+      "stdout": "alembic upgrade head (lock acquired)\nalembic advisory lock released\nINFO:     127.0.0.1:58372 - \"GET /health/live HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:58382 - \"GET /hevc-workbench HTTP/1.1\" 200 OK\nINFO:     127.0.0.1:58396 - \"GET /hevc-workbench/live?view=all&page=1&per_page=30 HTTP/1.1\" 200 OK\n",
+      "stderr": "INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.\nINFO  [alembic.runtime.migration] Will assume transactional DDL.\nINFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, \u041d\u0430\u0447\u0430\u043b\u044c\u043d\u0430\u044f \u043c\u0438\u0433\u0440\u0430\u0446\u0438\u044f \u0441\u0445\u0435\u043c\u044b.\nINFO  [alembic.runtime.migration] Running upgrade 0001_initial -> 0002_archive_torrent_meta, \u041f\u043e\u043b\u044f \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u044f \u0438 \u0442\u0438\u043f\u0430 \u0442\u043e\u0440\u0440\u0435\u043d\u0442\u0430 \u0432 \u0430\u0440\u0445\u0438\u0432\u0435.\nINFO  [alembic.runtime.migration] Running upgrade 0002_archive_torrent_meta -> 0003_archive_file_size_bigint, file_size \u0432 \u0430\u0440\u0445\u0438\u0432\u0435: Integer \u2192 BigInteger (\u0440\u0430\u0437\u043c\u0435\u0440\u044b >2\u0413\u0411).\nINFO  [alembic.runtime.migration] Running upgrade 0003_archive_file_size_bigint -> 0004_torrent_type_len, \u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d\u0438\u0435 torrent_type \u0434\u043e 128 \u0441\u0438\u043c\u0432\u043e\u043b\u043e\u0432 (WEBRip 1080p HEVC).\nINFO  [alembic.runtime.migration] Running upgrade 0004_torrent_type_len -> 0005_release_checkpoints, \u0422\u0430\u0431\u043b\u0438\u0446\u0430 release_checkpoints \u0434\u043b\u044f \u043f\u0440\u043e\u043f\u0443\u0441\u043a\u0430 \u043d\u0435\u0438\u0437\u043c\u0435\u043d\u0451\u043d\u043d\u044b\u0445 \u0440\u0435\u043b\u0438\u0437\u043e\u0432.\nINFO  [alembic.runtime.migration] Running upgrade 0005_release_checkpoints -> 0006_telegram_tracking, \u0422\u0430\u0431\u043b\u0438\u0446\u044b tracked_releases, telegram_outbox \u0438 \u043a\u043e\u043b\u043e\u043d\u043a\u0430 tg_status \u043d\u0430 pipeline.\nINFO  [alembic.runtime.migration] Running upgrade 0006_telegram_tracking -> 0007_file_tracking, api_present, torrent_files, disk_file_hashes, file_change_events.\nINFO  [alembic.runtime.migration] Running upgrade 0007_file_tracking -> 0008_cleanup_rules_both, Cleanup rules: target_client master \u2192 both \u0434\u043b\u044f Cleanup Slave.\nINFO  [alembic.runtime.migration] Running upgrade 0008_cleanup_rules_both -> 0009_purge_false_orphan_events, \u0423\u0434\u0430\u043b\u0435\u043d\u0438\u0435 \u043b\u043e\u0436\u043d\u044b\u0445 orphan-\u0441\u043e\u0431\u044b\u0442\u0438\u0439 (\u0441\u043a\u0430\u043d \u043f\u043e save_path \u0433\u043e\u0434\u0430).\nINFO  [alembic.runtime.migration] Running upgrade 0009_purge_false_orphan_events -> 0010_torrent_file_ui_status, Sticky ui_status \u043d\u0430 torrent_files.\nINFO  [alembic.runtime.migration] Running upgrade 0010_torrent_file_ui_status -> 0011_torrent_history_per_version, \u0418\u0441\u0442\u043e\u0440\u0438\u044f \u0442\u043e\u0440\u0440\u0435\u043d\u0442\u043e\u0432: superseded + info_hash \u043d\u0430 file_change_events.\nINFO  [alembic.runtime.migration] Running upgrade 0011_torrent_history_per_version -> 0012_pipeline_events, \u0422\u0430\u0431\u043b\u0438\u0446\u0430 pipeline_events \u2014 audit trail \u043f\u0430\u0439\u043f\u043b\u0430\u0439\u043d\u0430.\nINFO  [alembic.runtime.migration] Running upgrade 0012_pipeline_events -> 0013_ignore_hevc, \u041a\u043e\u043b\u043e\u043d\u043a\u0430 torrent_archive.ignore_hevc \u2014 \u0440\u0443\u0447\u043d\u043e\u0439 \u0438\u0433\u043d\u043e\u0440 HEVC-\u043f\u0430\u0440\u044b \u0434\u043b\u044f AVC.\nINFO  [alembic.runtime.migration] Running upgrade 0013_ignore_hevc -> 0014_api_created_at, \u041a\u043e\u043b\u043e\u043d\u043a\u0430 torrent_archive.api_created_at \u2014 \u0434\u0430\u0442\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438 \u0442\u043e\u0440\u0440\u0435\u043d\u0442\u0430 AniLibria.\nINFO  [alembic.runtime.migration] Running upgrade 0014_api_created_at -> 0015_releases_members, \u0422\u0430\u0431\u043b\u0438\u0446\u044b releases + release_members \u2014 \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0430 \u0438 \u0441\u043e\u0441\u0442\u0430\u0432 \u0440\u0435\u043b\u0438\u0437\u0430.\nINFO  [alembic.runtime.migration] Running upgrade 0015_releases_members -> 0016_slave_completed_at, torrent_pipeline.slave_completed_at \u2014 \u043c\u043e\u043c\u0435\u043d\u0442 \u043f\u0435\u0440\u0435\u0445\u043e\u0434\u0430 \u0432 done (slave seeding).\nINFO  [alembic.runtime.migration] Running upgrade 0016_slave_completed_at -> 0017_telegram_hevc_access, \u0414\u043e\u0441\u0442\u0443\u043f \u0432\u0442\u043e\u0440\u043e\u0433\u043e Telegram-\u0431\u043e\u0442\u0430, \u043c\u0430\u0440\u0448\u0440\u0443\u0442\u0438\u0437\u0430\u0446\u0438\u044f outbox \u0438 original title.\nINFO  [alembic.runtime.migration] Running upgrade 0017_telegram_hevc_access -> 0018_ignore_low_quality_avc, \u0418\u0433\u043d\u043e\u0440 HEVC \u0434\u043b\u044f \u0438\u0441\u0442\u043e\u0440\u0438\u0447\u0435\u0441\u043a\u0438\u0445 AVC \u043d\u0438\u0436\u0435 1080p \u0432 \u0440\u0435\u043b\u0438\u0437\u0430\u0445 \u0431\u0435\u0437 HEVC.\nINFO  [alembic.runtime.migration] Running upgrade 0018_ignore_low_quality_avc -> 0019_torrent_file_is_checking, \u0412\u0440\u0435\u043c\u0435\u043d\u043d\u044b\u0439 overlay is_checking \u043d\u0430 torrent_files (\u043d\u0435 sticky ui_status).\nINFO  [alembic.runtime.migration] Running upgrade 0019_torrent_file_is_checking -> 0020_file_mediainfo, \u0422\u0430\u0431\u043b\u0438\u0446\u0430 file_mediainfo \u0434\u043b\u044f \u043a\u044d\u0448\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f MediaInfo \u0444\u0430\u0439\u043b\u043e\u0432.\nINFO  [alembic.runtime.migration] Running upgrade 0020_file_mediainfo -> 0021_torrent_file_media_present, Operational overlay media_present \u043d\u0430 torrent_files (\u043d\u0435 sticky ui_status).\nINFO  [alembic.runtime.migration] Running upgrade 0021_torrent_file_media_present -> 0022_file_mediainfo_attachments, \u041a\u043e\u043b\u043e\u043d\u043a\u0438 \u0432\u043b\u043e\u0436\u0435\u043d\u0438\u0439 \u0432 file_mediainfo.\nINFO  [alembic.runtime.migration] Running upgrade 0022_file_mediainfo_attachments -> 0023_ongoing_watch, \u041f\u043e\u0441\u0442\u043e\u044f\u043d\u043d\u044b\u0439 \u0441\u043f\u0438\u0441\u043e\u043a \u0434\u043e\u043d\u0430\u0431\u043b\u044e\u0434\u0435\u043d\u0438\u044f ongoing.\nINFO  [alembic.runtime.migration] Running upgrade 0023_ongoing_watch -> 0024_backoffice_source, \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0438 \u0440\u0435\u043b\u0438\u0437\u043e\u0432, \u0440\u0443\u0447\u043d\u043e\u0439 \u0441\u0442\u0430\u0442\u0443\u0441 \u0438 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0430\u0434\u043c\u0438\u043d\u0441\u043a\u0438\u0445 \u0442\u043e\u0440\u0440\u0435\u043d\u0442\u043e\u0432.\nINFO  [alembic.runtime.migration] Running upgrade 0024_backoffice_source -> 0025_encoder_history, Durable per-file receipts for Video Kensetsu submissions.\nINFO  [alembic.runtime.migration] Running upgrade 0025_encoder_history -> 0026_job_outcomes_outbox, Structured synchronization outcomes and fenced Telegram delivery.\nINFO  [alembic.runtime.migration] Running upgrade 0026_job_outcomes_outbox -> 0027_encoder_job_tracking, Observe Kensetsu execution and repair provable legacy single-file receipts.\nINFO:     Started server process [1]\nINFO:     Waiting for application startup.\nINFO:     Application startup complete.\nINFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)\n"
+    },
+    {
+      "argv": [
+        "docker",
+        "stop",
+        "--time",
+        "10",
+        "altt-workbench-api-smoke-20261017-161151"
+      ],
+      "exit_code": 0,
+      "stdout": "Flag --time has been deprecated, use --timeout instead\naltt-workbench-api-smoke-20261017-161151\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "docker",
+        "rm",
+        "altt-workbench-api-smoke-20261017-161151"
+      ],
+      "exit_code": 0,
+      "stdout": "altt-workbench-api-smoke-20261017-161151\n",
+      "stderr": ""
+    }
+  ],
+  "image_id": "sha256:0ac66f155e9197729bfb1b8dc219a3f341175a660df238b4f74544134fefae32",
+  "container_id": "fc7c109b56237569bae4c171e4cd38cf132dd009c3d497c5b945d97a91e7d8a0",
+  "http": [
+    {
+      "path": "/health/live",
+      "status": 200,
+      "bytes": 15,
+      "sha256": "a29ee2b15c494311c52521766e44af56a3ad2248e7a8ab465e5206463c13d288",
+      "content_type": "application/json"
+    },
+    {
+      "path": "/hevc-workbench",
+      "status": 200,
+      "bytes": 100156,
+      "sha256": "ee7b4fa423e0845cc76ef5c2ea2ddccdeb04ae5ec083d5f28b27dff3b079961a",
+      "content_type": "text/html; charset=utf-8"
+    },
+    {
+      "path": "/hevc-workbench/live?view=all&page=1&per_page=30",
+      "status": 200,
+      "bytes": 1848,
+      "sha256": "1a05fd924f66f51cfb43d941e6dadb3de9cec27f6d845eb26dbb273bc8cc1886",
+      "content_type": "text/html; charset=utf-8"
+    }
+  ],
+  "migrations": "0027_encoder_job_tracking",
+  "ok": true
+}

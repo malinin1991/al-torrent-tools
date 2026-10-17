@@ -1,0 +1,36 @@
+{
+  "passed_files": 3,
+  "node_version": "v24.19.0",
+  "results": [
+    {
+      "file": "tests/js/base_ui.test.cjs",
+      "sha256": "6a68a84241a26fa61c715164027be521578e79aeecf10831f51634aae5eeded1",
+      "argv": [
+        "/Users/geekaz0id/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/private/tmp/altt-publish-release-20261017-162449/backend/tests/js/base_ui.test.cjs"
+      ],
+      "cwd": "/private/tmp/altt-publish-release-20261017-162449/backend",
+      "exit_code": 0
+    },
+    {
+      "file": "tests/js/hevc_workbench.test.cjs",
+      "sha256": "f296ee4f7ff52c8b0e6fde044bf66b24c1f9b8b44dc19c5a73fb91ee1d63442f",
+      "argv": [
+        "/Users/geekaz0id/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/private/tmp/altt-publish-release-20261017-162449/backend/tests/js/hevc_workbench.test.cjs"
+      ],
+      "cwd": "/private/tmp/altt-publish-release-20261017-162449/backend",
+      "exit_code": 0
+    },
+    {
+      "file": "tests/js/operations.test.cjs",
+      "sha256": "05adcc50dc7cd5f48ce6fd00df0bf0135490e85d940e6fdbfcd9e7098d5562a7",
+      "argv": [
+        "/Users/geekaz0id/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "/private/tmp/altt-publish-release-20261017-162449/backend/tests/js/operations.test.cjs"
+      ],
+      "cwd": "/private/tmp/altt-publish-release-20261017-162449/backend",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "network": "altt-regular-workbench-tests-20261017-161151",
+  "network_id": "ba71fa4285f5d634a67a0a514580b5d9a23f99e4e524064a34ae6180bd220067",
+  "container": "altt-regular-workbench-pg-20261017-161151",
+  "container_id": "6a3facbb35351f9801b4926da3f1579a3fb73031e6da7cb6af8dccee3be64a9d",
+  "image_id": "sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d",
+  "database_name": "altt_workbench_test",
+  "database_url": "postgresql+psycopg://postgres@altt-regular-workbench-pg-20261017-161151:5432/altt_workbench_test",
+  "host_ports": [],
+  "data_storage": "container-only tmpfs 512MiB",
+  "label": "altt.regular-workbench=20261017-161151",
+  "configuration": "altt_workbench_test|PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit|on|on|on",
+  "setup_note": "First readiness check saw temporary initialization socket; final TCP server verified separately. No resource recreation."
+}

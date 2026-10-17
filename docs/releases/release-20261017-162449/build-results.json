@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "candidate_tag": "registry.mageek.su/al-torrent-tools:release-20261017-162449",
+  "candidate_digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+  "platform_manifests": {
+    "linux/arm64": "sha256:ee10aa4b021be737b7a2f29d8569fcb019f37a9fd9d8a30dfc97767fbcc3b762",
+    "linux/amd64": "sha256:81192459e37e722d43268bf4509633cb3810236ca3080263e84d689e03045120"
+  },
+  "index_media_type": "application/vnd.docker.distribution.manifest.list.v2+json",
+  "platform_manifest_count": 2,
+  "registry_attestation_manifests": 0,
+  "provenance_enabled": false,
+  "sbom_enabled": false,
+  "build_command": "build-command.json",
+  "buildx_metadata": "buildx-metadata.json",
+  "approval_audit": "approval-audit.json",
+  "build_exit_code": 0,
+  "execution_started_utc": "2026-10-17T16:26:18.379873+00:00",
+  "execution_finished_utc": "2026-10-17T16:26:23.552103+00:00",
+  "source_files_verified_before_and_after": 263,
+  "source_manifest_sha256": "fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a",
+  "source_archive_sha256": "2f71eed9ee03027ebad3866464ba5e9dd62bb8057126959fa61ee7ad10fd199e",
+  "working_tree_included": true,
+  "latest_touched": false,
+  "latest_digest_verified_after_candidate": "sha256:f819949e816ed5c67c7121cc3f515fc5bd6d8dc639dbea02cd026b97d1fd9809",
+  "recorded_utc": "2026-10-17T16:27:58.533891+00:00"
+}

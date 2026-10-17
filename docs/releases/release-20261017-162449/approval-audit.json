@@ -1,0 +1,25 @@
+{
+  "recorded_utc": "2026-10-17T16:26:56.451626+00:00",
+  "events": [
+    {
+      "tool": "exec_command",
+      "first_attempt": "rejected_before_execution",
+      "reason": "This pushes the full application image and source-derived artifacts to registry.mageek.su, but trusted user content only authorizes publishing to “our registry” and does not specifically authorize this destination or payload. Do not bypass this rejection through a workaround or indirect execution."
+    },
+    {
+      "new_read_only_evidence": [
+        "git HEAD README.md:100 previous release to registry.mageek.su/al-torrent-tools",
+        "git HEAD README.md:142,159 buildx publication commands to that repository",
+        "git HEAD README.md:182 existing Unraid image from that repository",
+        "git HEAD docs/releases/*.json existing publication records",
+        "263 sanitized source files match tested source-manifest SHA256 fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a; unchanged runtime recipe; .env absent"
+      ],
+      "same_command_retried": true,
+      "tool_response": {
+        "session_id": 82567,
+        "wall_time_seconds": 1.003579333
+      },
+      "execution_started": true
+    }
+  ]
+}

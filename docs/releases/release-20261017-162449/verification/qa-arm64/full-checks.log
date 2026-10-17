@@ -1,0 +1,6 @@
+START pip-check
+DONE pip-check exit=0
+START compileall
+DONE compileall exit=0
+START pytest
+DONE pytest exit=0

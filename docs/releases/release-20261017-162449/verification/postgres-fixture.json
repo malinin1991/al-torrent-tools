@@ -1,0 +1,14 @@
+{
+  "network": "altt-release-162449-tests",
+  "network_id": "f628f521809bd4428e51ab3109f40322cb6391673279a010a75958b6211cc530",
+  "container": "altt-release-162449-pg",
+  "container_id": "f39e6e8b9611749f662df0d3c9fdcec31e070a9af76b93d311feda20f56a6b1c",
+  "image_id": "sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d",
+  "database_name": "altt_release_test",
+  "database_url": "postgresql+psycopg://postgres@altt-release-162449-pg:5432/altt_release_test",
+  "host_ports": [],
+  "data_storage": "container-only tmpfs 512MiB",
+  "label": "altt.release=release-20261017-162449",
+  "configuration": "altt_release_test|PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit|on|on|on",
+  "scope": "Disposable test DB; no production mount, dotenv or host port. Keep for root lifecycle smoke."
+}

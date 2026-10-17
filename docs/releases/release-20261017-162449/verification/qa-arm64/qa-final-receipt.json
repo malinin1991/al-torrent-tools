@@ -1,0 +1,28 @@
+{
+  "candidate": "registry.mageek.su/al-torrent-tools@sha256:ee10aa4b021be737b7a2f29d8569fcb019f37a9fd9d8a30dfc97767fbcc3b762",
+  "candidate_image_id": "sha256:ee10aa4b021be737b7a2f29d8569fcb019f37a9fd9d8a30dfc97767fbcc3b762",
+  "qa_image_id": "sha256:fe9f0b2e0307fea342c93759d0cc75de162bc60ff38624a7c95003e77b9f6210",
+  "candidate_layers_preserved_as_prefix": true,
+  "all_runtime_package_code_and_metadata_unchanged": true,
+  "runtime_packages": 40,
+  "added_dev_packages": {
+    "iniconfig": "2.3.1",
+    "pluggy": "1.7.0",
+    "pygments": "2.21.0",
+    "pytest": "9.1.1",
+    "watchfiles": "1.3.0"
+  },
+  "existing_runtime_source_files_not_overwritten": 163,
+  "added_frozen_source_files": 100,
+  "full_suite_passed": true,
+  "passed": 1504,
+  "skips": [
+    {
+      "nodeid": "tests/test_minijinja_workbench_experiment.py",
+      "reason": "('/app/tests/test_minijinja_workbench_experiment.py', 22, 'Skipped: Optional experiment requires minijinja==3.0.1 in its isolated environment')"
+    }
+  ],
+  "pip_check_passed": true,
+  "compileall_passed": true,
+  "source_manifest_sha256": "fda3f83ef334ded095e3e2acb49e89d558ef6eacc3aa6f7b6ce719e57188b99a"
+}

@@ -1,0 +1,38 @@
+alembic upgrade head (lock acquired)
+alembic advisory lock released
+INFO:     127.0.0.1:58372 - "GET /health/live HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58382 - "GET /hevc-workbench HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58396 - "GET /hevc-workbench/live?view=all&page=1&per_page=30 HTTP/1.1" 200 OK
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_initial, Начальная миграция схемы.
+INFO  [alembic.runtime.migration] Running upgrade 0001_initial -> 0002_archive_torrent_meta, Поля описания и типа торрента в архиве.
+INFO  [alembic.runtime.migration] Running upgrade 0002_archive_torrent_meta -> 0003_archive_file_size_bigint, file_size в архиве: Integer → BigInteger (размеры >2ГБ).
+INFO  [alembic.runtime.migration] Running upgrade 0003_archive_file_size_bigint -> 0004_torrent_type_len, Расширение torrent_type до 128 символов (WEBRip 1080p HEVC).
+INFO  [alembic.runtime.migration] Running upgrade 0004_torrent_type_len -> 0005_release_checkpoints, Таблица release_checkpoints для пропуска неизменённых релизов.
+INFO  [alembic.runtime.migration] Running upgrade 0005_release_checkpoints -> 0006_telegram_tracking, Таблицы tracked_releases, telegram_outbox и колонка tg_status на pipeline.
+INFO  [alembic.runtime.migration] Running upgrade 0006_telegram_tracking -> 0007_file_tracking, api_present, torrent_files, disk_file_hashes, file_change_events.
+INFO  [alembic.runtime.migration] Running upgrade 0007_file_tracking -> 0008_cleanup_rules_both, Cleanup rules: target_client master → both для Cleanup Slave.
+INFO  [alembic.runtime.migration] Running upgrade 0008_cleanup_rules_both -> 0009_purge_false_orphan_events, Удаление ложных orphan-событий (скан по save_path года).
+INFO  [alembic.runtime.migration] Running upgrade 0009_purge_false_orphan_events -> 0010_torrent_file_ui_status, Sticky ui_status на torrent_files.
+INFO  [alembic.runtime.migration] Running upgrade 0010_torrent_file_ui_status -> 0011_torrent_history_per_version, История торрентов: superseded + info_hash на file_change_events.
+INFO  [alembic.runtime.migration] Running upgrade 0011_torrent_history_per_version -> 0012_pipeline_events, Таблица pipeline_events — audit trail пайплайна.
+INFO  [alembic.runtime.migration] Running upgrade 0012_pipeline_events -> 0013_ignore_hevc, Колонка torrent_archive.ignore_hevc — ручной игнор HEVC-пары для AVC.
+INFO  [alembic.runtime.migration] Running upgrade 0013_ignore_hevc -> 0014_api_created_at, Колонка torrent_archive.api_created_at — дата загрузки торрента AniLibria.
+INFO  [alembic.runtime.migration] Running upgrade 0014_api_created_at -> 0015_releases_members, Таблицы releases + release_members — карточка и состав релиза.
+INFO  [alembic.runtime.migration] Running upgrade 0015_releases_members -> 0016_slave_completed_at, torrent_pipeline.slave_completed_at — момент перехода в done (slave seeding).
+INFO  [alembic.runtime.migration] Running upgrade 0016_slave_completed_at -> 0017_telegram_hevc_access, Доступ второго Telegram-бота, маршрутизация outbox и original title.
+INFO  [alembic.runtime.migration] Running upgrade 0017_telegram_hevc_access -> 0018_ignore_low_quality_avc, Игнор HEVC для исторических AVC ниже 1080p в релизах без HEVC.
+INFO  [alembic.runtime.migration] Running upgrade 0018_ignore_low_quality_avc -> 0019_torrent_file_is_checking, Временный overlay is_checking на torrent_files (не sticky ui_status).
+INFO  [alembic.runtime.migration] Running upgrade 0019_torrent_file_is_checking -> 0020_file_mediainfo, Таблица file_mediainfo для кэширования MediaInfo файлов.
+INFO  [alembic.runtime.migration] Running upgrade 0020_file_mediainfo -> 0021_torrent_file_media_present, Operational overlay media_present на torrent_files (не sticky ui_status).
+INFO  [alembic.runtime.migration] Running upgrade 0021_torrent_file_media_present -> 0022_file_mediainfo_attachments, Колонки вложений в file_mediainfo.
+INFO  [alembic.runtime.migration] Running upgrade 0022_file_mediainfo_attachments -> 0023_ongoing_watch, Постоянный список донаблюдения ongoing.
+INFO  [alembic.runtime.migration] Running upgrade 0023_ongoing_watch -> 0024_backoffice_source, Источники релизов, ручной статус и политика админских торрентов.
+INFO  [alembic.runtime.migration] Running upgrade 0024_backoffice_source -> 0025_encoder_history, Durable per-file receipts for Video Kensetsu submissions.
+INFO  [alembic.runtime.migration] Running upgrade 0025_encoder_history -> 0026_job_outcomes_outbox, Structured synchronization outcomes and fenced Telegram delivery.
+INFO  [alembic.runtime.migration] Running upgrade 0026_job_outcomes_outbox -> 0027_encoder_job_tracking, Observe Kensetsu execution and repair provable legacy single-file receipts.
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)

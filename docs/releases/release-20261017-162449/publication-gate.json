@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "created_utc": "2026-10-17T16:34:13.750711+00:00",
+  "candidate_digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+  "arm64_full_suite": {
+    "passed": 1504,
+    "skipped": 1
+  },
+  "both_platform_runtime_files": 163,
+  "http_requests_per_platform": 5,
+  "real_nonempty_case_array_history_checks": true,
+  "current_source_files_verified": 263,
+  "javascript_files_passed": 3
+}

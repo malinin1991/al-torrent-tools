@@ -1,0 +1,57 @@
+{
+  "status": "mixed",
+  "results": [
+    {
+      "file": "diagnostics/explain-command.json",
+      "status": "failed",
+      "plans": 0,
+      "error": null,
+      "summaries": null
+    },
+    {
+      "file": "diagnostics/explain-file-projection.json",
+      "status": "success",
+      "plans": 10,
+      "error": null,
+      "summaries": {
+        "baseline": {
+          "measured_plans": 4,
+          "actual_rows": 43392,
+          "execution_median_ms": 5.348,
+          "planning_median_ms": 0.018000000000000002,
+          "execution_all_ms": [
+            5.125,
+            5.335,
+            5.361,
+            9.317
+          ],
+          "planning_all_ms": [
+            0.021,
+            0.015,
+            0.011,
+            0.029
+          ]
+        },
+        "optimized": {
+          "measured_plans": 4,
+          "actual_rows": 43392,
+          "execution_median_ms": 18.246000000000002,
+          "planning_median_ms": 0.2955,
+          "execution_all_ms": [
+            17.221,
+            18.503,
+            17.989,
+            21.96
+          ],
+          "planning_all_ms": [
+            0.386,
+            0.247,
+            0.344,
+            0.243
+          ]
+        }
+      }
+    }
+  ],
+  "scope": "Optional server-side diagnostic; all success/failure attempts retained, no benchmark samples added"
+}

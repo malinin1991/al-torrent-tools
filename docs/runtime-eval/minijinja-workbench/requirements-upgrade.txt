@@ -1,0 +1,5 @@
+# Align the October 13 evaluation bases with the current application pins.
+fastapi==0.143.3
+starlette==1.8.0
+pydantic-settings==2.16.0
+pluggy==1.7.0

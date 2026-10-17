@@ -1,0 +1,48 @@
+{
+  "protocol": {
+    "version": 1,
+    "rounds": 8,
+    "http_requests": 8,
+    "render_calls": 64,
+    "primary_modes": [
+      "regular",
+      "ft_off"
+    ],
+    "primary_engines": [
+      "current_jinja",
+      "minijinja"
+    ],
+    "concurrency": [
+      1,
+      4
+    ],
+    "p95": "exploratory; resample paired rounds/batches, not individual concurrent requests",
+    "transport": "one ASGI event loop and shared Environment per process; no TCP/TLS/browser",
+    "clock": "2026-10-17T00:00:00",
+    "warmup_concurrency": 4
+  },
+  "database_name": "altt_minijinja_workbench",
+  "media_root": "/bench/media",
+  "releases": 1024,
+  "archives": 5248,
+  "files": 43392,
+  "input_sha256": "0580f8e13c78aab82ca5743d7c0dbb20efe649875384ac20c7be683b1460bc4f",
+  "smoke_only": false,
+  "gil": true,
+  "py_gil_disabled": 0,
+  "python": "3.15.0 (main, Oct 13 2026, 08:13:54) [GCC 14.2.0]",
+  "process_gil_checkpoints": [
+    {
+      "point": "process_start",
+      "gil": true,
+      "thread_id": 281473542186176,
+      "phase": "setup"
+    },
+    {
+      "point": "process_end",
+      "gil": true,
+      "thread_id": 281473542186176,
+      "phase": "setup"
+    }
+  ]
+}
