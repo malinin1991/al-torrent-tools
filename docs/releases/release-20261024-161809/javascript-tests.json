@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "node_version": "v26.5.0",
+  "test_files": [
+    "tests/js/automatic_encoder.test.cjs",
+    "tests/js/base_ui.test.cjs",
+    "tests/js/hevc_workbench.test.cjs",
+    "tests/js/operations.test.cjs"
+  ],
+  "suites": 4,
+  "exit_code": 0
+}

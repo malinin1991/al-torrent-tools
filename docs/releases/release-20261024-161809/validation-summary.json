@@ -1,0 +1,55 @@
+{
+  "ok": true,
+  "run_id": "de8ffd5a6b83",
+  "release": "release-20261024-161809",
+  "runtime_image": "registry.mageek.su/al-torrent-tools:release-20261024-161809",
+  "qa_image": "altt-release-qa:release-20261024-161809",
+  "expected_python_version": "3.15.1",
+  "source_files": 172,
+  "architectures": {
+    "arm64": {
+      "runtime": true,
+      "architecture": "aarch64",
+      "source_files": 172,
+      "build_time": "2026-10-24T16:18:09Z",
+      "git_sha": "5511358",
+      "python": "3.15.1",
+      "mediainfo": "26.10",
+      "native": true,
+      "http": true,
+      "migration": "0028_automatic_encoder",
+      "http_requests": 20
+    },
+    "amd64": {
+      "runtime": true,
+      "architecture": "x86_64",
+      "source_files": 172,
+      "build_time": "2026-10-24T16:18:09Z",
+      "git_sha": "5511358",
+      "python": "3.15.1",
+      "mediainfo": "26.10",
+      "native": false,
+      "http": true,
+      "migration": "0028_automatic_encoder",
+      "http_requests": 20
+    }
+  },
+  "qa_suite": "passed",
+  "qa_results": {
+    "tests": 1661,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 1660,
+    "duration_sec": 48.822,
+    "postgres_major": 16,
+    "platform": "linux/arm64"
+  },
+  "source_snapshot_unchanged": true,
+  "cleanup": {
+    "all_owned_containers_removed": true,
+    "all_owned_networks_removed": true,
+    "volumes_created": false
+  },
+  "finished_utc": "2026-10-24T16:23:10.277410+00:00"
+}

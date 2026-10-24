@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "run_id": "de8ffd5a6b83",
+  "qa_image": "altt-release-qa:release-20261024-161809",
+  "qa_suite": "passed",
+  "qa_results": {
+    "tests": 1661,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 1660,
+    "duration_sec": 48.822,
+    "postgres_major": 16,
+    "platform": "linux/arm64"
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "buildx.build.provenance/linux/amd64": {
+    "builder": {
+      "id": ""
+    },
+    "buildType": "https://mobyproject.org/buildkit@v1",
+    "materials": [
+      {
+        "uri": "pkg:docker/python@3.15.1-slim-trixie?platform=linux%2Famd64",
+        "digest": {
+          "sha256": "533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51"
+        }
+      }
+    ],
+    "invocation": {
+      "configSource": {
+        "entryPoint": "Dockerfile"
+      },
+      "parameters": {
+        "frontend": "dockerfile.v0",
+        "args": {
+          "build-arg:BUILD_TIME": "2026-10-24T16:18:09Z",
+          "build-arg:GIT_SHA": "5511358",
+          "target": "runtime"
+        },
+        "locals": [
+          {
+            "name": "context"
+          },
+          {
+            "name": "dockerfile"
+          }
+        ],
+        "root": {
+          "configSource": {
+            "path": "Dockerfile"
+          },
+          "request": {
+            "args": {
+              "build-arg:BUILD_TIME": "2026-10-24T16:18:09Z",
+              "build-arg:GIT_SHA": "5511358",
+              "target": "runtime"
+            }
+          }
+        },
+        "compatibilityVersion": 20
+      },
+      "environment": {
+        "dockerfileVersion": "1.24.0",
+        "platform": "linux/arm64"
+      }
+    }
+  },
+  "buildx.build.provenance/linux/arm64": {
+    "builder": {
+      "id": ""
+    },
+    "buildType": "https://mobyproject.org/buildkit@v1",
+    "materials": [
+      {
+        "uri": "pkg:docker/python@3.15.1-slim-trixie?platform=linux%2Farm64",
+        "digest": {
+          "sha256": "533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51"
+        }
+      }
+    ],
+    "invocation": {
+      "configSource": {
+        "entryPoint": "Dockerfile"
+      },
+      "parameters": {
+        "frontend": "dockerfile.v0",
+        "args": {
+          "build-arg:BUILD_TIME": "2026-10-24T16:18:09Z",
+          "build-arg:GIT_SHA": "5511358",
+          "target": "runtime"
+        },
+        "locals": [
+          {
+            "name": "context"
+          },
+          {
+            "name": "dockerfile"
+          }
+        ],
+        "root": {
+          "configSource": {
+            "path": "Dockerfile"
+          },
+          "request": {
+            "args": {
+              "build-arg:BUILD_TIME": "2026-10-24T16:18:09Z",
+              "build-arg:GIT_SHA": "5511358",
+              "target": "runtime"
+            }
+          }
+        },
+        "compatibilityVersion": 20
+      },
+      "environment": {
+        "dockerfileVersion": "1.24.0",
+        "platform": "linux/arm64"
+      }
+    }
+  },
+  "buildx.build.ref": "container/container0/0by9x4bxeyzwkotjmyqpovtwy",
+  "containerimage.descriptor": {
+    "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+    "digest": "sha256:8f817f7647537dca99aa35b389d9a012b7cd4105c49affb81076b0444a77a1f6",
+    "size": 685
+  },
+  "containerimage.digest": "sha256:8f817f7647537dca99aa35b389d9a012b7cd4105c49affb81076b0444a77a1f6",
+  "image.name": "registry.mageek.su/al-torrent-tools:release-20261024-161809"
+}

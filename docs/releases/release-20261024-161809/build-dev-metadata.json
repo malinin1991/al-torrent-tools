@@ -1,0 +1,69 @@
+{
+  "buildx.build.provenance": {
+    "builder": {
+      "id": ""
+    },
+    "buildType": "https://mobyproject.org/buildkit@v1",
+    "materials": [
+      {
+        "uri": "pkg:docker/python@3.15.1-slim-trixie?platform=linux%2Farm64",
+        "digest": {
+          "sha256": "533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51"
+        }
+      }
+    ],
+    "invocation": {
+      "configSource": {
+        "entryPoint": "Dockerfile"
+      },
+      "parameters": {
+        "frontend": "dockerfile.v0",
+        "args": {
+          "build-arg:BUILD_TIME": "2026-10-24T16:18:09Z",
+          "build-arg:GIT_SHA": "5511358",
+          "target": "development"
+        },
+        "locals": [
+          {
+            "name": "context"
+          },
+          {
+            "name": "dockerfile"
+          }
+        ],
+        "root": {
+          "configSource": {
+            "path": "Dockerfile"
+          },
+          "request": {
+            "args": {
+              "build-arg:BUILD_TIME": "2026-10-24T16:18:09Z",
+              "build-arg:GIT_SHA": "5511358",
+              "target": "development"
+            }
+          }
+        },
+        "compatibilityVersion": 20
+      },
+      "environment": {
+        "dockerfileVersion": "1.24.0",
+        "platform": "linux/arm64"
+      }
+    }
+  },
+  "buildx.build.ref": "container/container0/8jexrdvsq1k0jvfbu8kityl7o",
+  "containerimage.descriptor": {
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "digest": "sha256:8e66e4c338e2ddf40be64fded439954ee32fa3d90e225f269516ad1e45daa36e",
+    "size": 2762,
+    "annotations": {
+      "org.opencontainers.image.created": "2026-10-24T16:21:17Z"
+    },
+    "platform": {
+      "architecture": "arm64",
+      "os": "linux"
+    }
+  },
+  "containerimage.digest": "sha256:8e66e4c338e2ddf40be64fded439954ee32fa3d90e225f269516ad1e45daa36e",
+  "image.name": "docker.io/library/altt-release-qa:release-20261024-161809"
+}

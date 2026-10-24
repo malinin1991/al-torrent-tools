@@ -1,0 +1,23 @@
+{
+  "release": "release-20261024-161809",
+  "root": "/private/tmp/altt-publish-release-20261024-161809",
+  "build_time_utc": "2026-10-24T16:18:09Z",
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "source": "/private/tmp/altt-publish-release-20261024-161809/backend",
+  "git_commit": "551135863cc0ccc1879220b386e6b4e9acef5055",
+  "git_sha": "5511358",
+  "working_tree_included": false,
+  "platforms": [
+    "linux/arm64",
+    "linux/amd64"
+  ],
+  "builder": "container",
+  "runtime_image": "registry.mageek.su/al-torrent-tools:release-20261024-161809",
+  "qa_image": "altt-release-qa:release-20261024-161809",
+  "source_files": 280,
+  "source_manifest_sha256": "1d1e01f5a9551f3b2c91d9c1d2ee7509f46b2cdf541e61bb0deb9ddc9d3cb09d",
+  "previous_latest_digest": "sha256:4b971d26731d1dc14b87e0cdbb821c452846c2114843bd1c934b66dcdb6bbcde",
+  "python_version": "3.15.1",
+  "base_image": "docker.io/library/python:3.15.1-slim-trixie",
+  "base_image_digest": "sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51"
+}
