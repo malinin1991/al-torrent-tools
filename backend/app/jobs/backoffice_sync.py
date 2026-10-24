@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.models import JobLog, Release, TorrentArchive
 from app.logging_filters import redact_secrets
-from app.providers.anilibria.backoffice import BackofficeError, resource_id
+from app.providers.anilibria.backoffice import BackofficeClient, BackofficeError, resource_id
 from app.providers.anilibria.client import AniLibriaNotFoundError
 from app.providers.anilibria.sources import BackofficeReleaseSkipped, ReleaseSourceClient, SourceCheckDeferred
 from app.services.job_runner import JobStopRequested, is_stop_requested
@@ -38,8 +38,11 @@ def _catalog_item_is_visible(item):
 
     # Public API omits Nova-only is_hidden even when explicitly requested.
     # An explicit null/malformed flag remains inconclusive, unlike omission.
+    # Geo must be explicitly false: an ID in the catalogue can still have a
+    # region-restricted card that requires Nova from this host.
     return (parse_api_bool(item.get("is_blocked_by_copyrights")) is False
-            and ("is_hidden" not in item or parse_api_bool(item["is_hidden"]) is False))
+            and ("is_hidden" not in item or parse_api_bool(item["is_hidden"]) is False)
+            and parse_api_bool(item.get("is_blocked_by_geo")) is False)
 
 
 async def _catalog_visible_hint(public, *, check_stop, log, timeout_sec=30.0):
@@ -60,7 +63,7 @@ async def _catalog_visible_hint(public, *, check_stop, log, timeout_sec=30.0):
                 check_stop()
                 payload = await public.catalog_releases(
                     page=page, limit=50,
-                    include=["id", "is_hidden", "is_blocked_by_copyrights"],
+                    include=["id", "is_hidden", "is_blocked_by_copyrights", "is_blocked_by_geo"],
                 )
                 check_stop()
                 items, total_pages = scan.accept(payload, page)
@@ -80,6 +83,23 @@ async def _catalog_visible_hint(public, *, check_stop, log, timeout_sec=30.0):
         return None
 
 
+def _index_geo_blocked(resource):
+    """Nova geo is a country multiselect; unknown fields cannot prove absence."""
+    fields = resource.get("fields")
+    if not isinstance(fields, list):
+        return None
+    geo = [item for item in fields if isinstance(item, dict)
+           and item.get("attribute") == "is_blocked_by_geo"]
+    if len(geo) != 1 or geo[0].get("component") != "multiselect-field":
+        return None
+    countries = geo[0].get("value")
+    if countries is None:
+        return False
+    if isinstance(countries, list) and all(isinstance(country, str) and country.strip() for country in countries):
+        return bool(countries)
+    return None
+
+
 def _index_candidate(resource):
     """Отсекаем только явно обычные карточки; неполные поля проверяем детально."""
     from app.services.torrent_qb_meta import parse_api_bool
@@ -89,7 +109,8 @@ def _index_candidate(resource):
     flags = {f.get("attribute"): parse_api_bool(f.get("value")) for f in fields
              if isinstance(f, dict) and f.get("component") == "boolean-field"
              and f.get("attribute") in ("is_hidden", "is_blocked_by_copyrights")}
-    return not all(flags.get(key) is False for key in ("is_hidden", "is_blocked_by_copyrights"))
+    return not (all(flags.get(key) is False for key in ("is_hidden", "is_blocked_by_copyrights"))
+                and _index_geo_blocked(resource) is False)
 
 
 @sync_job
@@ -108,8 +129,12 @@ async def run_backoffice_sync(db, job_id: int, params: dict):
             raise JobStopRequested()
     # Начало baseline фиксируется до сети: повтор после сбоя не меняет границу.
     initial = not get_setting_value(db, "backoffice_baseline_completed_at", "")
+    geo_initial = not get_setting_value(db, "backoffice_geo_baseline_completed_at", "")
     if initial and not get_setting_value(db, "backoffice_baseline_started_at", ""):
         upsert_setting(db, "backoffice_baseline_started_at", utcnow().isoformat())
+        db.commit()
+    if geo_initial and not get_setting_value(db, "backoffice_geo_baseline_started_at", ""):
+        upsert_setting(db, "backoffice_geo_baseline_started_at", utcnow().isoformat())
         db.commit()
     previously_known = set(db.scalars(select(TorrentArchive.release_id).distinct()).all())
     previous_offsite = set(db.scalars(select(Release.release_id).where(Release.source == "backoffice")).all())
@@ -127,28 +152,33 @@ async def run_backoffice_sync(db, job_id: int, params: dict):
     resources = await client.backoffice.list_resources("anime-releases", on_page=on_page)
     ids = {resource_id(item) for item in resources}
     candidate_ids = {resource_id(item) for item in resources if _index_candidate(item)} | watched
+    geo_ids = {resource_id(item) for item in resources if _index_geo_blocked(item) is True}
     if candidate_ids - watched:
         visible = await _catalog_visible_hint(
             client.public, check_stop=check_stop, log=log, timeout_sec=_CATALOG_HINT_TIMEOUT_SEC,
         )
         if visible is not None:
             before = len(candidate_ids)
-            candidate_ids = (candidate_ids - visible) | watched
+            # A catalogue may list a geo-restricted ID whose card is 404 from
+            # this host. Confirm those cards individually before choosing site.
+            candidate_ids = (candidate_ids - visible) | watched | geo_ids
             log(f"Backoffice: публичный каталог исключил обычных site-релизов={before - len(candidate_ids)}")
     candidates = sorted(candidate_ids)
     processor = TorrentProcessor(db=db, job_id=job_id, client=client)
     errors = processed = skipped = deferred = retained = checked = 0
     pause_every = max(1, int(get_setting_value(db, "scrape_pause_every", str(settings.scrape_pause_every))))
     pause_sec = max(0, int(get_setting_value(db, "scrape_pause_sec", str(settings.scrape_pause_sec))))
-    log(f"Backoffice: индекс={len(ids)}, кандидатов={len(candidates)}, baseline={initial}")
+    log(f"Backoffice: индекс={len(ids)}, кандидатов={len(candidates)}, baseline={initial}, geo_baseline={geo_initial}")
     last_progress = None
 
     def progress(rid=None, *, force=False):
         nonlocal last_progress
         now = time.monotonic()
         if force or last_progress is None or now - last_progress >= _PROGRESS_INTERVAL_SEC:
+            cards = (f"; карточки Nova: прочитано={client.backoffice.torrent_detail_reads}, "
+                     f"из кэша={client.backoffice.torrent_cache_hits}") if isinstance(client.backoffice, BackofficeClient) else ""
             log(f"Backoffice: проверено {checked}/{len(candidates)}, текущий релиз={rid if rid is not None else '-'}; "
-                f"обработано={processed}, пропущено={skipped}, отложено={deferred}, ошибок={errors}")
+                f"обработано={processed}, пропущено={skipped}, отложено={deferred}, ошибок={errors}{cards}")
             last_progress = now
 
     with client.backoffice_scan(watched):
@@ -158,7 +188,8 @@ async def run_backoffice_sync(db, job_id: int, params: dict):
             try:
                 # Выбор/сохранение источника выполняется внутри release_lock
                 # processor. Не пишем карточку при prefetch до блокировки.
-                part = await processor.process_release(release_id=rid, refresh_qb_meta=True)
+                options = {"force_qb_load": True} if params.get("force_qb_load") else {}
+                part = await processor.process_release(release_id=rid, refresh_qb_meta=True, **options)
                 outcome.release(rid, part)
                 if part.get("errors", 0):
                     errors += 1
@@ -184,8 +215,12 @@ async def run_backoffice_sync(db, job_id: int, params: dict):
             except Exception as exc:
                 db.rollback()
                 errors += 1
+                payload_baseline = bool(client._releases.get(rid, {}).get("_notification_baseline"))
                 outcome.failure(release_id=rid, source="backoffice", message=exc,
-                    retry_params={"notification_baseline": initial and (rid not in previously_known or rid in baseline_releases)})
+                    retry_params={"force_qb_load": bool(params.get("force_qb_load")),
+                                  "notification_baseline": payload_baseline or (
+                                      (initial or (geo_initial and rid in geo_ids))
+                                      and (rid not in previously_known or rid in baseline_releases))})
                 detail = f": {redact_secrets(str(exc))}" if isinstance(exc, BackofficeError) else ""
                 log(f"Backoffice: релиз {rid}: {type(exc).__name__}{detail}; повтор в следующем обходе", "warning")
             checked = index
@@ -199,7 +234,11 @@ async def run_backoffice_sync(db, job_id: int, params: dict):
     if deferred:
         outcome.failure(operation="source_check", code="source_check_deferred", retryable=False,
             message=f"Проверка источника отложена для {deferred} релизов: сайт недоступен; последние подтверждённые источники и архивы сохранены")
-    if initial and errors == 0 and not deferred and not outcome.failures:
-        upsert_setting(db, "backoffice_baseline_completed_at", utcnow().isoformat())
-        db.commit()
+    if errors == 0 and not deferred and not outcome.failures:
+        if initial:
+            upsert_setting(db, "backoffice_baseline_completed_at", utcnow().isoformat())
+        if geo_initial:
+            upsert_setting(db, "backoffice_geo_baseline_completed_at", utcnow().isoformat())
+        if initial or geo_initial:
+            db.commit()
     log(f"Backoffice: обработано={processed}, ошибок={errors}, источник сохранён={retained}, отложено={deferred}")

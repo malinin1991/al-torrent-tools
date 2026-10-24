@@ -310,6 +310,7 @@ def test_nova_index_only_excludes_releases_with_both_confirmed_false_flags(
     fields = [{"attribute": "is_hidden", "component": "boolean-field", "value": False}]
     if copyright_value is not None:
         fields.append({"attribute": "is_blocked_by_copyrights", "component": "boolean-field", "value": copyright_value})
+    fields.append({"attribute": "is_blocked_by_geo", "component": "multiselect-field", "value": []})
     client.backoffice.list_resources.return_value[0]["fields"] = fields
     client.public.get_release.side_effect = AniLibriaNotFoundError()
     run = configure_job(client)
@@ -400,3 +401,44 @@ def test_job_outcome_renders_discovery_note_without_a_release_prefix():
     assert f"<li>{message}</li>" in html
     assert "Релиз :" not in html
     assert "Релиз None" not in html
+
+
+def test_sparse_geo_index_failure_preserves_initial_baseline_for_delayed_retry(
+    db, make_client, configure_job,
+):
+    from app.services.sync_outcomes import build_retry_params
+
+    db.add(Setting(key="backoffice_baseline_completed_at", value="global-baseline-completed"))
+    db.commit()
+    client = make_client()
+    # The real Nova index can omit eligibility fields even though its detail
+    # proves that this is an initial import of the newly supported geo scope.
+    assert client.backoffice.list_resources.return_value == [{"id": {"value": 1}, "fields": []}]
+    client.test_admin_payloads[1].update(
+        is_hidden=False, is_blocked_by_copyrights=False, is_blocked_by_geo=True,
+    )
+    client.public.get_release.side_effect = AniLibriaNotFoundError()
+    actual_baselines = []
+
+    async def fail_torrent_list(release_id):
+        actual_baselines.append(client._releases[release_id].get("_notification_baseline"))
+        raise BackofficeError("Backoffice: полный список торрентов временно недоступен")
+
+    client.backoffice.get_torrents_for_release.side_effect = fail_torrent_list
+    run = configure_job(client)
+
+    with pytest.raises(JobPartialFailure):
+        asyncio.run(run.job.run_backoffice_sync(db, 1, {}))
+
+    assert actual_baselines == [True]
+    failure = db.scalar(select(JobSyncFailure).where(JobSyncFailure.job_id == 1))
+    assert failure.retry_params["notification_baseline"] is True
+    assert not get_setting_value(db, "backoffice_geo_baseline_completed_at")
+
+    # A later successful scan may close the geo baseline before an explicit
+    # retry of this failure; its saved provenance must still suppress notices.
+    db.get(Job, 1).status = "failed"
+    db.add(Setting(key="backoffice_geo_baseline_completed_at", value="later-geo-baseline-completed"))
+    db.commit()
+    targets = build_retry_params(db, 1)["targets"]
+    assert len(targets) == 1 and targets[0]["notification_baseline"] is True

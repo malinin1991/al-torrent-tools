@@ -120,11 +120,19 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
         if is_stop_requested(db, job_id):
             _add_log(db, job_id, "Full sync: остановка по запросу", "warning")
             raise JobStopRequested()
-        payload = await al_client.catalog_releases(
-            page=page,
-            limit=catalog_limit,
-            include=["id", "alias", "names", "season", "updated_at", "fresh_at"],
-        )
+        try:
+            payload = await al_client.catalog_releases(
+                page=page,
+                limit=catalog_limit,
+                include=["id", "alias", "names", "season", "updated_at", "fresh_at"],
+            )
+        except JobStopRequested:
+            raise
+        except Exception as exc:
+            current_outcome(db, job_id).failure(source="site", operation="catalog",
+                code="catalog_unavailable", message=exc, retryable=False)
+            _add_log(db, job_id, f"Full sync: публичный каталог недоступен ({type(exc).__name__}); переходим к обходу админки", "warning")
+            break
         releases, total_pages = scan.accept(payload, page)
         if total_releases is None:
             total_releases = _extract_total_releases(payload)
@@ -212,7 +220,8 @@ async def run_full_sync(db: Session, job_id: int, params: dict[str, Any]) -> Non
     if isinstance(al_client, ReleaseSourceClient):
         from app.jobs.backoffice_sync import run_backoffice_sync
         from app.db.models import Release
-        await run_backoffice_sync(db, job_id, {})
+        _add_log(db, job_id, "Full sync: обход админки — скрытые, copyright-blocked и геоблокированные релизы")
+        await run_backoffice_sync(db, job_id, {"force_qb_load": True} if force_qb_load else {})
         preserve_release_ids = set(db.scalars(select(Release.release_id).where(Release.source == "backoffice")).all())
     if not scan.complete or current_outcome(db, job_id).failures:
         _add_log(db, job_id, "Full sync: пропуск глобального api_present sweep — есть ошибки обхода", "warning")

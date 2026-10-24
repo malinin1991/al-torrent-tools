@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
+from datetime import datetime
+import hashlib
 from html.parser import HTMLParser
+import json
 import re
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -171,6 +175,109 @@ def normalize_torrent(resource: dict) -> dict[str, Any]:
     return result
 
 
+def _torrent_index_fields(fields):
+    """Read only index field values, including action forms and stacked lines."""
+    for item in fields if isinstance(fields, list) else []:
+        if not isinstance(item, dict):
+            continue
+        yield item
+        yield from _torrent_index_fields(item.get("lines"))
+        action = item.get("action")
+        if isinstance(action, dict):
+            yield from _torrent_index_fields(action.get("fields"))
+
+
+def _index_positive_id(value):
+    if type(value) is int:
+        return value if value > 0 else None
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    return None
+
+
+def torrent_index_snapshot(resource: dict, release_id: int) -> dict[str, Any] | None:
+    """Stable observable index values, or None when a detail GET is necessary.
+
+    Real Nova indexes omit hash. updated_at is an upload timestamp, not an
+    arbitrary metadata revision: unchanged snapshots still require the cache's
+    periodic detail revalidation for invisible metadata/hash changes.
+    """
+    if not isinstance(resource, dict):
+        return None
+    try:
+        torrent_id = _index_positive_id(_raw_resource_id(resource))
+    except BackofficeError:
+        return None
+    expected_release = _index_positive_id(release_id)
+    if torrent_id is None or expected_release is None:
+        return None
+    fields = list(_torrent_index_fields(resource.get("fields")))
+
+    def single(attribute, component=None, name=None):
+        found = [item for item in fields if item.get("attribute") == attribute
+                 and (component is None or item.get("component") == component)
+                 and (name is None or item.get("name") == name)]
+        return found[0] if len(found) == 1 else None
+
+    release = single("release", "belongs-to-field")
+    if release is None or _index_positive_id(release.get("belongsToId")) != expected_release:
+        return None
+    title = resource.get("title")
+    description = single("description", "text-field")
+    upload = single("updated_at", "date-time-field")
+    size = single("ComputedField", "text-field", "Размер торрента")
+    if not isinstance(title, str) or not title.strip():
+        return None
+    if description is None or not isinstance(description.get("value"), str):
+        return None
+    if upload is None or not isinstance(upload.get("value"), str):
+        return None
+    stamp = upload["value"].strip()
+    try:
+        if "T" not in stamp:
+            return None
+        datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if size is None or not isinstance(size.get("value"), str):
+        return None
+    size_label = size["value"].strip()
+    if not re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:B|[KMGTPE]i?B)", size_label, re.IGNORECASE):
+        return None
+    result = {"torrent_id": torrent_id, "release_id": expected_release,
+              "title": title.strip(), "updated_at": stamp, "size_label": size_label,
+              "description": description["value"]}
+    hashes = [item for item in fields if item.get("attribute") in {"hash", "info_hash"}]
+    if hashes:
+        raw_hashes = [str(item.get("value") or "").strip().lower() for item in hashes]
+        if any(not re.fullmatch(r"[a-f0-9]{40}", value) for value in raw_hashes) or len(set(raw_hashes)) != 1:
+            return None
+        result["hash"] = raw_hashes[0]
+    return result
+
+
+def torrent_index_fingerprint(resource: dict, release_id: int) -> str | None:
+    snapshot = torrent_index_snapshot(resource, release_id)
+    if snapshot is None:
+        return None
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def torrent_index_peer_counts(resource: dict) -> dict[str, int]:
+    counts = {}
+    for item in _torrent_index_fields(resource.get("fields")):
+        key, value = item.get("attribute"), item.get("value")
+        if key not in {"seeders", "leechers"}:
+            continue
+        if type(value) is int and value >= 0:
+            counts[key] = value
+        elif isinstance(value, str) and value.isascii() and value.isdecimal():
+            counts[key] = int(value)
+    return counts
+
+
 class BackofficeClient:
     def __init__(self, url: str, login: str, password: str, *, retries: int = 3,
                  retry_delay_sec: float = .75, transport=None):
@@ -185,6 +292,8 @@ class BackofficeClient:
         self._retries = max(1, retries)
         self._delay = retry_delay_sec
         self._transport = transport
+        self.torrent_cache_hits = 0
+        self.torrent_detail_reads = 0
 
     async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
         # Нет универсального публичного request API; защита также на транспортном уровне.
@@ -326,15 +435,31 @@ class BackofficeClient:
             raise BackofficeError("Backoffice: ID торрента в ответе не совпал")
         return result
 
-    async def get_torrents_for_release(self, release_id: int) -> list[dict]:
+    async def get_torrents_for_release(self, release_id: int, *, cache=None) -> list[dict]:
         resources = await self.list_resources("anime-torrents", viaResource="anime-releases",
                                              viaResourceId=int(release_id), viaRelationship="torrents")
-        result = []
+        result, remember = [], []
         for resource in resources:
-            torrent = await self.get_torrent(resource_id(resource))
+            torrent_id = resource_id(resource)
+            cached = cache.lookup(resource, int(release_id)) if cache is not None else None
+            valid_cached = (isinstance(cached, dict) and type(cached.get("id")) is int
+                            and cached["id"] == torrent_id and cached.get("release_id") == int(release_id)
+                            and isinstance(cached.get("hash"), str)
+                            and re.fullmatch(r"[a-f0-9]{40}", cached["hash"]))
+            if valid_cached:
+                self.torrent_cache_hits += 1
+                torrent = deepcopy(cached)
+                torrent.update(torrent_index_peer_counts(resource))
+            else:
+                torrent = await self.get_torrent(torrent_id)
+                self.torrent_detail_reads += 1
+                if cache is not None:
+                    remember.append((resource, deepcopy(torrent)))
             if torrent.get("release_id") != int(release_id):
                 raise BackofficeError("Backoffice: торрент принадлежит другому релизу")
             result.append(torrent)
+        for resource, torrent in remember:
+            cache.remember(resource, int(release_id), torrent)
         return result
 
     async def download_torrent_file(self, torrent_id: int) -> bytes:

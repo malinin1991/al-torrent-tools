@@ -13,8 +13,15 @@ from app.providers.anilibria.client import AniLibriaClient, AniLibriaNotFoundErr
 
 
 def eligible(payload: dict) -> bool:
+    """Public flags that force the backoffice source even for an HTTP 200 card."""
     from app.services.torrent_qb_meta import parse_api_bool
     return any(parse_api_bool(payload.get(k)) is True for k in ("is_hidden", "is_blocked_by_copyrights"))
+
+
+def backoffice_eligible(payload: dict) -> bool:
+    """Nova may also supply a geo-blocked release missing from the public API."""
+    from app.services.torrent_qb_meta import parse_api_bool
+    return eligible(payload) or parse_api_bool(payload.get("is_blocked_by_geo")) is True
 
 
 class SourceCheckDeferred(RuntimeError):
@@ -58,7 +65,10 @@ class ReleaseSourceClient:
         payload = dict(payload)
         if self.db is not None:
             from app.services.runtime_settings import get_setting_value
-            if not get_setting_value(self.db, "backoffice_baseline_completed_at", ""):
+            global_initial = not get_setting_value(self.db, "backoffice_baseline_completed_at", "")
+            geo_initial = (backoffice_eligible(payload) and not eligible(payload)
+                           and not get_setting_value(self.db, "backoffice_geo_baseline_completed_at", ""))
+            if global_initial or geo_initial:
                 archives = self.db.scalars(select(TorrentArchive).where(TorrentArchive.release_id == payload["id"])).all()
                 if not archives or any(a.notification_baseline for a in archives):
                     payload["_notification_baseline"] = True
@@ -94,7 +104,7 @@ class ReleaseSourceClient:
             admin = await self.backoffice.get_release(rid)
         except (RuntimeError, httpx.HTTPError, ValueError) as exc:
             admin_error = exc
-        if admin is not None and not eligible(admin) and not watched:
+        if admin is not None and not backoffice_eligible(admin) and not watched:
             raise BackofficeReleaseSkipped()
         # Одна недоступность не должна умножать timeout/retries на сотни релизов.
         # Новый обход снова начинает с проверки публичного API.
@@ -116,7 +126,7 @@ class ReleaseSourceClient:
             return payload
         if admin_error is not None:
             raise admin_error
-        if not eligible(admin):
+        if not backoffice_eligible(admin):
             raise BackofficeReleaseSkipped()
         return self._remember_backoffice(admin)
 
@@ -172,7 +182,7 @@ class ReleaseSourceClient:
             payload = matches[0]
         else:
             payload = await self.backoffice.get_release(rid)
-        if not eligible(payload):
+        if not backoffice_eligible(payload):
             raise AniLibriaNotFoundError("Релиз не доступен на сайте и не скрыт/заблокирован в админке")
         return self._remember_backoffice(payload)
 
@@ -192,7 +202,12 @@ class ReleaseSourceClient:
         payload = await self.get_release(rid)
         if rid not in self._torrents:
             if payload["_source"] == "backoffice":
-                torrents = await self.backoffice.get_torrents_for_release(rid)
+                if self._backoffice_watched is not None and self.db is not None and isinstance(self.backoffice, BackofficeClient):
+                    from app.services.backoffice_torrent_cache import BackofficeTorrentCacheStore
+                    cache = BackofficeTorrentCacheStore(self.db, self.backoffice.base_url)
+                    torrents = await self.backoffice.get_torrents_for_release(rid, cache=cache)
+                else:
+                    torrents = await self.backoffice.get_torrents_for_release(rid)
             else:
                 torrents = await self.public.get_torrents_for_release(rid)
                 if isinstance(torrents, dict):

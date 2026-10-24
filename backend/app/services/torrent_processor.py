@@ -1219,8 +1219,8 @@ class TorrentProcessor:
             self._active_release_id = release_id
             try:
                 yield
-                from app.services.release_source import apply_release_policy, tags_for_release
-                if tags_for_release(self._db, release_id):
+                from app.services.release_source import apply_release_policy, release_is_offsite, tags_for_release
+                if tags_for_release(self._db, release_id) or release_is_offsite(self._db, release_id):
                     options = {}
                     if self._retry_targets is not None:
                         options["torrent_targets"] = self._policy_targets or set()

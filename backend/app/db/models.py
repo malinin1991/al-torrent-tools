@@ -350,6 +350,19 @@ class TorrentArchive(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class BackofficeTorrentCache(Base):
+    """Validated Nova detail cache; independent of archive/version/SLA state."""
+    __tablename__ = "backoffice_torrent_cache"
+    provider_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    release_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    torrent_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    index_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+
 class TorrentFile(Base):
     """Ожидаемый состав файлов из .torrent + приоритеты qB master."""
 

@@ -40,6 +40,7 @@ def db():
 
 
 def catalog_pages(items, *, per_page=50):
+    items = [{"is_blocked_by_geo": False, **item} for item in items]
     total = len(items)
     pages = max(1, (total + per_page - 1) // per_page)
     return [{
@@ -54,8 +55,9 @@ def catalog_pages(items, *, per_page=50):
 
 @pytest.fixture
 def make_run(db, monkeypatch):
-    def make(*, ids=(1, 2), pages=None, watched=(), processor=None):
-        resources = [{"id": {"value": rid}, "fields": []} for rid in ids]
+    def make(*, ids=(1, 2), pages=None, watched=(), processor=None, resources=None):
+        if resources is None:
+            resources = [{"id": {"value": rid}, "fields": []} for rid in ids]
 
         async def read_index(resource, *, on_page):
             assert resource == "anime-releases"
@@ -98,7 +100,7 @@ def test_complete_real_public_shape_reduces_2425_candidates_to_576(db, make_run)
     for page, call in enumerate(run.client.public.catalog_releases.await_args_list, 1):
         assert call.kwargs == {
             "page": page, "limit": 50,
-            "include": ["id", "is_hidden", "is_blocked_by_copyrights"],
+            "include": ["id", "is_hidden", "is_blocked_by_copyrights", "is_blocked_by_geo"],
         }
     messages = log_messages(db, "info")
     assert any("страница 10/37" in message for message in messages)
@@ -118,6 +120,10 @@ def test_complete_real_public_shape_reduces_2425_candidates_to_576(db, make_run)
     ({"id": 1, "is_blocked_by_copyrights": None}, False),
     ({"id": 1, "is_blocked_by_copyrights": "invalid"}, False),
     ({"id": 1, "is_blocked_by_copyrights": True}, False),
+    ({"id": 1, "is_blocked_by_copyrights": False, "is_blocked_by_geo": False}, True),
+    ({"id": 1, "is_blocked_by_copyrights": False, "is_blocked_by_geo": True}, False),
+    ({"id": 1, "is_blocked_by_copyrights": False, "is_blocked_by_geo": None}, False),
+    ({"id": 1, "is_blocked_by_copyrights": False, "is_blocked_by_geo": "invalid"}, False),
 ])
 def test_only_confirmed_ordinary_public_shapes_are_pruned(db, make_run, item, pruned):
     run = make_run(ids=(1,), pages=catalog_pages([item]))
@@ -197,6 +203,52 @@ def test_empty_or_only_watched_candidates_skip_public_catalog(db, make_run, ids,
     asyncio.run(job.run_backoffice_sync(db, 1, {}))
 
     run.client.public.catalog_releases.assert_not_awaited()
+
+
+def geo_resource(value, *, include_geo=True, component="multiselect-field"):
+    fields = [{"attribute": key, "component": "boolean-field", "value": False}
+              for key in ("is_hidden", "is_blocked_by_copyrights")]
+    if include_geo:
+        fields.append({"attribute": "is_blocked_by_geo", "component": component, "value": value})
+    return {"id": {"value": 1}, "fields": fields}
+
+
+@pytest.mark.parametrize("value,include_geo,component,candidate", [
+    (None, True, "multiselect-field", False),
+    ([], True, "multiselect-field", False),
+    (["RU"], True, "multiselect-field", True),
+    (["RU", "US"], True, "multiselect-field", True),
+    (None, False, "multiselect-field", True),
+    (False, True, "boolean-field", True),
+    ([None], True, "multiselect-field", True),
+    ([""], True, "multiselect-field", True),
+])
+def test_nova_index_requires_confirmed_empty_geo_before_excluding_ordinary_release(
+    db, make_run, value, include_geo, component, candidate,
+):
+    run = make_run(resources=[geo_resource(value, include_geo=include_geo, component=component)])
+    asyncio.run(job.run_backoffice_sync(db, 1, {}))
+    assert run.processor.await_count == int(candidate)
+    assert run.client.public.catalog_releases.await_count == int(candidate)
+
+
+def test_explicit_nova_geo_candidate_survives_ordinary_public_catalog_hint(db, make_run):
+    # Listing an ID does not guarantee that its card is available from this host.
+    run = make_run(resources=[geo_resource(["RU"])], pages=catalog_pages([
+        {"id": 1, "is_blocked_by_copyrights": False, "is_blocked_by_geo": False},
+    ]))
+    asyncio.run(job.run_backoffice_sync(db, 1, {}))
+    run.processor.assert_awaited_once_with(release_id=1, refresh_qb_meta=True)
+    assert get_setting_value(db, "backoffice_geo_baseline_started_at")
+    assert get_setting_value(db, "backoffice_geo_baseline_completed_at")
+
+
+def test_sparse_nova_index_is_not_pruned_when_public_catalog_omits_geo(db, make_run):
+    pages = catalog_pages([{"id": 1, "is_blocked_by_copyrights": False}])
+    pages[0]["data"][0].pop("is_blocked_by_geo")
+    run = make_run(ids=(1,), pages=pages)
+    asyncio.run(job.run_backoffice_sync(db, 1, {}))
+    run.processor.assert_awaited_once_with(release_id=1, refresh_qb_meta=True)
 
 
 def test_pruning_does_not_refresh_release_source_or_modify_archive(db, make_run):

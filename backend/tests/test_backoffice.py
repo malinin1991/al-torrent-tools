@@ -418,10 +418,9 @@ def test_valid_primary_release_does_not_query_fallback_or_admin(monkeypatch):
     assert calls == ["primary.test"]
 
 
-def test_geo_only_admin_is_not_eligible():
-    client = source_client(AniLibriaNotFoundError(), {"id": 1, "is_blocked_by_geo": True})
-    with pytest.raises(AniLibriaNotFoundError):
-        asyncio.run(client.get_release(1))
+def test_geo_only_admin_is_eligible_after_confirmed_public_not_found():
+    client = source_client(AniLibriaNotFoundError(), {"id": 1, "_source": "backoffice", "is_blocked_by_geo": True})
+    assert asyncio.run(client.get_release(1))["_source"] == "backoffice"
 
 
 def test_soft_deleted_detail_200_is_not_active():

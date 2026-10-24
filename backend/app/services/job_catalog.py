@@ -44,7 +44,7 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
     JobTypeDef(
         type="backoffice_sync",
         title="Backoffice sync",
-        description="Read-only обход скрытых / copyright-blocked релизов админки; сверка источников и меток qB.",
+        description="Read-only обход скрытых, copyright-blocked и геоблокированных релизов админки; сверка источников и меток qB.",
         interval_setting_key="backoffice_interval_sec",
         interval_default_sec=settings.backoffice_interval_sec,
     ),
@@ -52,7 +52,7 @@ JOB_TYPE_DEFS: tuple[JobTypeDef, ...] = (
         type="full_sync",
         title="Full sync",
         description=(
-            "Полный проход по каталогу/расписанию: сверка торрентов с API, api_present, архив. "
+            "Полный проход по публичному каталогу и админке (скрытые, copyright-blocked, геоблок): сверка торрентов, api_present, архив. "
             "Ежедневно в 08:00 по серверному времени (без force_qb_load). "
             "Опция force_qb_load — повторно загрузить .torrent на master и slave."
         ),

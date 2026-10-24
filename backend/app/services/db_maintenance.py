@@ -4,6 +4,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    BackofficeTorrentCache,
     FileChangeEvent,
     Job,
     JobLog,
@@ -37,6 +38,7 @@ def reset_operational_state(db: Session) -> dict[str, int]:
     db.execute(delete(TorrentPipeline))
     db.execute(delete(ReleaseCheckpoint))
     db.execute(delete(OngoingWatch))
+    db.execute(delete(BackofficeTorrentCache))
     db.commit()
 
     return {

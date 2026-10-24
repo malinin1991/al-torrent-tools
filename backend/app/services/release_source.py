@@ -32,9 +32,9 @@ def apply_release_policy(db, release_id: int, clients, passkey: str, *, log=None
                          torrent_targets=None, on_error=None):
     """Повторяем на каждом sync, включая done/историю; сбой qB не теряется в checkpoint."""
     tags = tags_for_release(db, release_id)
-    if not tags:
-        return
     offsite = release_is_offsite(db, release_id)
+    if not tags and not offsite:
+        return
     from app.services.torrent_archive import TorrentArchiveService
     service = TorrentArchiveService(db)
     archives = db.scalars(select(TorrentArchive).where(TorrentArchive.release_id == release_id)).all()
