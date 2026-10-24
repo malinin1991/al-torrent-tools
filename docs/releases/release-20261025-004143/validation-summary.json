@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "run_id": "f5b6a850dba8",
+  "release": "release-20261025-004143",
+  "runtime_image": "registry.mageek.su/al-torrent-tools@sha256:580c5ccebce1e5d566588605b45b1edc338a848bdb8382e17509778c0b9c9e8f",
+  "qa_image": null,
+  "expected_python_version": "3.15.1",
+  "source_files": 174,
+  "architectures": {
+    "arm64": {
+      "runtime": true,
+      "architecture": "aarch64",
+      "source_files": 174,
+      "build_time": "2026-10-24T17:41:43Z",
+      "git_sha": "84766ec",
+      "python": "3.15.1",
+      "mediainfo": "26.10",
+      "native": true,
+      "http": true,
+      "migration": "0029_backoffice_torrent_cache",
+      "http_requests": 22
+    },
+    "amd64": {
+      "runtime": true,
+      "architecture": "x86_64",
+      "source_files": 174,
+      "build_time": "2026-10-24T17:41:43Z",
+      "git_sha": "84766ec",
+      "python": "3.15.1",
+      "mediainfo": "26.10",
+      "native": false,
+      "http": true,
+      "migration": "0029_backoffice_torrent_cache",
+      "http_requests": 22
+    }
+  },
+  "qa_suite": "passed",
+  "qa_results": {
+    "tests": 1770,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 1769,
+    "duration_sec": 44.301
+  },
+  "qa_evidence": {
+    "path": "/private/tmp/altt-geo-qa-20261024-172714-final/validation",
+    "runtime_source_manifest_matches": true,
+    "reused_existing_run": true
+  },
+  "source_snapshot_unchanged": true,
+  "full_source_files": 288,
+  "full_source_snapshot_unchanged": true,
+  "cleanup": {
+    "all_owned_containers_removed": true,
+    "all_owned_networks_removed": true,
+    "volumes_created": false
+  },
+  "finished_utc": "2026-10-24T17:43:32.680825+00:00"
+}

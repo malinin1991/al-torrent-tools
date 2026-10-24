@@ -1,0 +1,23 @@
+[
+  "docker",
+  "buildx",
+  "build",
+  "--builder",
+  "container",
+  "--target",
+  "runtime",
+  "--platform",
+  "linux/arm64,linux/amd64",
+  "--provenance=false",
+  "--sbom=false",
+  "--build-arg",
+  "BUILD_TIME=2026-10-24T17:41:43Z",
+  "--build-arg",
+  "GIT_SHA=84766ec",
+  "--metadata-file",
+  "/private/tmp/altt-publish-release-20261025-004143/buildx-metadata.json",
+  "--push",
+  "-t",
+  "registry.mageek.su/al-torrent-tools:release-20261025-004143",
+  "/private/tmp/altt-publish-release-20261025-004143/backend"
+]

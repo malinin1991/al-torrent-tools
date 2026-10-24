@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "run_id": "c1deb40bab9f",
+  "qa_image": "altt-geo-qa:geo-qa-20261024-172714-final",
+  "qa_suite": "passed",
+  "qa_results": {
+    "tests": 1770,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 1769,
+    "duration_sec": 44.301,
+    "postgres_major": 16,
+    "platform": "linux/arm64"
+  }
+}

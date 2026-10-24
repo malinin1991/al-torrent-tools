@@ -1,0 +1,124 @@
+{
+  "ok": true,
+  "migration": "0029_backoffice_torrent_cache",
+  "postgres_major": 16,
+  "seed_release": 10317,
+  "geo_only_seed_release": 10318,
+  "cache_roundtrip": true,
+  "cache_provider_isolation": true,
+  "cache_naive_utc": true,
+  "cache_preserves_archive_sla_clock": true,
+  "requests": [
+    {
+      "path": "/health/live",
+      "status": 200,
+      "sha256": "a29ee2b15c494311c52521766e44af56a3ad2248e7a8ab465e5206463c13d288"
+    },
+    {
+      "path": "/",
+      "status": 200,
+      "sha256": "368faf15e4a18c332193100845b074281694825d215c63d63b28a2cbe081bec6"
+    },
+    {
+      "path": "/releases?search=hotaru-no-yomeiri",
+      "status": 200,
+      "sha256": "199aa5b7883f13fce08b76d1678b1930f6ed03fcd473f9f58c7f7f29c37064c8"
+    },
+    {
+      "path": "/releases/live?search=hotaru-no-yomeiri",
+      "status": 200,
+      "sha256": "e0ff168087e1a2784ba224a1e8bff21ee205c7cec6cf4f68177fddfee54896d6"
+    },
+    {
+      "path": "/jobs",
+      "status": 200,
+      "sha256": "af4d5a25108b367b4ff47cc8a4b69c0f24e0affab1cd6758559bbf062c3ac320"
+    },
+    {
+      "path": "/jobs/live",
+      "status": 200,
+      "sha256": "50ab3bffa455bf300850858a7d3c9f7f5e9943c7f00aae3e47fa479d6080dc74"
+    },
+    {
+      "path": "/jobs/catalog/live",
+      "status": 200,
+      "sha256": "ee3fa74cea38401d1bbb520a136d6a4bb7bb3319cbb174a60234be93c2c50a1d"
+    },
+    {
+      "path": "/pipeline",
+      "status": 200,
+      "sha256": "b25aa35d750f9c4fdc751b752d5e9c7c4a86ba0ad060747bc92784e44f58b6cf"
+    },
+    {
+      "path": "/pipeline/live",
+      "status": 200,
+      "sha256": "a61a37531433b18e19810e2bc6d3b5d09f3c22f238b015e459f1ea59a30447ef"
+    },
+    {
+      "path": "/archive",
+      "status": 200,
+      "sha256": "0149b35f8deb198c86ee5634fe5ed9ee8d24acf2b7b1447d13d6747cb795c327"
+    },
+    {
+      "path": "/archive/live",
+      "status": 200,
+      "sha256": "a2ada44b0b584f11cdfa517e88398d89eb55d79c131b98c05c696b01a322c61a"
+    },
+    {
+      "path": "/hevc-workbench",
+      "status": 200,
+      "sha256": "76f221f3b12e672a2167e160a945133d46980fadcedc6e331129126aa9c617e4"
+    },
+    {
+      "path": "/hevc-workbench/live",
+      "status": 200,
+      "sha256": "d1468af7ea74e99716f74cdf9a51eadc1686e5dbd610fe5e77539d02da370177"
+    },
+    {
+      "path": "/automatic-encoder",
+      "status": 200,
+      "sha256": "9fa2d3bc3ef90cfb84bcdda63f0b755dd9e0b90b0eff1ce754599f28c77e9d48"
+    },
+    {
+      "path": "/automatic-encoder/live?release_id=10317",
+      "status": 200,
+      "sha256": "93ebfbcd0b62b90b6e207870f55f4d2d0c5af86246aa2149bc144f787479f89e"
+    },
+    {
+      "path": "/settings",
+      "status": 200,
+      "sha256": "e3c1d7495953b876dae0b6d5a5bec2f5715782c3360d5b757dcbdbd522902f91"
+    },
+    {
+      "path": "/encoder-history",
+      "status": 200,
+      "sha256": "565bcfbccf36a0dfcbe5fdc16802acd3780567d20b583254d2117127ec6c2d44"
+    },
+    {
+      "path": "/encoder-history/live",
+      "status": 200,
+      "sha256": "4f4fd7541bb3bdbb7b9e3f4172c1da56e90163c43a08e0b1dd228a879c3fce59"
+    },
+    {
+      "path": "/static/automatic_encoder.js",
+      "status": 200,
+      "sha256": "fb97eb59e4f4a9bee9084ba3e4ff309fecacd324cb3ea7a3a2a768b384ebca4d"
+    },
+    {
+      "path": "/static/vendor/htmx-1.9.12.min.js",
+      "status": 200,
+      "sha256": "449317ade7881e949510db614991e195c3a099c4c791c24dacec55f9f4a2a452"
+    },
+    {
+      "path": "/releases?search=geo-only-validation",
+      "status": 200,
+      "sha256": "37317957fe149224ce288e4c5cfd2db5594ccfe46cc193cb7125a8d7bbdb625b"
+    },
+    {
+      "path": "/releases/live?search=geo-only-validation",
+      "status": 200,
+      "sha256": "d720292d3f5f84b6a33eb32d19eacfbbe04e0d2ba5bb89e1c6eca81c7e02876b"
+    }
+  ],
+  "external_network_blocked": true
+}
