@@ -1,0 +1,53 @@
+{
+  "release": "release-20261017-184504",
+  "status": "published",
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "release_tag": "registry.mageek.su/al-torrent-tools:release-20261017-184504",
+  "latest_tag": "registry.mageek.su/al-torrent-tools:latest",
+  "published": true,
+  "latest_changed": true,
+  "platforms": [
+    "linux/arm64",
+    "linux/amd64"
+  ],
+  "build_time_utc": "2026-10-17T18:45:04Z",
+  "git_commit": "1f1ba857fc5479845a7a3728840bacaa8af920f8",
+  "image_git_sha": "1f1ba85-dirty",
+  "working_tree_included": true,
+  "feature": "Автоматический кодировщик отслеживаемых Telegram-релизов с пресетом каждого релиза",
+  "runtime_target": "runtime",
+  "source_manifest_sha256": "92ba5816204c4ad90e368193893f033715c11bf25977552f09f8a10dd7ec739f",
+  "runtime_files": 171,
+  "pytest": {
+    "passed": 1539,
+    "skipped": 1,
+    "failures": 0,
+    "platform": "linux/arm64",
+    "postgresql": 16,
+    "skip_reason": "Optional MiniJinja experiment requires a separate environment"
+  },
+  "javascript_suites": 4,
+  "runtime_checks": [
+    "regular CPython 3.15.0 with GIL, no JIT",
+    "MediaInfo >=26, no bundled library",
+    "exact runtime source hash match",
+    "no dotenv, compilers or test dependencies in runtime"
+  ],
+  "migration_checks": [
+    "0027 → 0028 via production entrypoint on both architectures",
+    "legacy receipt preserved as manual",
+    "automatic encoder disabled by default"
+  ],
+  "http_checks": {
+    "both_architectures": true,
+    "get_requests_per_architecture": 7,
+    "policy_update_status": 200,
+    "stale_policy_revision_status": 409
+  },
+  "amd64_execution": "emulated",
+  "production_services_updated": false,
+  "local_oci_archive": "/private/tmp/altt-publish-release-20261017-184504/image.oci.tar",
+  "evidence_directory": "docs/releases/release-20261017-184504",
+  "digest": "sha256:46029bc00d9611c5bef6383d82ade0db8ba889f5d31ab8d11ceaf0deee8a0828",
+  "published_utc": "2026-10-17T18:56:10.056847+00:00"
+}

@@ -953,8 +953,10 @@ def test_search_hevc_tracked_pagination_compose() -> None:
 
 def test_releases_html_includes_hevc_filter_and_badges() -> None:
     from app.services.releases_view import ReleaseGroup, ReleaseTorrentRow
+    from app.services.static_assets import static_asset_url
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.globals["static_asset_url"] = static_asset_url
     templates.env.filters["as_utc_iso"] = as_utc_iso
     templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
@@ -1305,8 +1307,10 @@ def test_show_hidden_with_hevc_filter_includes_ignored() -> None:
 
 def test_releases_html_show_hidden_members_and_blocks() -> None:
     from app.services.releases_view import ReleaseGroup, ReleaseTorrentRow
+    from app.services.static_assets import static_asset_url
 
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+    templates.env.globals["static_asset_url"] = static_asset_url
     templates.env.filters["as_utc_iso"] = as_utc_iso
     templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
     now = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)

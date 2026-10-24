@@ -1,0 +1,62 @@
+{
+  "status": "published",
+  "published": true,
+  "latest_changed": true,
+  "release": "release-20261024-144014",
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "release_tag": "registry.mageek.su/al-torrent-tools:release-20261024-144014",
+  "latest_tag": "registry.mageek.su/al-torrent-tools:latest",
+  "digest": "sha256:4b971d26731d1dc14b87e0cdbb821c452846c2114843bd1c934b66dcdb6bbcde",
+  "previous_latest_digest": "sha256:8614bc901c9a4bfa213d5a025cefe63273aabcc71d464ff65ac0648fc15ec7f4",
+  "published_utc": "2026-10-24T14:49:21.893683+00:00",
+  "platforms": [
+    "linux/arm64",
+    "linux/amd64"
+  ],
+  "pytest": {
+    "passed": 1639,
+    "skipped": 1,
+    "failures": 0,
+    "platform": "linux/arm64",
+    "python": "3.15.0",
+    "postgresql": 16
+  },
+  "javascript_suites": 4,
+  "production_services_updated": false,
+  "build_time_utc": "2026-10-24T14:40:14Z",
+  "git_commit": "1f1ba857fc5479845a7a3728840bacaa8af920f8",
+  "image_git_sha": "1f1ba85-dirty",
+  "working_tree_included": true,
+  "feature": "Основной API без лишнего fallback; отказ queue accepted; сканирование админки при недоступном сайте с сохранением подтверждённого источника; независимый срок HEVC для WEBRip/WEB-DL с регрессией «Свадьбы светлячков»",
+  "runtime_target": "runtime",
+  "source_manifest_sha256": "f677c81c2a3df6d551fd7cb9c685d46f4fa9a5471291d8190752dfe273ab0372",
+  "source_files": 279,
+  "runtime_files": 172,
+  "runtime_checks": [
+    "regular CPython 3.15.0 with GIL, no JIT",
+    "system MediaInfo 26.10, bundled library removed",
+    "exact runtime source hashes match frozen snapshot on both architectures",
+    "no dotenv files, compilers, pytest or watchfiles in runtime",
+    "pip check passed"
+  ],
+  "migration_checks": [
+    "Fresh PostgreSQL 16 database upgraded to 0028 via production migrate_with_lock.py on both architectures"
+  ],
+  "http_checks": {
+    "both_architectures": true,
+    "get_requests_per_architecture": 20,
+    "all_status_200": true
+  },
+  "amd64_execution": "emulated",
+  "warnings": [
+    "Existing StarletteDeprecationWarning for httpx TestClient; no test failures"
+  ],
+  "skip_reason": "Optional MiniJinja experiment requires a separate environment",
+  "validation_environment": "Isolated Docker internal network and disposable PostgreSQL; no production settings or volumes",
+  "cleanup": {
+    "all_owned_containers_removed": true,
+    "all_owned_networks_removed": true,
+    "volumes_created": false
+  },
+  "evidence_directory": "docs/releases/release-20261024-144014"
+}

@@ -1,0 +1,54 @@
+{
+  "release": "release-20261018-095547",
+  "status": "published",
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "release_tag": "registry.mageek.su/al-torrent-tools:release-20261018-095547",
+  "latest_tag": "registry.mageek.su/al-torrent-tools:latest",
+  "published": true,
+  "latest_changed": true,
+  "platforms": [
+    "linux/arm64",
+    "linux/amd64"
+  ],
+  "build_time_utc": "2026-10-18T09:55:47Z",
+  "git_commit": "1f1ba857fc5479845a7a3728840bacaa8af920f8",
+  "image_git_sha": "1f1ba85-dirty",
+  "working_tree_included": true,
+  "feature": "Настройки Kensetsu по умолчанию без назначения; состояние и настройка автокодирования в карточке релиза",
+  "runtime_target": "runtime",
+  "source_manifest_sha256": "357906569fabaa2b5c86db4e3069cc7383d74c1d2d87716efdce60763bb471f2",
+  "runtime_files": 171,
+  "pytest": {
+    "passed": 1562,
+    "skipped": 1,
+    "failures": 0,
+    "platform": "linux/arm64",
+    "postgresql": 16,
+    "skip_reason": "Optional MiniJinja experiment requires a separate environment"
+  },
+  "javascript_suites": 4,
+  "runtime_checks": [
+    "regular CPython 3.15.0 with GIL, no JIT",
+    "MediaInfo >=26, no bundled library",
+    "exact runtime source hash match",
+    "no dotenv, compilers or test dependencies in runtime"
+  ],
+  "migration_checks": [
+    "No new schema change for automatic defaults",
+    "0027 → 0028 via production entrypoint on both architectures",
+    "legacy receipt preserved as manual",
+    "automatic encoder disabled by default"
+  ],
+  "http_checks": {
+    "both_architectures": true,
+    "get_requests_per_architecture": 9,
+    "policy_update_status": 200,
+    "stale_policy_revision_status": 409
+  },
+  "amd64_execution": "emulated",
+  "production_services_updated": false,
+  "local_oci_archive": "/private/tmp/altt-publish-release-20261018-095547/image.oci.tar",
+  "evidence_directory": "docs/releases/release-20261018-095547",
+  "digest": "sha256:b413240d4bd0ab78517e4fd5b0a02ea01a7d1cab2bdc7f85e1a7c246c648630c",
+  "published_utc": "2026-10-18T09:59:06.318198+00:00"
+}

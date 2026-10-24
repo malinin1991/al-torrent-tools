@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "run_id": "c0e19e72b02c",
+  "source_files": 172,
+  "qa_suite": "passed",
+  "source_snapshot_unchanged": true,
+  "qa_results": {
+    "tests": "1640",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "1",
+    "time": "46.807",
+    "passed": 1639,
+    "python": "3.15.0",
+    "postgres_major": 16,
+    "skipped_experiment": "tests.test_minijinja_workbench_experiment"
+  },
+  "cleanup": {
+    "all_owned_containers_removed": true,
+    "all_owned_networks_removed": true,
+    "volumes_created": false
+  },
+  "finished_utc": "2026-10-24T14:48:59.772870+00:00",
+  "architectures": {}
+}

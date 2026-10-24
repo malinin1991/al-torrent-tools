@@ -1,0 +1,48 @@
+<div data-auto-state data-live-query="{{ live_query }}">
+  <p><strong>{% if auto_enabled %}Автоматическая отправка включена{% else %}Автоматическая отправка на паузе{% endif %}</strong>
+  {% if worker_late %}<span class="badge badge-warn">Worker не подтверждал работу более двух минут</span>{% endif %}</p>
+  <p class="muted">{% for state, count in counts.items() %}{{ {'waiting':'Ожидают','ready':'Готовы','claimed':'Отправляются','receipt_pending':'Приём проверяется','accepted':'Приняты','needs_attention':'Требуют внимания','cancelled':'Исключены'}.get(state,state) }}: {{ count }} · {% endfor %}
+  {% if heartbeat %}Worker: <time class="local-time" datetime="{{ heartbeat }}">{{ heartbeat }}</time>{% endif %}
+  {% if oldest %} · Самый старый готовый: <time class="local-time" datetime="{{ oldest|as_utc_iso }}">{{ oldest }}</time>{% endif %}</p>
+</div>
+<h2>Пресеты релизов</h2>
+<p class="muted">Отслеживаемых релизов: {{ total }} · страница {{ page }} из {{ total_pages }}</p>
+{% for release in releases %}
+<div class="row" data-auto-release="{{ release.release_id }}" data-policy="{{ release|tojson|forceescape }}" style="margin-bottom:10px;flex-wrap:wrap;">
+  <a href="/automatic-encoder?release_id={{ release.release_id }}">{{ release.title or release.release_id }}</a>
+  <span data-auto-policy-summary>{% if release.mode == 'automatic' %}Автоматический · настройки Kensetsu по умолчанию{% else %}{{ release.video_label or release.video_id or 'Видео не задано' }} / {{ release.audio_label or release.audio_id or 'Аудио не задано' }} · {% if release.audio_downmix == 'stereo' %}даунмикс в стерео{% else %}без даунмикса{% endif %}{% endif %}</span>
+  <button class="btn btn-secondary" type="button" data-auto-policy-edit>Настроить</button>
+  <button class="btn-link" type="button" data-auto-policy-clear {% if release.mode == 'automatic' %}hidden{% endif %}>Автоматический</button>
+</div>
+{% else %}<p class="muted">Отслеживаемые релизы не найдены. Включите отслеживание на странице релизов или командой Telegram /add.</p>{% endfor %}
+<div class="row">
+{% if page > 1 %}<a href="/automatic-encoder?page={{ page-1 }}&amp;search={{ search|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Назад</a>{% endif %}
+{% if page < total_pages %}<a href="/automatic-encoder?page={{ page+1 }}&amp;search={{ search|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Далее</a>{% endif %}
+</div>
+{% if release_id %}
+<h2>Существующие файлы релиза</h2>
+<p class="muted">Актуальные AVC со статусом «новый» или «изменённый», не более 30 на странице. Добавление ставит их в ту же очередь; проверка готовности и защита от повторов выполняются перед отправкой.</p>
+{% for source in previews %}
+<label class="row" style="overflow-wrap:anywhere;">
+  <input type="checkbox" class="auto-backfill-check" data-source="{{ source|tojson|forceescape }}"
+         data-selection-key="{{ source.file_id }}:{{ source.info_hash }}:{{ source.relative_path }}" {% if not source.selected or source.blocked %}disabled{% endif %}>
+  <code>{{ source.relative_path }}</code>
+  <span class="muted">{% if source.blocked %}{{ {'accepted':'Уже принят Kensetsu','sending':'Уже отправляется','unknown':'Приём требует проверки'}.get(source.blocked) }}{% elif not source.selected %}Не выбран на master{% elif source.verified %}Хеш проверен{% else %}Ожидает проверки хеша{% endif %}</span>
+</label>
+{% else %}<p class="muted">На этой странице нет подходящих существующих файлов.</p>{% endfor %}
+<div class="row">
+{% if preview_page > 1 %}<a href="/automatic-encoder?release_id={{ release_id }}&amp;preview_page={{ preview_page-1 }}">Предыдущие файлы</a>{% endif %}
+<span class="muted">Файлы: страница {{ preview_page }} из {{ preview_pages }}</span>
+{% if preview_page < preview_pages %}<a href="/automatic-encoder?release_id={{ release_id }}&amp;preview_page={{ preview_page+1 }}">Следующие файлы</a>{% endif %}
+</div>
+{% endif %}
+<h2>Последние изменения очереди</h2>
+{% for item in queue %}
+<details class="card" data-sse-key="auto-item-{{ item.id }}" style="margin-bottom:8px;">
+  <summary><code>{{ item.relative_path }}</code> · {{ reason_labels.get(item.block_reason, item.block_reason) }}</summary>
+  <p>Релиз <a href="/automatic-encoder?release_id={{ item.release_id }}">{{ item.release_id }}</a> · {{ {'new':'Новый файл','changed':'Изменённый файл','explicit_backfill':'Добавлен явным выбором'}.get(item.reason,item.reason) }} · {{ item.info_hash }}</p>
+  {% if item.detail %}<p>{{ item.detail }}</p>{% endif %}
+  {% if item.submission_id %}<a href="/encoder-history?submission_id={{ item.submission_id }}">Приём, кодирование и результат</a>{% endif %}
+  <p class="muted">Обновлено: <time class="local-time" datetime="{{ item.updated_at|as_utc_iso }}">{{ item.updated_at }}</time> · версия назначения {{ item.policy_revision or '—' }}</p>
+</details>
+{% else %}<p class="muted">Кандидатов пока нет. Первое включение ждёт будущих версий; существующие файлы добавляются явным выбором.</p>{% endfor %}

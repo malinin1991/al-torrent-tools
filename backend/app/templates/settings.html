@@ -180,6 +180,11 @@
         <input type="checkbox" name="video_kensetsu_enabled" value="on" {% if settings_map.get('video_kensetsu_enabled', '') in ['1', 'true', 'yes', 'on'] %}checked{% endif %} />
         Интеграция включена
       </label>
+      <label class="row" style="align-items:center;gap:10px;">
+        <input type="checkbox" name="video_kensetsu_auto_enabled" value="on" {% if settings_map.get('video_kensetsu_auto_enabled', '') in ['1','true','yes','on'] %}checked{% endif %}>
+        Автоматический кодировщик
+      </label>
+      <p class="muted">Новые и изменённые AVC отслеживаемых Telegram-релизов отправляются после загрузки и проверки хеша. Первое включение пропускает существующие версии. Пауза накапливает очередь; начатые отправки могут завершить приём. <a href="/automatic-encoder">Пресеты релизов и очередь</a></p>
       <div class="settings-hint">
         <button
           class="btn btn-secondary"

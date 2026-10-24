@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.base import Base
 from app.db.models import Job, Release, Setting, TorrentArchive
 from app.providers.anilibria.backoffice import BackofficeClient, BackofficeError, normalize_release, normalize_torrent
-from app.providers.anilibria.client import AniLibriaNotFoundError
+from app.providers.anilibria.client import AniLibriaClient, AniLibriaNotFoundError
 from app.providers.anilibria.sources import ReleaseSourceClient
 from app.services.qbittorrent import torrent_info_hash
 from app.services.release_meta import upsert_release_meta
@@ -344,6 +344,80 @@ def test_public_failure_is_not_absence_and_does_not_read_admin():
     client.backoffice.get_release.assert_not_awaited()
 
 
+def source_client_with_transport(monkeypatch, handler, *, retries=1):
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+
+    def build_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", build_client)
+    public = AniLibriaClient(
+        "https://primary.test/api/v1", "https://fallback.test/api/v1",
+        request_retries=retries, retry_delay_ms=0,
+    )
+    admin = BackofficeClient("https://admin.test", "user", "password", retries=1, transport=transport)
+    admin._authenticated = True
+    return ReleaseSourceClient(public, admin)
+
+
+@pytest.mark.parametrize("primary_statuses", [(404,), (503, 404)])
+def test_primary_not_found_reaches_admin_without_querying_queue_fallback(monkeypatch, primary_statuses):
+    calls = []
+    statuses = iter(primary_statuses)
+
+    def handler(request):
+        calls.append((request.url.host, request.url.path))
+        if request.url.host == "primary.test":
+            return httpx.Response(next(statuses), json={"message": "not found"})
+        if request.url.host == "fallback.test":
+            return httpx.Response(200, headers={"Content-Type": "application/octet-stream"},
+                                  content=b"{ 'data': 'queue accepted, OK' }")
+        assert request.url.host == "admin.test"
+        assert request.url.path == "/nova-api/anime-releases/386"
+        return httpx.Response(200, json={"resource": nova_resource(386, is_hidden=True)})
+
+    client = source_client_with_transport(monkeypatch, handler, retries=len(primary_statuses))
+    assert asyncio.run(client.get_release(386))["_source"] == "backoffice"
+    assert calls == [("primary.test", "/api/v1/anime/releases/386")] * len(primary_statuses) + [
+        ("admin.test", "/nova-api/anime-releases/386")
+    ]
+
+
+@pytest.mark.parametrize("primary_failure", ["http503", "timeout"])
+def test_public_failure_then_fallback_not_found_does_not_select_admin(monkeypatch, primary_failure):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.host)
+        if request.url.host == "primary.test":
+            if primary_failure == "timeout":
+                raise httpx.ReadTimeout("mock timeout", request=request)
+            return httpx.Response(503)
+        assert request.url.host == "fallback.test"
+        return httpx.Response(404, json={"message": "not found"})
+
+    client = source_client_with_transport(monkeypatch, handler)
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(client.get_release(386))
+    assert type(exc.value) is RuntimeError
+    assert calls == ["primary.test", "fallback.test"]
+
+
+def test_valid_primary_release_does_not_query_fallback_or_admin(monkeypatch):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.host)
+        assert request.url.host == "primary.test"
+        return httpx.Response(200, json={"id": 10364, "alias": "cyberpunk-2"})
+
+    client = source_client_with_transport(monkeypatch, handler)
+    assert asyncio.run(client.get_release(10364))["_source"] == "site"
+    assert calls == ["primary.test"]
+
+
 def test_geo_only_admin_is_not_eligible():
     client = source_client(AniLibriaNotFoundError(), {"id": 1, "is_blocked_by_geo": True})
     with pytest.raises(AniLibriaNotFoundError):
@@ -487,9 +561,7 @@ def test_initial_sync_archives_hidden_release_and_retry_then_return_to_site(db, 
     monkeypatch.setattr(job, "build_anilibria_client", lambda _: client)
     monkeypatch.setattr(job, "is_stop_requested", lambda *args: False)
     asyncio.run(job.run_backoffice_sync(db, 1, {}))
-    client.public.catalog_releases.assert_awaited_once_with(
-        page=1, limit=50, include=["id", "is_hidden", "is_blocked_by_copyrights"]
-    )
+    client.public.catalog_releases.assert_not_awaited()
     archive = db.scalar(select(TorrentArchive))
     pipeline = db.scalar(select(TorrentPipeline))
     assert archive.backoffice_trackers and archive.notification_baseline
@@ -499,6 +571,7 @@ def test_initial_sync_archives_hidden_release_and_retry_then_return_to_site(db, 
     assert _baseline_only(db, 1)
     assert get_setting_value(db, "backoffice_baseline_completed_at")
     assert asyncio.run(torrent_still_in_api(client, pipeline))
+    client.backoffice.get_release.reset_mock()
     # Следующий обход: тот же ID/hash снова на сайте, не новая версия и не новый SLA.
     before_created = archive.created_at
     client._releases.clear()
@@ -519,7 +592,43 @@ def test_initial_sync_archives_hidden_release_and_retry_then_return_to_site(db, 
     client.public.get_release.reset_mock()
     asyncio.run(job.run_backoffice_sync(db, 3, {}))
     client.public.get_release.assert_awaited_once_with(1)
-    client.backoffice.get_release.assert_awaited_once()
+    assert client.backoffice.get_release.await_count == 2
+
+
+def test_real_processor_archives_known_backoffice_during_public_outage(db, monkeypatch, tmp_path):
+    from app.jobs import backoffice_sync as job
+    from app.services.runtime_settings import get_setting_value
+    confirmed = upsert_release_meta(db, 1, {"id": 1, "_source": "backoffice",
+        "is_hidden": True, "is_blocked_by_copyrights": False})
+    checked_at = confirmed.source_checked_at
+    db.add(Setting(key="anilibria_passkey", value="current-key"))
+    db.add(Setting(key="scrape_pause_sec", value="0"))
+    db.commit()
+    client = source_client(RuntimeError("API unavailable"), {"id": 1, "_source": "backoffice",
+        "alias": "show", "name": {"main": "Fresh Nova title"},
+        "is_hidden": False, "is_blocked_by_copyrights": True}, db)
+    client.public.catalog_releases = AsyncMock(side_effect=AssertionError("public catalog must not be read"))
+    client.backoffice.list_resources = AsyncMock(return_value=[nova_resource()])
+    monkeypatch.setenv("TORRENT_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(job, "build_anilibria_client", lambda _: client)
+    monkeypatch.setattr(job, "is_stop_requested", lambda *args: False)
+
+    asyncio.run(job.run_backoffice_sync(db, 1, {}))
+
+    db.refresh(confirmed)
+    assert (confirmed.source, confirmed.source_checked_at) == ("backoffice", checked_at)
+    assert confirmed.is_hidden is True and confirmed.is_blocked_by_copyrights is False
+    assert confirmed.title == "Fresh Nova title"
+    archive = db.scalar(select(TorrentArchive))
+    assert archive.info_hash == HASH and archive.api_present
+    assert archive.backoffice_trackers and archive.notification_baseline
+    assert archive.quality_json["_source"] == "backoffice"
+    assert archive.quality_json["is_hidden"] is True
+    assert archive.quality_json["is_blocked_by_copyrights"] is False
+    client.public.catalog_releases.assert_not_awaited()
+    client.public.get_torrents_for_release.assert_not_awaited()
+    client.backoffice.download_torrent_file.assert_awaited_once_with(10)
+    assert get_setting_value(db, "backoffice_baseline_completed_at")
 
 
 def test_partial_import_does_not_complete_baseline(db, monkeypatch):
@@ -540,16 +649,18 @@ def test_partial_import_does_not_complete_baseline(db, monkeypatch):
     assert not get_setting_value(db, "backoffice_baseline_completed_at")
 
 
-def test_broken_catalog_does_not_read_admin_or_complete_import(db, monkeypatch):
+def test_broken_public_catalog_does_not_block_empty_nova_scan(db, monkeypatch):
     from app.jobs import backoffice_sync as job
+    from app.services.runtime_settings import get_setting_value
     client = source_client({}, db=db)
     client.public.catalog_releases = AsyncMock(return_value={"error":"broken"})
-    client.backoffice.list_resources = AsyncMock()
+    client.backoffice.list_resources = AsyncMock(return_value=[])
     monkeypatch.setattr(job, "build_anilibria_client", lambda _: client)
     monkeypatch.setattr(job, "is_stop_requested", lambda *args: False)
-    with pytest.raises(RuntimeError, match="Завершено с ошибками"):
-        asyncio.run(job.run_backoffice_sync(db, 1, {}))
-    client.backoffice.list_resources.assert_not_awaited()
+    asyncio.run(job.run_backoffice_sync(db, 1, {}))
+    client.public.catalog_releases.assert_not_awaited()
+    client.backoffice.list_resources.assert_awaited_once()
+    assert get_setting_value(db, "backoffice_baseline_completed_at")
 
 
 def test_sync_logs_backoffice_error_details_and_redacts_secrets(db, monkeypatch):

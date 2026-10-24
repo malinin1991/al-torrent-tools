@@ -18,6 +18,7 @@ from app.db.models import (
     DiskFileHash,
     FileChangeEvent,
     Job,
+    ReleaseEncoderPolicy,
     TorrentArchive,
     TorrentFile,
     TorrentPipeline,
@@ -31,6 +32,7 @@ from app.services.file_tracker import (
     file_status_for_ui,
     resolve_orphan_scan_root,
 )
+from app.services.automatic_encoder import enabled as automatic_encoder_enabled
 from app.services.hevc_pairing import (
     HevcFilter,
     classify_archive_codec,
@@ -60,6 +62,7 @@ from app.services.torrent_qb_meta import (
     members_from_quality_json,
     resolve_anilibria_site_url,
 )
+from app.services.video_kensetsu import is_video_kensetsu_enabled, resolve_video_kensetsu_base_url
 
 # События новее этого окна влияют на бейдж в UI.
 _EVENT_WINDOW = timedelta(days=30)
@@ -317,6 +320,39 @@ class ReleaseGroup:
     source: str | None = None
     is_hidden: bool = False
     is_abandoned: bool = False
+    encoder_policy: dict[str, Any] = field(default_factory=dict)
+    encoder_state: str = "disabled"
+    encoder_state_label: str = "Выключено"
+    encoder_state_detail: str = "Релиз не отслеживается в Telegram"
+
+
+def _encoder_policy_data(policy: ReleaseEncoderPolicy | None, release_id: int) -> dict[str, Any]:
+    snapshot = policy.presets_json if policy and isinstance(policy.presets_json, dict) else {}
+    video = snapshot.get("video") or {}
+    audio = snapshot.get("audio") or {}
+    video_id = policy.video_id if policy else None
+    audio_id = policy.audio_id if policy else None
+    return {
+        "release_id": release_id,
+        "revision": policy.revision if policy else 0,
+        "video_id": video_id,
+        "audio_id": audio_id,
+        "audio_downmix": policy.audio_downmix if policy else "none",
+        "participating": bool(policy and policy.participating),
+        "video_label": video.get("name", video_id) if isinstance(video, dict) else video_id,
+        "audio_label": audio.get("name", audio_id) if isinstance(audio, dict) else audio_id,
+        "mode": "automatic" if not video_id and not audio_id else "custom",
+    }
+
+
+def _encoder_release_state(*, tracked: bool, connected: bool, auto_enabled: bool) -> tuple[str, str, str]:
+    if not tracked:
+        return "disabled", "Выключено", "Релиз не отслеживается в Telegram"
+    if not connected:
+        return "disabled", "Выключено", "Подключите Kensetsu в настройках"
+    if not auto_enabled:
+        return "paused", "На паузе", "Автоматическая отправка выключена в общих настройках"
+    return "enabled", "Включено", "Новые и изменённые AVC отправляются после загрузки и проверки хеша"
 
 
 def format_bytes(size: int | None) -> str:
@@ -665,6 +701,14 @@ def list_release_groups(
         by_release.setdefault(archive.release_id, []).append(archive)
 
     stats_by_id = {int(row.release_id): row for row in page_rows}
+    encoder_policies = {
+        row.release_id: row
+        for row in db.execute(select(ReleaseEncoderPolicy).where(
+            ReleaseEncoderPolicy.release_id.in_(release_ids)
+        )).scalars().all()
+    }
+    encoder_connected = is_video_kensetsu_enabled(db) and bool(resolve_video_kensetsu_base_url(db))
+    encoder_auto_enabled = automatic_encoder_enabled(db)
     groups: list[ReleaseGroup] = []
     for release_id in release_ids:
         items = by_release.get(release_id) or []
@@ -759,6 +803,10 @@ def list_release_groups(
             else:
                 archived.append(row)
         tracked_row = tracked_by_id.get(release_id)
+        encoder_state, encoder_label, encoder_detail = _encoder_release_state(
+            tracked=bool(tracked_row and tracked_row.enabled),
+            connected=encoder_connected, auto_enabled=encoder_auto_enabled,
+        )
         groups.append(
             ReleaseGroup(
                 release_id=release_id,
@@ -783,6 +831,10 @@ def list_release_groups(
                 archived_torrents=archived,
                 tracked=bool(tracked_row and tracked_row.enabled),
                 track_source=tracked_row.source if tracked_row else None,
+                encoder_policy=_encoder_policy_data(encoder_policies.get(release_id), release_id),
+                encoder_state=encoder_state,
+                encoder_state_label=encoder_label,
+                encoder_state_detail=encoder_detail,
             )
         )
 

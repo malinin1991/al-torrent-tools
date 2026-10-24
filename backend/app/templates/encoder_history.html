@@ -20,13 +20,14 @@
       <option value="error" {% if encoding_state == 'error' %}selected{% endif %}>Ошибка / остановлено</option>
       <option value="unavailable" {% if encoding_state == 'unavailable' %}selected{% endif %}>Проблема проверки / файл отсутствует</option>
     </select>
+    <select class="input" name="origin" aria-label="Источник отправки"><option value="">Все отправки</option><option value="auto" {% if origin_filter == 'auto' %}selected{% endif %}>Автоматические</option><option value="manual" {% if origin_filter == 'manual' %}selected{% endif %}>Ручные</option></select>
     {% if release_id %}<input type="hidden" name="release_id" value="{{ release_id }}" />{% endif %}
     <button class="btn" type="submit">Найти</button>
     <a href="/encoder-history">Сбросить фильтры</a>
   </form>
 </div>
 <div id="encoder-history-live" data-ui-sse-channel="encoder"
-  data-ui-sse-url="/encoder-history/live?page={{ page }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}{% if submission_id %}&amp;submission_id={{ submission_id }}{% endif %}"
+  data-ui-sse-url="/encoder-history/live?origin={{ origin_filter|urlencode }}&amp;page={{ page }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}{% if submission_id %}&amp;submission_id={{ submission_id }}{% endif %}"
   data-ui-sse-target="#encoder-history-live">
   {% include "partials/encoder_history_live.html" %}
 </div>

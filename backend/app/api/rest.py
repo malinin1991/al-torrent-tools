@@ -220,6 +220,8 @@ async def api_system_info(db: Session = Depends(get_db)) -> dict:
 
 @router.put("/settings")
 def put_settings(items: list[SettingsIn], db: Session = Depends(get_db)) -> dict:
+    from app.services.automatic_encoder import lock, activate
+    lock(db)
     for item in items:
         row = db.get(Setting, item.key)
         value_to_store = item.value
@@ -234,6 +236,7 @@ def put_settings(items: list[SettingsIn], db: Session = Depends(get_db)) -> dict
             db.add(row)
         else:
             row.value = value_to_store
+    activate(db)
     db.commit()
     return {"updated": len(items)}
 
@@ -751,131 +754,12 @@ def _encoder_receipt_response(group) -> JSONResponse:
 
 
 async def _submit_encoder_files(file_ids: list[int], body: SendToEncoderIn, db: Session, *, single: bool = False) -> JSONResponse:
-    ids = list(dict.fromkeys(file_ids))
-    if not ids or any(fid <= 0 or fid > 2_147_483_647 for fid in ids):
-        raise HTTPException(status_code=400, detail="Не переданы корректные file_ids")
-    if len(ids) > ENCODE_BATCH_MAX_FILES:
-        raise HTTPException(status_code=400, detail="Слишком много файлов")
-    try:
-        downmix = normalize_audio_downmix(body.audio_downmix)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    digest = encoder_history.request_digest(ids, body.video_id, body.audio_id, downmix, body.retry_of)
-    try:
-        if body.request_id:
-            encoder_history.recover_expired(db)
-            old = encoder_history.replay(db, body.request_id, digest)
-            if old is not None:
-                return _encoder_receipt_response(old)
-        base_url = _require_video_kensetsu_base_url(db)
-        if body.retry_of is not None:
-            parent = encoder_history.get_submission(db, body.retry_of)
-            if parent is None:
-                raise HTTPException(status_code=404, detail="Предыдущая отправка не найдена")
-            originals = {i.file_id: i for i in parent.items}
-            for fid in ids:
-                original = originals.get(fid)
-                current = db.get(TorrentFile, fid)
-                if original is None or current is None or (current.info_hash, current.relative_path) != (original.info_hash, original.relative_path):
-                    raise HTTPException(status_code=409, detail="Исходная версия файла больше недоступна; выберите текущую версию в релизе")
-        group, owner = encoder_history.claim(
-            db, file_ids=ids, request_id=body.request_id, digest=digest, base_url=base_url,
-            video_id=body.video_id.strip(), audio_id=body.audio_id.strip(), downmix=downmix,
-            retry_of=body.retry_of, allow_repeat=body.allow_repeat, acknowledge_unknown=body.acknowledge_unknown,
-        )
-    except encoder_history.SubmissionConflict as exc:
-        raise HTTPException(status_code=409, detail={"message": str(exc), "previous": exc.previous}) from exc
-    if not owner:
-        return _encoder_receipt_response(group)
-    submission_id = group.id
-    started = False
-    try:
-        paths = []
-        active_hashes = _info_hashes_with_active_hash_job(db, [item.info_hash for item in group.items])
-        for item in group.items:
-            if item.status == "not_sent":
-                continue
-            path, error = _resolve_encode_path_for_file(db, item.file_id)
-            if item.info_hash.lower() in active_hashes:
-                error = "Идёт проверка хешей исходника; дождитесь завершения"
-            if not error and path in paths:
-                error = "Этот путь уже включён в отправку другим выбранным файлом"
-            if error or not path:
-                item.status = "not_sent"
-                item.error = error or "Файл недоступен"
-                continue
-            try:
-                encoder_history.capture_path(db, item, path)
-            except OSError:
-                item.status = "not_sent"
-                item.error = "Файл исчез или недоступен перед отправкой"
-                continue
-            paths.append(path)
-        if not paths:
-            if single:
-                raise HTTPException(status_code=404, detail=group.items[0].error or "Файл недоступен для кодирования")
-            raise HTTPException(status_code=400, detail={"message": "Нет файлов для отправки в кодировщик", "local_errors": [{"file_id": i.file_id, "error": i.error} for i in group.items]})
-        layers = await _resolve_encoder_layers(base_url, video_id=body.video_id, audio_id=body.audio_id, audio_downmix=downmix)
-        group.presets_json = encoder_history.safe_json(layers.get("preset_snapshot", {}))
-        db.commit()  # expire cached source rows after the asynchronous preflight
-        paths = []
-        active_hashes = _info_hashes_with_active_hash_job(db, [item.info_hash for item in group.items])
-        for item in group.items:
-            if item.status != "sending":
-                continue
-            current = db.get(TorrentFile, item.file_id)
-            path, error = _resolve_encode_path_for_file(db, item.file_id)
-            if item.info_hash.lower() in active_hashes:
-                error = "Идёт проверка хешей исходника; дождитесь завершения"
-            try:
-                stat = Path(path).stat() if path else None
-            except OSError:
-                stat = None
-            if (error or current is None or path != item.full_path or stat is None
-                    or current.info_hash != item.info_hash
-                    or (getattr(current, "relative_path", "") or "") != item.relative_path
-                    or stat.st_size != item.source_json.get("size")
-                    or stat.st_mtime_ns != item.source_json.get("mtime_ns")):
-                item.status = "not_sent"
-                item.error = "Исходник изменился или стал недоступен во время подготовки; выберите актуальную версию"
-            else:
-                paths.append(path)
-        if not paths:
-            raise HTTPException(status_code=409, detail="Исходники изменились во время подготовки; отправка не выполнялась")
-        group.request_started_at = encoder_history.utcnow()
-        group.updated_at = group.request_started_at
-        db.commit()  # durable intent before an uncertain external side effect
-        started = True
-        encoded = await video_kensetsu_encode(
-            base_url, paths=paths, video_id=layers["video_id"], audio_id=layers["audio_id"],
-            audio_downmix=layers["audio_downmix"], timeout_sec=encode_timeout_for_paths(len(paths)),
-        )
-        encoder_history.settle_response(group, int(encoded.get("status_code") or 200), encoded.get("body"))
-        db.commit()
-        return _encoder_receipt_response(group)
-    except asyncio.CancelledError:
-        encoder_history.finish_failure(db, group, "Отправка прервана; проверьте историю Kensetsu", started=started)
-        raise
-    except Exception as exc:
-        if isinstance(exc, SQLAlchemyError):
-            db.rollback()
-            group = encoder_history.get_submission(db, submission_id)
-            if group is None:
-                raise
-        status = exc.status_code if isinstance(exc, VideoKensetsuHttpError) else None
-        group.http_status = status
-        # A documented validation refusal is different from a 5xx/timeout.
-        if started and status in (400, 403, 404, 422):
-            for item in group.items:
-                if item.status == "sending":
-                    item.status = "rejected"
-                    item.error = str(encoder_history.safe_json(exc))
-        definitely_unsent = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
-        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
-        encoder_history.finish_failure(db, group, detail, started=started and not definitely_unsent)
-        error = exc if isinstance(exc, HTTPException) else _map_encoder_exception(exc)
-        error.headers = {**(error.headers or {}), "X-Encoder-Submission-Id": str(group.id)}
-        raise error
+    from types import SimpleNamespace
+    from app.services.encoder_submission import submit_files
+    hooks = SimpleNamespace(**{name: globals()[name] for name in (
+        "_require_video_kensetsu_base_url", "_resolve_encode_path_for_file", "_resolve_encoder_layers",
+        "_info_hashes_with_active_hash_job", "video_kensetsu_encode")})
+    return await submit_files(file_ids, body, db, single=single, hooks=hooks)
 
 
 @router.post("/torrent-files/send-to-encoder")
@@ -892,8 +776,8 @@ async def send_torrent_file_to_encoder(file_id: int, body: SendToEncoderIn, db: 
 
 
 @router.get("/encoder-submissions")
-def encoder_submissions(page: int = Query(default=1, ge=1), search: str = "", status: str = "", encoding_state: str = "", release_id: int | None = None, db: Session = Depends(get_db)) -> dict:
-    return encoder_history.history_page(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id)
+def encoder_submissions(page: int = Query(default=1, ge=1), search: str = "", status: str = "", encoding_state: str = "", release_id: int | None = None, origin: str = "", db: Session = Depends(get_db)) -> dict:
+    return encoder_history.history_page(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id, origin=origin)
 
 
 @router.get("/encoder-submissions/{submission_id}")

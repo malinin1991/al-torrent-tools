@@ -1,0 +1,30 @@
+[
+  {
+    "name": "base_ui",
+    "exit_code": 0,
+    "script_sha256": "ac04ec0eaae555bc87febb374de9b54802e33c739444e3575d6c353fc166f766",
+    "output": "Shared UI: dialog cancellation, slow SSE, latest scroll/options/focus, retry and feedback passed",
+    "stderr": ""
+  },
+  {
+    "name": "automatic_encoder",
+    "exit_code": 0,
+    "script_sha256": "66846a7e8893e2327d3f5d3a98045047b4277de496bde2840dbd9c3e7a0e0c39",
+    "output": "Automatic encoder UI: dialog, revision, single save and exact selection passed.",
+    "stderr": ""
+  },
+  {
+    "name": "hevc_workbench",
+    "exit_code": 0,
+    "script_sha256": "f296ee4f7ff52c8b0e6fde044bf66b24c1f9b8b44dc19c5a73fb91ee1d63442f",
+    "output": "HEVC workbench client: selection/version/SSE/details/scroll/send/conflict checks passed",
+    "stderr": ""
+  },
+  {
+    "name": "operations",
+    "exit_code": 0,
+    "script_sha256": "05adcc50dc7cd5f48ce6fd00df0bf0135490e85d940e6fdbfcd9e7098d5562a7",
+    "output": "Operations client: exact selections, paging/SSE cursor, selection limit/reset, job isolation and unknown acknowledgement passed",
+    "stderr": ""
+  }
+]

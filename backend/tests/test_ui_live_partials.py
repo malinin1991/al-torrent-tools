@@ -25,6 +25,8 @@ def _templates() -> Jinja2Templates:
     from app.services.pipeline import pipeline_ci_stages
 
     templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
+    from app.services.static_assets import static_asset_url
+    templates.env.globals["static_asset_url"] = static_asset_url
     return templates
 
 
@@ -102,6 +104,11 @@ def test_releases_live_partial_has_sse_keys() -> None:
         release_alias="show",
         tracked=False,
         track_source=None,
+        encoder_policy={"release_id":42,"revision":0,"video_id":None,"audio_id":None,
+                        "audio_downmix":"none","mode":"automatic"},
+        encoder_state="disabled",
+        encoder_state_label="Выключено",
+        encoder_state_detail="Релиз не отслеживается в Telegram",
         is_blocked_by_geo=False,
         is_blocked_by_copyrights=False,
         genres=[],
@@ -148,6 +155,10 @@ def test_releases_live_partial_has_sse_keys() -> None:
         },
     ).body.decode("utf-8")
     assert 'data-sse-key="release-42"' in html
+    assert 'data-auto-release="42"' in html
+    assert "Автокодирование: выключено" in html
+    assert "Автоматический · настройки Kensetsu по умолчанию" in html
+    assert 'data-auto-policy-edit' in html
     assert "live" in html
     assert "Принудительно обновить релиз" in html
     assert 'hx-post="/actions/run/force_release_sync"' in html

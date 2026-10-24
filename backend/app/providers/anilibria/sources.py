@@ -1,7 +1,10 @@
-"""Единый выбор site → подходящий backoffice, без fallback при сетевых ошибках."""
+"""Выбор источника; обход Nova может продолжать последний подтверждённый backoffice."""
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
+import httpx
 from sqlalchemy import select
 
 from app.db.models import Release, TorrentArchive
@@ -14,6 +17,14 @@ def eligible(payload: dict) -> bool:
     return any(parse_api_bool(payload.get(k)) is True for k in ("is_hidden", "is_blocked_by_copyrights"))
 
 
+class SourceCheckDeferred(RuntimeError):
+    """Публичный API недоступен, источник пока нельзя подтвердить."""
+
+
+class BackofficeReleaseSkipped(Exception):
+    """Обычный site-релиз или неподходящая карточка Nova; архив не меняем."""
+
+
 class ReleaseSourceClient:
     def __init__(self, public: AniLibriaClient, backoffice: BackofficeClient, db=None):
         self.public = public
@@ -21,6 +32,93 @@ class ReleaseSourceClient:
         self.db = db
         self._releases: dict[int, dict] = {}
         self._torrents: dict[int, list[dict]] = {}
+        self._backoffice_watched: set[int] | None = None
+        self._source_check_error: str | None = None
+        self.source_check_errors: dict[int, str] = {}
+
+    @contextmanager
+    def backoffice_scan(self, watched):
+        """Только для обхода Nova; get_release вызывается под release_lock processor."""
+        previous = self._backoffice_watched
+        previous_error = self._source_check_error
+        self._backoffice_watched = set(watched)
+        self._source_check_error = None
+        self._releases.clear()
+        self._torrents.clear()
+        self.source_check_errors.clear()
+        try:
+            yield
+        finally:
+            self._backoffice_watched = previous
+            self._source_check_error = previous_error
+            self._releases.clear()
+            self._torrents.clear()
+
+    def _remember_backoffice(self, payload: dict) -> dict:
+        payload = dict(payload)
+        if self.db is not None:
+            from app.services.runtime_settings import get_setting_value
+            if not get_setting_value(self.db, "backoffice_baseline_completed_at", ""):
+                archives = self.db.scalars(select(TorrentArchive).where(TorrentArchive.release_id == payload["id"])).all()
+                if not archives or any(a.notification_baseline for a in archives):
+                    payload["_notification_baseline"] = True
+        return self.remember(payload)
+
+    @staticmethod
+    def _validate_public_release(payload, rid=None):
+        if not isinstance(payload, dict) or type(payload.get("id")) is not int or (rid is not None and payload["id"] != rid):
+            raise RuntimeError("Публичный API: некорректная карточка релиза")
+
+    def _retain_backoffice_source(self, rid, admin, admin_error):
+        self.source_check_errors[rid] = self._source_check_error
+        previous = self.db.get(Release, rid, populate_existing=True) if self.db is not None else None
+        if admin_error is not None and not isinstance(admin_error, AniLibriaNotFoundError):
+            raise admin_error
+        if previous is None or previous.source != "backoffice":
+            raise SourceCheckDeferred("Проверка сайта недоступна; источник сохранён, обработка отложена")
+        if admin_error is not None:
+            raise SourceCheckDeferred("Карточка Nova недоступна; подтверждение источника отложено") from admin_error
+        payload = {**admin, "_source": "backoffice", "_source_confirmed": False,
+                   "is_hidden": previous.is_hidden,
+                   "is_blocked_by_copyrights": previous.is_blocked_by_copyrights}
+        return self._remember_backoffice(payload)
+
+    async def _get_backoffice_scan_release(self, rid: int):
+        # Обновляем identity map после ожидания release_lock: другая джоба
+        # могла подтвердить новый источник до получения этой блокировки.
+        previous = self.db.get(Release, rid, populate_existing=True) if self.db is not None else None
+        watched = rid in self._backoffice_watched or (previous is not None and previous.source == "backoffice")
+        # Чтение Nova не зависит от каталога/доступности публичного API.
+        admin, admin_error = None, None
+        try:
+            admin = await self.backoffice.get_release(rid)
+        except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+            admin_error = exc
+        if admin is not None and not eligible(admin) and not watched:
+            raise BackofficeReleaseSkipped()
+        # Одна недоступность не должна умножать timeout/retries на сотни релизов.
+        # Новый обход снова начинает с проверки публичного API.
+        if self._source_check_error is not None:
+            return self._retain_backoffice_source(rid, admin, admin_error)
+        try:
+            public = await self.public.get_release(rid)
+            self._validate_public_release(public, rid)
+        except AniLibriaNotFoundError:
+            public = None
+        except (RuntimeError, httpx.HTTPError, ValueError) as exc:
+            self._source_check_error = type(exc).__name__
+            return self._retain_backoffice_source(rid, admin, admin_error)
+        if public is not None and not eligible(public):
+            payload = self.remember({**public, "_source": "site", "is_hidden": False,
+                                     "is_blocked_by_copyrights": False})
+            if not watched:
+                raise BackofficeReleaseSkipped()
+            return payload
+        if admin_error is not None:
+            raise admin_error
+        if not eligible(admin):
+            raise BackofficeReleaseSkipped()
+        return self._remember_backoffice(admin)
 
     def __getattr__(self, name):
         return getattr(self.public, name)
@@ -46,14 +144,15 @@ class ReleaseSourceClient:
         rid = int(raw) if raw.isdigit() else None
         if rid in self._releases:
             return self._releases[rid]
+        if self._backoffice_watched is not None and rid is not None:
+            return await self._get_backoffice_scan_release(rid)
         try:
             # Поля статуса и карточка нужны даже при sparse include / неизменном hash.
             payload = await self.public.get_release(release_id_or_alias)
         except AniLibriaNotFoundError:
             payload = None
         if payload is not None:
-            if not isinstance(payload, dict) or type(payload.get("id")) is not int:
-                raise RuntimeError("Публичный API: некорректная карточка релиза")
+            self._validate_public_release(payload, rid)
             rid = payload["id"]
             if not eligible(payload):
                 return self.remember({**payload, "_source": "site", "is_hidden": False,
@@ -75,14 +174,7 @@ class ReleaseSourceClient:
             payload = await self.backoffice.get_release(rid)
         if not eligible(payload):
             raise AniLibriaNotFoundError("Релиз не доступен на сайте и не скрыт/заблокирован в админке")
-        payload = dict(payload)
-        if self.db is not None:
-            from app.services.runtime_settings import get_setting_value
-            if not get_setting_value(self.db, "backoffice_baseline_completed_at", ""):
-                archives = self.db.scalars(select(TorrentArchive).where(TorrentArchive.release_id == payload["id"])).all()
-                if not archives or any(a.notification_baseline for a in archives):
-                    payload["_notification_baseline"] = True
-        return self.remember(payload)
+        return self._remember_backoffice(payload)
 
     async def get_releases_list(self, aliases=None, ids=None, include=None, exclude=None):
         if aliases is None and ids is None:

@@ -89,12 +89,13 @@ def upsert_release_meta(
         row.original_title = original
 
     source = release_payload.get("_source", "site")
-    if source in {"site", "backoffice"}:
+    source_confirmed = release_payload.get("_source_confirmed") is not False
+    if source_confirmed and source in {"site", "backoffice"}:
         row.source = source
         row.source_checked_at = utcnow()
-    if "is_hidden" in release_payload:
+    if source_confirmed and "is_hidden" in release_payload:
         row.is_hidden = parse_api_bool(release_payload["is_hidden"])
-    elif source == "site":
+    elif source_confirmed and source == "site":
         row.is_hidden = False
 
     if "genres" in release_payload:
@@ -105,7 +106,7 @@ def upsert_release_meta(
         if "is_blocked_by_geo" in release_payload:
             parsed = parse_api_bool(release_payload.get("is_blocked_by_geo"))
             row.is_blocked_by_geo = False if parsed is None else parsed
-        if "is_blocked_by_copyrights" in release_payload:
+        if source_confirmed and "is_blocked_by_copyrights" in release_payload:
             parsed = parse_api_bool(release_payload.get("is_blocked_by_copyrights"))
             row.is_blocked_by_copyrights = False if parsed is None else parsed
 

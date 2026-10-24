@@ -226,6 +226,9 @@ async def main() -> None:
         "pipeline_reconcile_interval_sec", settings.pipeline_reconcile_interval_sec
     )
     scheduler = AsyncIOScheduler()
+    from app.services.automatic_encoder import tick as automatic_encoder_tick
+    scheduler.add_job(automatic_encoder_tick, "interval", seconds=30, id="automatic_encoder",
+                      max_instances=1, coalesce=True, next_run_time=datetime.now(timezone.utc))
     scheduler.add_job(
         poll_encoder_jobs, "interval", seconds=30, id="encoder_tracking",
         max_instances=1, coalesce=True, next_run_time=datetime.now(timezone.utc),

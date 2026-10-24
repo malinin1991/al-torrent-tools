@@ -220,6 +220,27 @@ def test_parse_defaults_invalid_audio_downmix_becomes_none() -> None:
     assert parsed["audio_id"] == "copy"
 
 
+@pytest.mark.parametrize("defaults", [None, {}, {"video_id": "hevc_rip", "audio_id": "copy"},
+    {"video_id": "hevc_rip", "audio_id": "copy", "audio_downmix": "mono"}])
+def test_strict_automatic_defaults_are_not_repaired(monkeypatch, defaults) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={**SAMPLE_LAYERS, "defaults": defaults})
+
+    _patch_httpx(monkeypatch, handler)
+    with pytest.raises((RuntimeError, ValueError)):
+        asyncio.run(list_presets("http://encoder.test", strict_defaults=True))
+
+
+def test_strict_automatic_defaults_preserve_server_selection(monkeypatch) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={**SAMPLE_LAYERS,
+            "defaults": {"video_id": "hevc_rip", "audio_id": "opus", "audio_downmix": "stereo"}})
+
+    _patch_httpx(monkeypatch, handler)
+    layers = asyncio.run(list_presets("http://encoder.test", strict_defaults=True))
+    assert layers["defaults"] == {"video_id": "hevc_rip", "audio_id": "opus", "audio_downmix": "stereo"}
+
+
 def test_encode_json_single_path(monkeypatch) -> None:
     captured: dict = {}
 

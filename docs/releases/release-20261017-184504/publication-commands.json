@@ -1,0 +1,139 @@
+[
+  {
+    "name": "latest-before",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "inspect",
+      "--raw",
+      "registry.mageek.su/al-torrent-tools:latest"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.478
+  },
+  {
+    "name": "build-push-candidate",
+    "argv": [
+      "docker",
+      "buildx",
+      "build",
+      "--builder",
+      "container",
+      "--platform",
+      "linux/arm64,linux/amd64",
+      "--target",
+      "runtime",
+      "--provenance=false",
+      "--sbom=false",
+      "--build-arg",
+      "BUILD_TIME=2026-10-17T18:45:04Z",
+      "--build-arg",
+      "GIT_SHA=1f1ba85-dirty",
+      "--tag",
+      "registry.mageek.su/al-torrent-tools:release-20261017-184504",
+      "--push",
+      "--progress",
+      "plain",
+      "--metadata-file",
+      "/private/tmp/altt-publish-release-20261017-184504/buildx-metadata.json",
+      "/private/tmp/altt-publish-release-20261017-184504/backend"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 3.335
+  },
+  {
+    "name": "candidate-index",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "inspect",
+      "--raw",
+      "registry.mageek.su/al-torrent-tools:release-20261017-184504"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.229
+  },
+  {
+    "name": "manifest-arm64",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "inspect",
+      "--raw",
+      "registry.mageek.su/al-torrent-tools@sha256:502f3699f5b3c811b5d5644ddfecc565c1e9fd233e36dff87f243012c00ec555"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.24
+  },
+  {
+    "name": "manifest-amd64",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "inspect",
+      "--raw",
+      "registry.mageek.su/al-torrent-tools@sha256:b0d24187f68c40212c978883f4085e7737ae939d83df744d2f0f11bf789a7695"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.235
+  },
+  {
+    "name": "latest-before-promotion",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "inspect",
+      "--raw",
+      "registry.mageek.su/al-torrent-tools:latest"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.237
+  },
+  {
+    "name": "promote-latest",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "create",
+      "--tag",
+      "registry.mageek.su/al-torrent-tools:latest",
+      "--metadata-file",
+      "/private/tmp/altt-publish-release-20261017-184504/latest-promotion-metadata.json",
+      "registry.mageek.su/al-torrent-tools@sha256:46029bc00d9611c5bef6383d82ade0db8ba889f5d31ab8d11ceaf0deee8a0828"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.597
+  },
+  {
+    "name": "release-published",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "inspect",
+      "--raw",
+      "registry.mageek.su/al-torrent-tools:release-20261017-184504"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.252
+  },
+  {
+    "name": "latest-published",
+    "argv": [
+      "docker",
+      "buildx",
+      "imagetools",
+      "inspect",
+      "--raw",
+      "registry.mageek.su/al-torrent-tools:latest"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.241
+  }
+]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -20,6 +21,7 @@ from starlette.types import Send
 from app.db.models import (
     FileChangeEvent,
     EncoderSubmission,
+    EncoderAutoItem, EncoderFileReadiness, ReleaseEncoderPolicy,
     Job,
     JobLog,
     PipelineEvent,
@@ -39,7 +41,7 @@ from app.services.telegram_notify import OUTBOX_PENDING
 logger = logging.getLogger(__name__)
 
 SIMPLE_CHANNELS = frozenset(
-    {"dashboard", "jobs", "pipeline", "releases", "archive", "info", "encoder", "telegram-outbox", "hevc_workbench"}
+    {"dashboard", "jobs", "pipeline", "releases", "archive", "info", "encoder", "telegram-outbox", "hevc_workbench", "automatic_encoder"}
 )
 
 # Статусы, при которых на pipeline нужен live progress с master/slave (qB).
@@ -104,6 +106,8 @@ def channel_token(db: Session, channel: str) -> str:
         return _archive_token(db)
     if channel == "info":
         return _info_token(db)
+    if channel == "automatic_encoder":
+        return _automatic_encoder_token(db)
     if channel == "encoder":
         return _encoder_token(db)
     if channel == "telegram-outbox":
@@ -111,6 +115,17 @@ def channel_token(db: Session, channel: str) -> str:
     if channel == "hevc_workbench":
         return _hevc_workbench_token(db)
     return ""
+
+
+def _automatic_encoder_token(db):
+    parts = []
+    for model, column in ((EncoderAutoItem, EncoderAutoItem.updated_at),
+                          (EncoderFileReadiness, EncoderFileReadiness.checked_at),
+                          (ReleaseEncoderPolicy, ReleaseEncoderPolicy.updated_at),
+                          (Setting, Setting.updated_at)):
+        parts.append(str(db.scalar(select(func.max(column)))))
+    tracked = db.scalar(select(func.count()).select_from(TrackedRelease).where(TrackedRelease.enabled.is_(True)))
+    return "auto:" + ":".join(parts) + f":{tracked}:{int(time.time()//30)}"
 
 
 def _encoder_token(db: Session) -> str:
@@ -244,11 +259,21 @@ def _releases_token(db: Session) -> str:
             func.count().filter(TorrentArchive.superseded.is_(True)),
         )
     ).one()
+    encoder_policies = db.execute(select(
+        func.max(ReleaseEncoderPolicy.updated_at),
+        func.coalesce(func.sum(ReleaseEncoderPolicy.revision), 0),
+        func.count(),
+    )).one()
+    encoder_settings = db.execute(select(Setting.key, Setting.value).where(Setting.key.in_((
+        "video_kensetsu_enabled", "video_kensetsu_base_url", "video_kensetsu_auto_enabled",
+    ))).order_by(Setting.key)).all()
+    encoder_settings_sig = hashlib.sha256(repr(encoder_settings).encode()).hexdigest()[:16]
     return (
         f"r:{max_arch}|fe:{max_file_ev}|pe:{max_pipe_ev}|tf:{max_tf_upd}:{max_tf_id}|"
         f"tr:{tracked}|rel:{max_rel_upd}|rm:{max_member}|"
         f"geo:{release_flags[0]}|cr:{release_flags[1]}|hidden:{release_flags[2]}|ab:{release_flags[3]}|bo:{release_flags[4]}|"
         f"ig:{flag_counts[0]}|ap:{flag_counts[1]}|su:{flag_counts[2]}|"
+        f"enc:{encoder_policies[0]}:{encoder_policies[1]}:{encoder_policies[2]}:{encoder_settings_sig}|"
         # Pairing SLA changes with time even when archives/files are unchanged.
         f"sla:{int(time.time() // 60)}"
     )

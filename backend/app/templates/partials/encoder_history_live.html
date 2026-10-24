@@ -2,7 +2,7 @@
 {% for group in submissions %}
 <details class="card encoder-submission" data-sse-key="encoder-{{ group.id }}" {% if submission_id or not group.ok %}open{% endif %} style="margin-bottom:12px;">
   <summary>
-    <strong>Отправка #{{ group.id }}</strong> ·
+    <strong>Отправка #{{ group.id }}</strong> · {{ 'Автоматическая' if group.origin == 'auto' else 'Ручная' }}{% if group.policy_revision %} · версия назначения {{ group.policy_revision }}{% endif %} ·
     <time class="local-time" datetime="{{ group.created_at }}">{{ group.created_at }}</time> ·
     {{ group.video_id }} / {{ group.audio_id }} / {{ group.audio_downmix }}
     {% for state, count in group.counts.items() %}<span class="badge {% if state == 'unknown' %}badge-warn{% elif state in ['not_sent','rejected'] %}badge-danger{% else %}badge-muted{% endif %}">{{ encoder_labels[state] }}: {{ count }}</span>{% endfor %}
@@ -73,6 +73,8 @@
     {% if group.finished_at %}<p>Результат записан: <time class="local-time" datetime="{{ group.finished_at }}">{{ group.finished_at }}</time></p>{% endif %}
     <p>Request ID: <code>{{ group.request_id }}</code>{% if group.http_status %} · HTTP {{ group.http_status }}{% endif %}</p>
     {% if group.error %}<p>{{ group.error }}</p>{% endif %}
+    {% if group.receipt_error %}<p>{{ group.receipt_error }}</p>{% endif %}
+    {% if group.recovery %}<details><summary>Восстановленная квитанция</summary><pre>{{ group.recovery|tojson(indent=2) }}</pre></details>{% endif %}
     <pre style="white-space:pre-wrap;overflow-wrap:anywhere;">{{ group.result|tojson(indent=2) }}</pre>
   </details>
 </details>
@@ -80,6 +82,6 @@
 <div class="card muted">Отправок по выбранным условиям пока нет.</div>
 {% endfor %}
 <div class="row">
-{% if page > 1 %}<a href="/encoder-history?page={{ page-1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Назад</a>{% endif %}
-{% if page < total_pages %}<a href="/encoder-history?page={{ page+1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Далее</a>{% endif %}
+{% if page > 1 %}<a href="/encoder-history?origin={{ origin_filter|urlencode }}&amp;page={{ page-1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Назад</a>{% endif %}
+{% if page < total_pages %}<a href="/encoder-history?origin={{ origin_filter|urlencode }}&amp;page={{ page+1 }}&amp;search={{ search|urlencode }}&amp;status={{ status_filter|urlencode }}&amp;encoding_state={{ encoding_state|urlencode }}{% if release_id %}&amp;release_id={{ release_id }}{% endif %}">Далее</a>{% endif %}
 </div>

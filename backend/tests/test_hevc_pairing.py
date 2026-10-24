@@ -1181,6 +1181,79 @@ def test_multi_avc_overdue_hours_from_earliest_batch_anchor() -> None:
     assert int(overdue_hours_past_sla(30.0) or 0) == 6
 
 
+@pytest.mark.parametrize("older_type,fresh_type", [
+    ("WEBRip", "WEB-DL"), ("WEB-DL", "WEBRip"), ("WEB-DLRip", "WEB-DL"),
+])
+def test_active_web_rip_families_keep_independent_sla_anchors(older_type, fresh_type):
+    """Оба семейства имеют свой HEVC: общий web-presence не объединяет их долг."""
+    now = datetime(2026, 10, 24, 14, 25)
+    older_api, fresh_api = now - timedelta(hours=50), now - timedelta(hours=2)
+    rows = [
+        _row(archive_id=1, torrent_id=100, episodes="1-3", codec="AVC",
+             rip_type=older_type, api_created_at=older_api),
+        _row(archive_id=2, torrent_id=200, episodes="1-3", codec="AVC",
+             rip_type=fresh_type, api_created_at=fresh_api),
+        _row(archive_id=3, torrent_id=90, episodes="1-2", codec="HEVC",
+             rip_type=older_type, api_created_at=now - timedelta(hours=70)),
+        _row(archive_id=4, torrent_id=190, episodes="1-2", codec="HEVC",
+             rip_type=fresh_type, api_created_at=now - timedelta(hours=70)),
+    ]
+    current = find_unpaired_avc(rows, now=now)
+    assert [item.archive_id for item in current] == [1]
+    assert current[0].created_at == older_api
+    assert current[0].age_hours == pytest.approx(50)
+    assert current[0].type_mismatch is False
+
+    later = {item.archive_id: item for item in find_unpaired_avc(rows, now=fresh_api + timedelta(hours=25))}
+    assert set(later) == {1, 2}
+    assert later[2].created_at == fresh_api
+    assert later[2].age_hours == pytest.approx(25)
+    assert overdue_hours_past_sla(later[2].age_hours) == pytest.approx(1)
+
+
+def test_same_family_aliases_keep_ignored_historical_sla_anchor():
+    """WEBDL / WEB_DL / WEB DL — одна история, включая ignored superseded AVC."""
+    now = datetime(2026, 10, 24, 14, 25)
+    history_api = now - timedelta(hours=50)
+    rows = [
+        _row(archive_id=1, torrent_id=100, episodes="1-3", codec="AVC",
+             rip_type="WEBDL", api_created_at=history_api, api_present=False,
+             superseded=True, ignore_hevc=True),
+        _row(archive_id=2, torrent_id=200, episodes="1-4", codec="AVC",
+             rip_type="WEB_DL", api_created_at=now - timedelta(hours=2)),
+        _row(archive_id=3, torrent_id=90, episodes="1-2", codec="HEVC",
+             rip_type="WEB DL", api_created_at=now - timedelta(hours=70)),
+    ]
+    unpaired = find_unpaired_avc(rows, now=now)
+    assert len(unpaired) == 1
+    assert unpaired[0].archive_id == 2
+    assert unpaired[0].overdue is True
+    assert unpaired[0].created_at == history_api
+    assert unpaired[0].age_hours == pytest.approx(50)
+
+
+def test_label_only_rename_does_not_borrow_files_from_another_rip_family():
+    """Равные basename WEB-DL не превращают новую серию WEBRip в правку ярлыка."""
+    now = datetime(2026, 10, 24, 14, 25)
+    old_api = now - timedelta(hours=50)
+    rows = [
+        _row(archive_id=1, torrent_id=100, episodes="1-8", codec="AVC",
+             rip_type="WEBRip", api_created_at=old_api, api_present=False, superseded=True),
+        _row(archive_id=2, torrent_id=110, episodes="1-8", codec="HEVC",
+             rip_type="WEBRip", api_created_at=old_api),
+        _row(archive_id=3, torrent_id=120, episodes="1-8", codec="HEVC",
+             rip_type="WEB-DL", api_created_at=old_api),
+        _row(archive_id=4, torrent_id=200, episodes="1-9", codec="AVC",
+             rip_type="WEB-DL", api_created_at=now - timedelta(hours=2)),
+        _row(archive_id=5, torrent_id=210, episodes="1-10", codec="AVC",
+             rip_type="WEBRip", api_created_at=now - timedelta(hours=1)),
+    ]
+    nine_files = content_file_keys([f"ep_{i:02d}.mkv" for i in range(1, 10)])
+    keys = {1: nine_files, 4: nine_files,
+            5: content_file_keys([f"ep_{i:02d}.mkv" for i in range(1, 11)])}
+    assert find_unpaired_avc(rows, now=now, file_keys_by_archive_id=keys) == []
+
+
 def test_different_rip_families_do_not_pair() -> None:
     now = datetime(2026, 7, 26, tzinfo=timezone.utc)
     rows = [

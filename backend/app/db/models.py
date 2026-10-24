@@ -404,6 +404,14 @@ class EncoderSubmission(Base):
     audio_id: Mapped[str] = mapped_column(String(255), nullable=False)
     audio_downmix: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     presets_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="manual", server_default="manual")
+    auto_item_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    policy_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payload_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    recovery_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    receipt_next_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    receipt_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    receipt_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_of_id: Mapped[int | None] = mapped_column(
         ForeignKey("encoder_submissions.id", ondelete="SET NULL"), nullable=True
     )
@@ -489,6 +497,86 @@ class EncoderJob(Base):
         CheckConstraint("status IN ('unknown','planned','in_progress','done','error','cancelled')", name="ck_encoder_job_status"),
         Index("ix_encoder_jobs_due", "next_poll_at", "lease_until", "id"),
     )
+
+
+class ReleaseEncoderPolicy(Base):
+    __tablename__ = "release_encoder_policies"
+    release_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    video_id: Mapped[str | None] = mapped_column(String(255))
+    audio_id: Mapped[str | None] = mapped_column(String(255))
+    audio_downmix: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    participating: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    presets_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class EncoderAutoSource(Base):
+    __tablename__ = "encoder_auto_sources"
+    __table_args__ = (UniqueConstraint("release_id", "generation", "info_hash", name="uq_encoder_auto_source"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    release_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    info_hash: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    baseline: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class EncoderFileReadiness(Base):
+    __tablename__ = "encoder_file_readiness"
+    __table_args__ = (UniqueConstraint("info_hash", "relative_path", name="uq_encoder_readiness_source"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    info_hash: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    full_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    hash_algo: Mapped[str] = mapped_column(String(32), default="blake3", nullable=False)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    mtime_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ui_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    job_id: Mapped[int | None] = mapped_column(Integer)
+    prior_info_hash: Mapped[str | None] = mapped_column(String(128))
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class EncoderAutoItem(Base):
+    __tablename__ = "encoder_auto_items"
+    __table_args__ = (
+        UniqueConstraint("release_id", "generation", "info_hash", "relative_path", name="uq_encoder_auto_item"),
+        Index("ix_encoder_auto_due", "state", "next_attempt_at", "lease_until", "id"),
+        CheckConstraint("state IN ('waiting','ready','claimed','receipt_pending','accepted','needs_attention','cancelled')", name="ck_encoder_auto_state"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    release_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    info_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    relative_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False, default="new")
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="waiting")
+    block_reason: Mapped[str] = mapped_column(String(64), nullable=False, default="hash")
+    detail: Mapped[str | None] = mapped_column(Text)
+    policy_revision: Mapped[int | None] = mapped_column(Integer)
+    submission_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    receipt_item_id: Mapped[int | None] = mapped_column(Integer)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claim_token: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class EncoderAutoEvent(Base):
+    __tablename__ = "encoder_auto_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    release_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    details_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class FileChangeEvent(Base):

@@ -66,6 +66,7 @@ from app.services.releases_view import (
     list_release_groups,
 )
 from app.services.system_status import collect_system_status
+from app.services.static_assets import static_asset_url
 from app.services.telegram_access import (
     ACCESS_STATUSES,
     HEVC_BOT_KEY,
@@ -156,10 +157,13 @@ templates = Jinja2Templates(
 )
 templates.env.filters["as_utc_iso"] = as_utc_iso
 templates.env.filters["torrent_files_summary"] = format_torrent_files_summary
+templates.env.globals["static_asset_url"] = static_asset_url
 templates.env.globals["pipeline_ci_stages"] = pipeline_ci_stages
 app.mount("/static", StaticFiles(directory=str(base_path / "static")), name="static")
 app.include_router(create_operations_router(templates, job_runner))
 app.include_router(create_hevc_workbench_router(templates))
+from app.api.automatic_encoder import create_router as create_automatic_encoder_router
+app.include_router(create_automatic_encoder_router(templates))
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -340,6 +344,7 @@ def update_settings(
     telegram_hevc_enabled: str | None = Form(default=None),
     video_kensetsu_base_url: str = Form(default=""),
     video_kensetsu_enabled: str | None = Form(default=None),
+    video_kensetsu_auto_enabled: str | None = Form(default=None),
     scrape_pause_every: str = Form(default=str(settings.scrape_pause_every)),
     scrape_pause_sec: str = Form(default=str(settings.scrape_pause_sec)),
     ongoing_interval_sec: str = Form(default=str(settings.ongoing_interval_sec)),
@@ -352,6 +357,8 @@ def update_settings(
     file_hash_workers: str = Form(default=str(settings.file_hash_workers)),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    from app.services.automatic_encoder import lock as encoder_lock, activate as encoder_activate
+    encoder_lock(db)
     workers_clamped = normalize_file_hash_workers_setting(file_hash_workers)
     form_data = {
         "anilibria_base_url": anilibria_base_url,
@@ -377,6 +384,7 @@ def update_settings(
         "telegram_hevc_enabled": "true" if telegram_hevc_enabled == "on" else "false",
         "video_kensetsu_base_url": normalize_video_kensetsu_base_url(video_kensetsu_base_url),
         "video_kensetsu_enabled": "true" if video_kensetsu_enabled == "on" else "false",
+        "video_kensetsu_auto_enabled": "true" if video_kensetsu_auto_enabled == "on" else "false",
         "scrape_pause_every": scrape_pause_every,
         "scrape_pause_sec": scrape_pause_sec,
         "ongoing_interval_sec": ongoing_interval_sec,
@@ -420,6 +428,7 @@ def update_settings(
         username=qb_slave_username,
         password=qb_slave_password,
     )
+    encoder_activate(db)
     db.commit()
     # Health для ссылки «Кодировщик»: probe при enabled+URL, иначе сбрасываем кэш.
     if form_data["video_kensetsu_enabled"] == "true" and form_data["video_kensetsu_base_url"]:
@@ -1378,20 +1387,20 @@ def archive_page(
 @app.get("/encoder-history", response_class=HTMLResponse)
 def encoder_history_page(
     request: Request, page: int = Query(default=1, ge=1), search: str = "",
-    status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None,
+    status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None, origin: str = "",
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = encoder_history_page_context(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id, submission_id=submission_id)
+    context = encoder_history_page_context(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id, submission_id=submission_id, origin=origin)
     return templates.TemplateResponse(request, "encoder_history.html", context)
 
 
 @app.get("/encoder-history/live", response_class=HTMLResponse)
 def encoder_history_live(
     request: Request, page: int = Query(default=1, ge=1), search: str = "",
-    status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None,
+    status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None, origin: str = "",
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    context = encoder_history_page_context(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id, submission_id=submission_id)
+    context = encoder_history_page_context(db, page=page, search=search, status=status, encoding_state=encoding_state, release_id=release_id, submission_id=submission_id, origin=origin)
     return templates.TemplateResponse(request, "partials/encoder_history_live.html", context)
 
 

@@ -1,0 +1,56 @@
+{
+  "ok": true,
+  "run_id": "c0e19e72b02c",
+  "source_files": 172,
+  "architectures": {
+    "arm64": {
+      "runtime": true,
+      "http": true,
+      "http_requests": 20,
+      "migration": "0028_automatic_encoder",
+      "source_files": 172,
+      "build_time": "2026-10-24T14:40:14Z",
+      "git_sha": "1f1ba85-dirty",
+      "python": "3.15.0",
+      "mediainfo": "26.10",
+      "native": true
+    },
+    "amd64": {
+      "runtime": true,
+      "http": true,
+      "http_requests": 20,
+      "migration": "0028_automatic_encoder",
+      "source_files": 172,
+      "build_time": "2026-10-24T14:40:14Z",
+      "git_sha": "1f1ba85-dirty",
+      "python": "3.15.0",
+      "mediainfo": "26.10",
+      "native": false
+    }
+  },
+  "qa_suite": "passed",
+  "source_snapshot_unchanged": true,
+  "runtime_validation_run_id": "f0587e5feb76",
+  "runtime_source_manifest_sha256": "4d337be0b7ef1221d2c93794e303e797abcec4bc8c6614fc34d8b20d7410583d",
+  "qa_results": {
+    "tests": "1640",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "1",
+    "time": "46.807",
+    "passed": 1639,
+    "python": "3.15.0",
+    "postgres_major": 16,
+    "skipped_experiment": "tests.test_minijinja_workbench_experiment"
+  },
+  "cleanup": {
+    "all_owned_containers_removed": true,
+    "all_owned_networks_removed": true,
+    "volumes_created": false
+  },
+  "finished_utc": "2026-10-24T14:49:24.203089+00:00",
+  "image": "registry.mageek.su/al-torrent-tools:release-20261024-144014",
+  "image_index_digest": "sha256:4b971d26731d1dc14b87e0cdbb821c452846c2114843bd1c934b66dcdb6bbcde",
+  "qa_summary_file": "qa-validation-summary.json",
+  "runtime_evidence_revalidated": true
+}

@@ -238,7 +238,7 @@ def _parse_defaults(raw: Any) -> dict[str, str]:
     return defaults
 
 
-async def list_presets(base_url: str, *, timeout_sec: float = 15.0) -> dict[str, Any]:
+async def list_presets(base_url: str, *, timeout_sec: float = 15.0, strict_defaults: bool = False) -> dict[str, Any]:
     """GET /api/presets → {videos, audios, defaults}."""
     root = normalize_video_kensetsu_base_url(base_url)
     if not root:
@@ -255,6 +255,15 @@ async def list_presets(base_url: str, *, timeout_sec: float = 15.0) -> dict[str,
         raise RuntimeError(
             "Некорректный ответ /api/presets: videos и audios обязательны и непустые"
         )
+    if strict_defaults:
+        defaults = payload.get("defaults")
+        if (not isinstance(defaults, dict)
+                or any(not isinstance(defaults.get(key), str) or not defaults[key].strip()
+                       for key in ("video_id", "audio_id", "audio_downmix"))):
+            raise RuntimeError("Некорректный ответ /api/presets: defaults обязательны для автокодирования")
+        # UI historically tolerates malformed defaults; automatic submissions
+        # must never repair them into parameters the server did not select.
+        normalize_audio_downmix(defaults["audio_downmix"])
     return {
         "videos": videos,
         "audios": audios,
@@ -270,6 +279,7 @@ async def encode(
     audio_id: str,
     audio_downmix: str = "none",
     timeout_sec: float | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """POST /api/internal/encode JSON: path/paths + video_id/audio_id/audio_downmix.
 
@@ -291,19 +301,11 @@ async def encode(
         raise ValueError(
             "audio_downmix=stereo недоступен для audio_id copy/none"
         )
-    cleaned_paths = [str(p).strip() for p in (paths or []) if str(p).strip()]
+    cleaned_paths = [str(p) for p in (paths or []) if str(p).strip()]
     if not cleaned_paths:
         raise ValueError("Не задан путь к файлу")
 
-    layer_fields = {
-        "video_id": cleaned_video,
-        "audio_id": cleaned_audio,
-        "audio_downmix": cleaned_downmix,
-    }
-    if len(cleaned_paths) == 1:
-        payload: dict[str, Any] = {"path": cleaned_paths[0], **layer_fields}
-    else:
-        payload = {"paths": cleaned_paths, **layer_fields}
+    payload = build_payload(cleaned_paths, cleaned_video, cleaned_audio, cleaned_downmix, request_id)
 
     effective_timeout = (
         float(timeout_sec)
@@ -317,7 +319,7 @@ async def encode(
             json=payload,
             headers={"Accept": "application/json"},
         )
-    if response.status_code not in (200, 207):
+    if response.status_code not in (200, 202, 207):
         raise VideoKensetsuHttpError(
             _encoder_error_message(response),
             status_code=response.status_code,
@@ -340,3 +342,22 @@ def find_layer_preset(items: list[dict[str, Any]], preset_id: str) -> dict[str, 
         if str(item.get("id") or "") == wanted:
             return item
     return None
+
+
+def build_payload(paths, video_id, audio_id, audio_downmix, request_id=None):
+    payload = {"video_id": video_id, "audio_id": audio_id, "audio_downmix": audio_downmix}
+    payload["path" if len(paths) == 1 else "paths"] = paths[0] if len(paths) == 1 else list(paths)
+    if request_id:
+        payload["request_id"] = request_id
+    return payload
+
+
+async def request_receipt(base_url, request_id, *, timeout_sec=15):
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", request_id):
+        raise ValueError("Некорректный ID квитанции")
+    root = normalize_video_kensetsu_base_url(base_url)
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        response = await client.get(f"{root}/api/internal/encode/requests/{request_id}")
+    return {"status_code": response.status_code, "body": response.json(),
+            "retry_after": response.headers.get("Retry-After")}

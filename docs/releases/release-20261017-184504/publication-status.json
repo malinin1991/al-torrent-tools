@@ -1,0 +1,21 @@
+{
+  "published": true,
+  "release": "release-20261017-184504",
+  "repository": "registry.mageek.su/al-torrent-tools",
+  "tags": [
+    "registry.mageek.su/al-torrent-tools:release-20261017-184504",
+    "registry.mageek.su/al-torrent-tools:latest"
+  ],
+  "digest": "sha256:46029bc00d9611c5bef6383d82ade0db8ba889f5d31ab8d11ceaf0deee8a0828",
+  "previous_latest_digest": "sha256:8e55427b8edc64df0e5971abfcfadca0b20678068479e9c78948683595358137",
+  "platforms": [
+    "linux/arm64",
+    "linux/amd64"
+  ],
+  "tested_image_config_digests_match": true,
+  "source_manifest_sha256": "92ba5816204c4ad90e368193893f033715c11bf25977552f09f8a10dd7ec739f",
+  "working_tree_included": true,
+  "git_sha": "1f1ba85-dirty",
+  "build_time_utc": "2026-10-17T18:45:04Z",
+  "published_utc": "2026-10-17T18:56:10.056847+00:00"
+}

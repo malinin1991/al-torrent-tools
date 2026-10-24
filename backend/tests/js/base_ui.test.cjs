@@ -83,10 +83,10 @@ function harness() {
     appendChild(option) { this.options.push(option); this.selectedOptions = [option]; },
     addEventListener(){},removeEventListener(){},
   });
-  const video = select(), audio = select(), downmix = select();
+  const video = select(), audio = select(), downmix = select(), submit = {textContent:""};
   downmix.options = [{value:"none"},{value:"stereo"}];
   const dialog = {returnValue:"ok",listeners:{},
-    querySelector:selector => ({"#encoder-video-select":video,"#encoder-audio-select":audio,"#encoder-downmix-select":downmix})[selector],
+    querySelector:selector => ({"#encoder-video-select":video,"#encoder-audio-select":audio,"#encoder-downmix-select":downmix,'button[value="ok"]':submit})[selector],
     showModal() { this.openedWith = this.returnValue; },
     addEventListener(name,fn) { this.listeners[name] = fn; },
     removeEventListener(name) { delete this.listeners[name]; },
@@ -96,9 +96,15 @@ function harness() {
   dialogUi.context.fetch = async () => ({ok:true,json:async()=>({videos:[{id:"hevc"}],audios:[{id:"opus"}]})});
   const picking = dialogUi.context.pickEncoderPreset();
   await flush();
+  assert.equal(submit.textContent, "Отправить");
   assert.equal(dialog.openedWith, "");
   dialog.listeners.close(); // Escape closes without changing returnValue.
   assert.equal(await picking, null);
+  const assigning = dialogUi.context.pickEncoderPreset({submitLabel:"Сохранить для релиза"});
+  await flush();
+  assert.equal(submit.textContent, "Сохранить для релиза");
+  dialog.listeners.close();
+  assert.equal(await assigning, null);
 
   const ui = harness();
   const oldOption = input("workers","job-run-mediainfo_sync","number","4");

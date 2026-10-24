@@ -2,7 +2,7 @@
 {% set result = selected_job.result_json %}
 <section class="job-outcome" style="margin-bottom:16px;">
   <h3>Результат синхронизации</h3>
-  {% if not result.discovery_complete %}<p class="badge badge-warn">Обнаружение релизов выполнено не полностью. Для проверки каталога нужен новый обход.</p>{% endif %}
+  {% if not result.discovery_complete %}<p class="badge badge-warn">Обнаружение релизов или проверка их источников выполнены не полностью. Нужен новый обход.</p>{% endif %}
   {% if not result.scan_complete %}<p class="muted">Обход не завершён; ниже сохранены результаты выполненной части.</p>{% endif %}
   <table>
     <thead><tr><th>Объекты</th><th>Проверено</th><th>Обработано</th><th>Пропущено</th><th>Ожидает qB</th><th>С ошибками</th></tr></thead>
@@ -12,7 +12,7 @@
     {% endfor %}</tbody>
   </table>
   {% if result.retry_of %}<p><a href="/jobs?job_id={{ result.retry_of }}">Исходный запуск #{{ result.retry_of }}</a></p>{% endif %}
-  {% if result.notes %}<details data-sse-key="sync-notes-{{ selected_job.id }}"><summary>Пропуски и пояснения</summary><ul>{% for note in result.notes %}<li>Релиз {{ note.release_id }}{% if note.torrent_id %}, торрент {{ note.torrent_id }}{% endif %}: {{ note.message }}</li>{% endfor %}</ul></details>{% endif %}
+  {% if result.notes %}<details data-sse-key="sync-notes-{{ selected_job.id }}"><summary>Пропуски и пояснения</summary><ul>{% for note in result.notes %}<li>{% if note.release_id %}Релиз {{ note.release_id }}{% if note.torrent_id %}, торрент {{ note.torrent_id }}{% endif %}: {% endif %}{{ note.message }}</li>{% endfor %}</ul></details>{% endif %}
   <div id="job-failures-live" data-sync-job-id="{{ selected_job.id }}">
     {% include 'partials/job_failures_live.html' %}
   </div>

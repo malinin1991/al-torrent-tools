@@ -1,0 +1,8 @@
+{
+  "containerimage.descriptor": {
+    "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+    "digest": "sha256:4b971d26731d1dc14b87e0cdbb821c452846c2114843bd1c934b66dcdb6bbcde",
+    "size": 685
+  },
+  "image.name": "registry.mageek.su/al-torrent-tools"
+}

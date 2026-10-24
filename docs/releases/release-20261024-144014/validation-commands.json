@@ -1,0 +1,164 @@
+[
+  {
+    "argv": [
+      "docker",
+      "network",
+      "create",
+      "--internal",
+      "--label",
+      "altt.release-validation=c0e19e72b02c",
+      "--label",
+      "altt.release=release-20261024-144014",
+      "altt-rv-c0e19e72b02c"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.03
+  },
+  {
+    "argv": [
+      "docker",
+      "run",
+      "--detach",
+      "--rm",
+      "--name",
+      "altt-rv-c0e19e72b02c-postgres",
+      "--label",
+      "altt.release-validation=c0e19e72b02c",
+      "--label",
+      "altt.release=release-20261024-144014",
+      "--platform",
+      "linux/arm64",
+      "--network",
+      "altt-rv-c0e19e72b02c",
+      "--tmpfs",
+      "/var/lib/postgresql/data",
+      "-e",
+      "POSTGRES_USER=altt_validation",
+      "-e",
+      "POSTGRES_PASSWORD=local-validation-only",
+      "-e",
+      "POSTGRES_DB=altt_test",
+      "postgres:16"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.144
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "altt-rv-c0e19e72b02c-postgres",
+      "pg_isready",
+      "-U",
+      "altt_validation",
+      "-d",
+      "altt_test"
+    ],
+    "exit_code": 2,
+    "elapsed_sec": 0.115
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "altt-rv-c0e19e72b02c-postgres",
+      "pg_isready",
+      "-U",
+      "altt_validation",
+      "-d",
+      "altt_test"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.115
+  },
+  {
+    "argv": [
+      "docker",
+      "run",
+      "--rm",
+      "--name",
+      "altt-rv-c0e19e72b02c-pytest",
+      "--label",
+      "altt.release-validation=c0e19e72b02c",
+      "--label",
+      "altt.release=release-20261024-144014",
+      "--platform",
+      "linux/arm64",
+      "--network",
+      "altt-rv-c0e19e72b02c",
+      "--workdir",
+      "/app",
+      "-e",
+      "PYTHONPATH=/app",
+      "-e",
+      "PYTHONDONTWRITEBYTECODE=1",
+      "-e",
+      "ALTT_TEST_POSTGRES_URL=postgresql+psycopg://altt_validation:local-validation-only@altt-rv-c0e19e72b02c-postgres:5432/altt_test",
+      "-e",
+      "DATABASE_URL=postgresql+psycopg://altt_validation:local-validation-only@altt-rv-c0e19e72b02c-postgres:5432/altt_test",
+      "-e",
+      "APP_ENV=dev",
+      "-e",
+      "SECRET_KEY=isolated-validation-no-production-secrets",
+      "-e",
+      "EXPECTED_BUILD_TIME=2026-10-24T14:40:14Z",
+      "-e",
+      "EXPECTED_GIT_SHA=1f1ba85-dirty",
+      "--mount",
+      "type=bind,src=/private/tmp/altt-release-validation-20261024,dst=/validation",
+      "--entrypoint",
+      "python",
+      "altt-release-qa:release-20261024-144014",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--junitxml=/validation/pytest-junit.xml"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 49.703
+  },
+  {
+    "argv": [
+      "docker",
+      "inspect",
+      "--format",
+      "{{json .Config.Labels}}",
+      "altt-rv-c0e19e72b02c-pytest"
+    ],
+    "exit_code": 1,
+    "elapsed_sec": 0.038
+  },
+  {
+    "argv": [
+      "docker",
+      "inspect",
+      "--format",
+      "{{json .Config.Labels}}",
+      "altt-rv-c0e19e72b02c-postgres"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.021
+  },
+  {
+    "argv": [
+      "docker",
+      "rm",
+      "--force",
+      "altt-rv-c0e19e72b02c-postgres"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.215
+  },
+  {
+    "argv": [
+      "docker",
+      "network",
+      "rm",
+      "altt-rv-c0e19e72b02c"
+    ],
+    "exit_code": 0,
+    "elapsed_sec": 0.146
+  }
+]

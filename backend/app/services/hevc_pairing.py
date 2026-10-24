@@ -13,10 +13,11 @@ overdue         — на слоте уже есть HEVC (тот же batch_star
                   HEVC_PAIR_UPLOAD_GRACE_HOURS — exact актуальна, не catch-up.
                   Часы SLA: api_created_at (AL max created_at/updated_at) если
                   есть, иначе system created_at. Pure missing никогда не overdue.
-                  Несколько overdue AVC в одном presence-слоте (тот же start) —
+                  Несколько overdue AVC одного rip_family в presence-слоте —
                   age от earliest upload среди нуждающихся в catch-up.
-                  Якорь наследует superseded/исторические AVC того же слота:
-                  смена AVC 1-3→1-4 не сбрасывает отсчёт, пока HEVC не догнал.
+                  Якорь наследует superseded/исторические AVC того же слота
+                  и типа рипа: старые WEBRip не якорят текущий WEB-DL.
+                  Смена AVC 1-3→1-4 не сбрасывает отсчёт, пока HEVC не догнал.
                   Исторический AVC, диапазон которого HEVC уже покрывает
                   (exact 1-8 при HEVC 1-8), не якорит слот — даже если
                   torrent_id AVC > HEVC (AL переиспользует id при расширении
@@ -107,6 +108,8 @@ _REGULAR_RE = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?$")
 BatchStartKey = tuple[Any, ...]
 # (quality, source_class, batch_start) — presence для missing.
 PresenceKey = tuple[str, str, BatchStartKey]
+# Общий web-presence подтверждает HEVC, но SLA наследуется только внутри rip_family.
+SlaAnchorKey = tuple[PresenceKey, str]
 # Видео для SLA «новый эпизод vs правка ярлыка» — не nfo/картинки.
 _VIDEO_SUFFIXES = frozenset({".mkv", ".mp4", ".m2ts", ".ts", ".avi", ".mov", ".webm"})
 
@@ -790,7 +793,7 @@ def _covered_hist_is_label_only_rename(
     if not hist_keys:
         return False
     for active in active_drafts:
-        if active.presence != hist.presence or not _is_range_uncovered(active):
+        if active.family != hist.family or active.presence != hist.presence or not _is_range_uncovered(active):
             continue
         active_keys = file_keys_by_id.get(_draft_archive_id(active))
         if not active_keys:
@@ -802,12 +805,12 @@ def _covered_hist_is_label_only_rename(
 
 
 def _contribute_overdue_anchor(
-    anchor_candidates: dict[PresenceKey, list[tuple[datetime, bool]]],
+    anchor_candidates: dict[SlaAnchorKey, list[tuple[datetime, bool]]],
     draft: _AvcDraft,
     *,
     allow_covered_rename: bool = False,
 ) -> None:
-    """Кандидат якоря слота: AVC, чей диапазон HEVC ещё не покрывает.
+    """Кандидат якоря слота и rip_family: AVC с ещё не покрытым HEVC диапазоном.
 
     Exact remux (``avc_newer_exact`` при уже покрытом диапазоне) не якорит
     слот. Иначе republish 1-8→1-9 сразу наследует «просрочку» от закрытой
@@ -825,7 +828,7 @@ def _contribute_overdue_anchor(
         or draft.sla_created is None
     ):
         return
-    anchor_candidates.setdefault(draft.presence, []).append(
+    anchor_candidates.setdefault((draft.presence, draft.family), []).append(
         (draft.sla_created, draft.age_from_api)
     )
 
@@ -959,14 +962,15 @@ def find_unpaired_avc(
                 )
             )
 
-        # Presence-слот: якорь = earliest upload среди AVC с непокрытым диапазоном.
+        # В каждом rip_family presence-слота свой earliest непокрытый AVC.
+        # История WEBRip не переносит долг на WEB-DL в общем web-presence.
         # 1-2 exact OK + 1-3/1-4 catch-up → часы от 1-3, не от более нового 1-4.
         # Superseded 1-3 якорит активный 1-4, пока HEVC не догнал диапазон.
         # Покрытый исторический 1-8 (есть HEVC 1-8) не якорит свежий 1-9,
         # кроме правки ярлыка при тех же видеофайлах.
         # Кандидаты с api_created_at предпочтительнее local-only (см. _pick_overdue_anchor).
         file_keys = file_keys_by_archive_id or {}
-        anchor_candidates: dict[PresenceKey, list[tuple[datetime, bool]]] = {}
+        anchor_candidates: dict[SlaAnchorKey, list[tuple[datetime, bool]]] = {}
         for draft in drafts:
             _contribute_overdue_anchor(anchor_candidates, draft)
         # История слота: ignore_hevc не отсекает — якорь catch-up от earliest upload.
@@ -985,11 +989,11 @@ def find_unpaired_avc(
                     hist, active_drafts=drafts, file_keys_by_id=file_keys
                 ),
             )
-        anchor_by_presence: dict[PresenceKey, tuple[datetime, bool]] = {}
-        for presence, candidates in anchor_candidates.items():
+        anchor_by_family: dict[SlaAnchorKey, tuple[datetime, bool]] = {}
+        for key, candidates in anchor_candidates.items():
             picked = _pick_overdue_anchor(candidates)
             if picked is not None:
-                anchor_by_presence[presence] = picked
+                anchor_by_family[key] = picked
 
         for draft in drafts:
             sla_created = draft.sla_created
@@ -998,15 +1002,16 @@ def find_unpaired_avc(
             catchup_pending = (
                 not draft.is_missing and draft.needs_exact_catchup and draft.presence is not None
             )
+            anchor_key = (draft.presence, draft.family)
             if (
                 catchup_pending
-                and draft.presence in anchor_by_presence
+                and anchor_key in anchor_by_family
                 # Перезаливка exact (AVC новее HEVC): часы от этого AVC, не от
                 # закрытого долга расширения (1-16→1-17), иначе «просрочка 147ч»
                 # при свежем re-upload.
                 and not draft.avc_newer_exact
             ):
-                sla_created, age_from_api = anchor_by_presence[draft.presence]
+                sla_created, age_from_api = anchor_by_family[anchor_key]
                 hours = age_hours(sla_created, now=current)
             # overdue только если HEVC уже был на этом batch_start (частичный/старый).
             # Pure missing (нет presence) — только missing, даже при age > SLA.

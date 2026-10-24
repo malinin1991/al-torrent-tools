@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Автоматический кодировщик</h1>
+<p>Все новые и изменённые AVC отслеживаемых Telegram-релизов отправляются после загрузки и проверки хеша. Без индивидуального пресета используются настройки Kensetsu по умолчанию. Параметры можно изменить здесь или на странице релизов.</p>
+<p class="muted">При первом включении уже известные версии пропускаются. Их можно явно добавить ниже. Пауза сохраняет очередь и накапливает новые изменения. Уже начатые отправки могут завершить приём.</p>
+<form method="get" class="row" style="margin-bottom:12px;">
+  <input class="input" name="search" value="{{ search }}" placeholder="Название или ID релиза" aria-label="Поиск релиза">
+  {% if release_id %}<input type="hidden" name="release_id" value="{{ release_id }}">{% endif %}
+  <button class="btn">Найти</button><a href="/automatic-encoder">Все отслеживаемые</a>
+  <a href="/settings">Настройки Kensetsu</a><a href="/encoder-history">История отправок</a>
+</form>
+<p id="auto-encoder-result" role="status" aria-live="polite"></p>
+{% if release_id %}
+<div class="row" style="margin-bottom:12px;">
+  <button class="btn" type="button" data-auto-backfill="{{ release_id }}">Добавить выбранные существующие файлы</button>
+  <span class="muted">Выбор только на текущей странице; уже принятые файлы не отправляются повторно.</span>
+</div>
+{% endif %}
+<div id="automatic-encoder-live" data-ui-sse-channel="automatic_encoder"
+     data-ui-sse-url="/automatic-encoder/live?{{ live_query }}" data-ui-sse-target="#automatic-encoder-live">
+  {% include "partials/automatic_encoder_live.html" %}
+</div>
+<script src="{{ static_asset_url('automatic_encoder.js') }}" defer></script>
+{% endblock %}

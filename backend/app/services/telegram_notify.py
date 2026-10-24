@@ -169,6 +169,8 @@ def upsert_tracked_release(
     enabled: bool = True,
     commit: bool = True,
 ) -> TrackedRelease:
+    from app.services.automatic_encoder import lock, tracking_changed
+    lock(db)
     alias = (release_alias or "").strip().strip("/")
     title_value = (title or "").strip() or alias or str(release_id)
     title_value = truncate_telegram_text(title_value, 512)
@@ -192,6 +194,7 @@ def upsert_tracked_release(
         # bot имеет приоритет бейджа; ui не затирает bot
         if source_value == SOURCE_BOT or row.source != SOURCE_BOT:
             row.source = source_value
+    tracking_changed(db, release_id, bool(enabled))
     if commit:
         db.commit()
         db.refresh(row)
@@ -201,10 +204,13 @@ def upsert_tracked_release(
 
 
 def set_tracked_enabled(db: Session, release_id: int, enabled: bool, *, source: str = SOURCE_UI) -> TrackedRelease | None:
+    from app.services.automatic_encoder import lock, tracking_changed
+    lock(db)
     row = db.get(TrackedRelease, release_id)
     if row is None:
         return None
     row.enabled = enabled
+    tracking_changed(db, release_id, bool(enabled))
     if source == SOURCE_BOT or row.source != SOURCE_BOT:
         row.source = source if enabled else row.source
     db.commit()
@@ -228,7 +234,10 @@ def disable_tracked_by_alias(db: Session, alias: str) -> TrackedRelease | None:
     row = find_tracked_release(db, alias)
     if row is None:
         return None
+    from app.services.automatic_encoder import lock, tracking_changed
+    lock(db)
     row.enabled = False
+    tracking_changed(db, row.release_id, False)
     db.commit()
     db.refresh(row)
     return row

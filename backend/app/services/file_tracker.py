@@ -397,6 +397,10 @@ class FileTrackerService:
                 )
                 if tr is not None:
                     hash_transitions.append(tr)
+                from app.services.automatic_encoder import record_readiness
+                record_readiness(self._db, file_row, new_row, job_id=self._job_id,
+                                 prior_info_hash=prior_hash,
+                                 confirmed=bool(is_baseline or first_seen or mismatch or matched))
                 settled_rels.add(rel)
         except JobStopRequested:
             self._apply_hash_checking_overlay(rows, active=False)

@@ -313,6 +313,8 @@ class TorrentArchiveService:
     ) -> TorrentArchive:
         safe_hash = sanitize_info_hash(info_hash)
         torrent_id = int(torrent_payload["id"])
+        from app.services.automatic_encoder import lock
+        lock(self._db)
         archive = self._find_archive_for_upsert(torrent_id, safe_hash)
         patched = release_payload.get("_source") == "backoffice" or (archive is not None and archive.info_hash == safe_hash and getattr(archive, "backoffice_trackers", False) is True)
         if patched:
@@ -383,6 +385,9 @@ class TorrentArchiveService:
             archive.superseded = False
             # Обновление той же версии (тот же info_hash) — ignore_hevc сохраняем.
             # Новая версия (supersede выше) создаёт строку с ignore_hevc=False.
+
+        from app.services.automatic_encoder import observe_archive
+        observe_archive(self._db, archive)
 
         # Карточка релиза (состав/блокировки/жанры) — source of truth рядом с dual-write в quality_json.
         archive.backoffice_trackers = bool(patched)
@@ -459,6 +464,8 @@ class TorrentArchiveService:
 
         api_hash = self._extract_api_info_hash(torrent_payload)
 
+        from app.services.automatic_encoder import lock
+        lock(self._db)
         archive = self._find_active_archive(torrent_id=torrent_id, info_hash=api_hash)
         if archive is None:
             return "missing"

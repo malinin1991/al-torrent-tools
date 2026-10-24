@@ -345,3 +345,38 @@ def test_lifespan_closes_broadcaster_on_error_and_recreates_on_restart(tmp_path)
     asyncio.run(run())
     asyncio.run(run())
     assert broadcasters[0] is not broadcasters[1]
+
+
+def test_releases_token_includes_presets_and_encoder_settings() -> None:
+    db = MagicMock()
+    db.scalar.return_value = 0
+    policy = ["same-timestamp", 1, 1]
+    settings = [("video_kensetsu_auto_enabled", "false"), ("video_kensetsu_base_url", "https://encoder.example"), ("video_kensetsu_enabled", "true")]
+
+    def execute(statement):
+        result = MagicMock()
+        sql = str(statement)
+        if "release_encoder_policies" in sql:
+            result.one.return_value = tuple(policy)
+        elif "settings" in sql:
+            result.all.return_value = list(settings)
+        else:
+            result.one.return_value = (0, 0, 0, 0, 0)
+        return result
+
+    db.execute.side_effect = execute
+    with patch("app.services.ui_events.time.time", return_value=120):
+        first = channel_token(db, "releases")
+        assert first == channel_token(db, "releases")
+        policy[1] += 1
+        second = channel_token(db, "releases")
+        assert second != first
+        settings[0] = ("video_kensetsu_auto_enabled", "true")
+        third = channel_token(db, "releases")
+        assert third != second
+        settings[1] = ("video_kensetsu_base_url", "https://other.example")
+        fourth = channel_token(db, "releases")
+        assert fourth != third
+        settings[2] = ("video_kensetsu_enabled", "false")
+        assert channel_token(db, "releases") != fourth
+        assert "https://" not in fourth

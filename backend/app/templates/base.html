@@ -629,7 +629,7 @@
   <header>
     <nav aria-label="Основная навигация">
       {% set nav_path = request.url.path|string %}
-      {% for href, label in [('/', 'Главная'), ('/info', 'Информация'), ('/settings', 'Настройки'), ('/jobs', 'Джобы'), ('/releases', 'Релизы'), ('/hevc-workbench', 'Рабочий список HEVC'), ('/archive', 'Архив'), ('/pipeline', 'Пайплайн'), ('/telegram-access', 'Доступ Telegram'), ('/telegram-outbox', 'Доставка Telegram'), ('/encoder-history', 'Отправки в Kensetsu')] %}
+      {% for href, label in [('/', 'Главная'), ('/info', 'Информация'), ('/settings', 'Настройки'), ('/jobs', 'Джобы'), ('/releases', 'Релизы'), ('/hevc-workbench', 'Рабочий список HEVC'), ('/archive', 'Архив'), ('/pipeline', 'Пайплайн'), ('/telegram-access', 'Доступ Telegram'), ('/telegram-outbox', 'Доставка Telegram'), ('/encoder-history', 'Отправки в Kensetsu'), ('/automatic-encoder', 'Автокодировщик')] %}
       <a href="{{ href }}"{% if nav_path == href or (href != '/' and nav_path.startswith(href ~ '/')) %} aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
       {% if video_kensetsu_ok and video_kensetsu_base_url %}
@@ -810,7 +810,7 @@
     if (firstEnabled) select.value = firstEnabled.value;
   }
 
-  async function pickEncoderPreset() {
+  async function pickEncoderPreset(options = {}) {
     const dialog = ensureEncoderPresetDialog();
     const videoSelect = dialog.querySelector("#encoder-video-select");
     const audioSelect = dialog.querySelector("#encoder-audio-select");
@@ -830,7 +830,8 @@
     if (!videos.length) throw new Error("Видео-пресеты не найдены");
     if (!audios.length) throw new Error("Аудио-пресеты не найдены");
 
-    const defaults = data.defaults || {};
+    const defaults = options.initial?.video_id ? options.initial : (data.defaults || {});
+    dialog.querySelector('button[value="ok"]').textContent = options.submitLabel || "Отправить";
     fillEncoderLayerSelect(videoSelect, videos, defaults.video_id);
     fillEncoderLayerSelect(audioSelect, audios, defaults.audio_id);
     const preferredDownmix =

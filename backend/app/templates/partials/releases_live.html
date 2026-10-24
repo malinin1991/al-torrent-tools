@@ -1,7 +1,8 @@
 <p class="muted" style="margin:0 0 10px;">Релизов: {{ total }}. Страница {{ page }} из {{ total_pages }}. {% if hevc_filter == "overdue" %}Сортировка — по длительности просрочки.{% else %}Сортировка — по последнему торренту.{% endif %} <span class="muted">· live</span></p>
 
 {% for group in groups %}
-<details class="release-block" data-sse-key="release-{{ group.release_id }}">
+<details class="release-block" data-sse-key="release-{{ group.release_id }}"
+         data-auto-release="{{ group.release_id }}" data-policy="{{ group.encoder_policy|tojson|forceescape }}">
   <summary class="release-summary">
     <div class="release-title">
       <div class="release-name-row">
@@ -40,6 +41,11 @@
       {% if group.release_alias and group.anime_name %}
       <span class="muted">{{ group.release_alias }}</span>
       {% endif %}
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px;" aria-label="Автокодирование">
+        <span class="badge {% if group.encoder_state == 'enabled' %}badge-ok{% elif group.encoder_state == 'paused' %}badge-warn{% endif %}"
+              title="{{ group.encoder_state_detail }}">Автокодирование: {{ group.encoder_state_label|lower }}</span>
+        <span class="muted" data-auto-policy-summary>{% if group.encoder_policy.mode == 'automatic' %}Автоматический · настройки Kensetsu по умолчанию{% else %}{{ group.encoder_policy.video_label or group.encoder_policy.video_id or 'Видео не задано' }} / {{ group.encoder_policy.audio_label or group.encoder_policy.audio_id or 'Аудио не задано' }} · {% if group.encoder_policy.audio_downmix == 'stereo' %}даунмикс в стерео{% else %}без даунмикса{% endif %}{% endif %}</span>
+      </div>
       {% if group.genres %}
       <div class="genre-tags" aria-label="Жанры">
         {% for genre in group.genres %}
@@ -68,6 +74,9 @@
   <div class="release-body">
     <div class="row" style="margin-bottom:10px; flex-wrap:wrap;">
       <span class="muted">release_id={{ group.release_id }}</span>
+      <button class="btn btn-secondary" type="button" data-auto-policy-edit aria-label="Настроить автокодирование релиза {{ group.release_id }}">Настроить автокодирование</button>
+      <button class="btn-link" type="button" data-auto-policy-clear {% if group.encoder_policy.mode == 'automatic' %}hidden{% endif %}>Автоматический</button>
+      <a href="/automatic-encoder?release_id={{ group.release_id }}">Очередь автокодирования</a>
       {% if group.release_url %}
       <a href="{{ group.release_url }}" target="_blank" rel="noopener">На AniLiberty</a>
       {% endif %}

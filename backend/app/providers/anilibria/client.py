@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Iterable
 from typing import Any
 
@@ -6,7 +7,11 @@ import httpx
 
 
 class AniLibriaNotFoundError(RuntimeError):
-    """Все попытки JSON-запроса на primary/fallback завершились HTTP 404."""
+    """Основной API подтвердил отсутствие ресурса ответом HTTP 404."""
+
+
+class _QueueResponseError(ValueError):
+    """Upstream вернул заглушку очереди вместо данных API."""
 
 
 class AniLibriaClient:
@@ -51,6 +56,24 @@ class AniLibriaClient:
             return status_code == 429 or status_code >= 500
         return True
 
+    @staticmethod
+    def _reject_queue_response(response: httpx.Response) -> None:
+        # Заглушка встречается с HTTP 200/application/octet-stream и одинарными
+        # кавычками. Проверяем также её JSON-вариант до чтения JSON или .torrent.
+        body = response.content
+        if b"queue accepted" not in body[:512].lower():
+            return
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            try:
+                payload = json.loads(body.replace(b"'", b'"'))
+            except ValueError:
+                return
+        if isinstance(payload, dict) and isinstance(payload.get("data"), str):
+            if payload["data"].strip().casefold() == "queue accepted, ok":
+                raise _QueueResponseError("AniLibria API: ответ-заглушка queue accepted")
+
     async def _request_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
         base_urls = [self.base_url]
         if self.fallback_base_url:
@@ -58,31 +81,38 @@ class AniLibriaClient:
 
         last_error: Exception | None = None
         errors: list[Exception] = []
-        for root in base_urls:
+        stop_fallback = False
+        for root_index, root in enumerate(base_urls):
             for attempt in range(1, self._request_retries + 1):
                 try:
                     async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
                         response = await client.get(f"{root}{path}", params=params)
                         response.raise_for_status()
+                        self._reject_queue_response(response)
                         return response.json()
                 except ValueError as exc:
                     last_error = exc
                     errors.append(exc)
                     break
                 except httpx.HTTPError as exc:
+                    if isinstance(exc, httpx.HTTPStatusError) and not self._should_retry_http_error(exc):
+                        # 404 основного API — ответ о ресурсе, а не отказ сервиса.
+                        # После сбоя primary один лишь 404 fallback не доказывает
+                        # отсутствие: он останется обычной ошибкой запроса.
+                        if root_index == 0 and exc.response.status_code == 404:
+                            raise AniLibriaNotFoundError("AniLibria API: ресурс не найден") from exc
+                        stop_fallback = True
                     last_error = exc
                     errors.append(exc)
                     if not self._should_retry_http_error(exc) or attempt >= self._request_retries:
                         break
                     await asyncio.sleep(self._retry_delay_sec)
-        if errors and all(
-            isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
-            for exc in errors
-        ):
-            raise AniLibriaNotFoundError("AniLibria API: ресурс не найден") from last_error
+            if stop_fallback:
+                break
         # Не выводим URL, параметры и тело ответа: в них могут оказаться секреты.
         reasons = [
             f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
+            else "ответ-заглушка queue accepted" if isinstance(exc, _QueueResponseError)
             else "некорректный JSON" if isinstance(exc, ValueError)
             else type(exc).__name__
             for exc in errors
@@ -96,18 +126,27 @@ class AniLibriaClient:
             base_urls.append(self.fallback_base_url)
 
         last_error: Exception | None = None
+        stop_fallback = False
         for root in base_urls:
             for attempt in range(1, self._request_retries + 1):
                 try:
                     async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
                         response = await client.get(f"{root}{path}", params=params)
                         response.raise_for_status()
+                        self._reject_queue_response(response)
                         return response.content
+                except _QueueResponseError as exc:
+                    last_error = exc
+                    break
                 except httpx.HTTPError as exc:
                     last_error = exc
+                    if isinstance(exc, httpx.HTTPStatusError) and not self._should_retry_http_error(exc):
+                        stop_fallback = True
                     if not self._should_retry_http_error(exc) or attempt >= self._request_retries:
                         break
                     await asyncio.sleep(self._retry_delay_sec)
+            if stop_fallback:
+                break
         raise RuntimeError("Не удалось скачать torrent-файл") from last_error
 
     async def _request_post_json(self, path: str, body: dict[str, Any]) -> Any:
@@ -116,6 +155,7 @@ class AniLibriaClient:
             base_urls.append(self.fallback_base_url)
 
         last_error: Exception | None = None
+        stop_fallback = False
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         for root in base_urls:
             for attempt in range(1, self._request_retries + 1):
@@ -123,17 +163,20 @@ class AniLibriaClient:
                     async with httpx.AsyncClient(timeout=self._timeout) as client:
                         response = await client.post(f"{root}{path}", json=body, headers=headers)
                         response.raise_for_status()
+                        self._reject_queue_response(response)
                         return response.json()
                 except ValueError as exc:
                     last_error = exc
                     break
                 except httpx.HTTPError as exc:
                     last_error = exc
-                    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 422):
-                        break
+                    if isinstance(exc, httpx.HTTPStatusError) and not self._should_retry_http_error(exc):
+                        stop_fallback = True
                     if not self._should_retry_http_error(exc) or attempt >= self._request_retries:
                         break
                     await asyncio.sleep(self._retry_delay_sec)
+            if stop_fallback:
+                break
         if isinstance(last_error, httpx.HTTPStatusError) and last_error.response.status_code == 401:
             raise RuntimeError("Не удалось авторизоваться в AniLibria API: неверный логин или пароль") from last_error
         raise RuntimeError("Не удалось выполнить вход в AniLibria API") from last_error
@@ -238,7 +281,7 @@ class AniLibriaClient:
         include: Iterable[str] | None = None,
         exclude: Iterable[str] | None = None,
     ) -> Any | None:
-        """Данные по hash/id; None только если все primary/fallback вернули 404."""
+        """Данные по hash/id; None только после подтверждённого 404 основного API."""
         try:
             return await self._request_json(
                 f"/anime/torrents/{hash_or_id}",

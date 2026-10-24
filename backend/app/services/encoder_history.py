@@ -90,7 +90,7 @@ def replay(db: Session, request_id: str, digest: str) -> EncoderSubmission | Non
     return row
 
 
-def recover_expired(db: Session) -> None:
+def recover_expired(db: Session, *, commit=True) -> None:
     now = utcnow()
     rows = db.scalars(select(EncoderSubmission).where(EncoderSubmission.finished_at.is_(None), EncoderSubmission.expires_at < now).options(selectinload(EncoderSubmission.items))).all()
     for row in rows:
@@ -100,7 +100,7 @@ def recover_expired(db: Session) -> None:
                 item.error = "Результат потерян после начала отправки; проверьте Kensetsu" if row.request_started_at else "Подготовка прервана до отправки запроса"
         row.finished_at = now
         row.updated_at = now
-    if rows:
+    if rows and commit:
         db.commit()
 
 
@@ -112,19 +112,27 @@ def source_item(db: Session, file_id: int) -> EncoderSubmissionItem:
     release = db.scalar(select(Release).where(Release.release_id == rid)) if rid else None
     archive = db.scalar(select(TorrentArchive).where(TorrentArchive.info_hash == row.info_hash).order_by(TorrentArchive.id.desc()).limit(1))
     title = release.title if release else (archive.anime_name if archive else "")
-    return EncoderSubmissionItem(
+    item = EncoderSubmissionItem(
         file_id=file_id, release_id=rid, torrent_id=getattr(row, "torrent_id", None),
         info_hash=row.info_hash or "", relative_path=getattr(row, "relative_path", "") or "",
         full_path=getattr(row, "full_path", "") or "", status="sending", external_job_ids=[],
         source_json={"title": title or "", "archive_id": archive.id if archive else None, "size": getattr(row, "size", None)},
     )
 
+    if getattr(row, "full_path", None):
+        try:
+            capture_path(db, item, row.full_path)
+        except OSError:
+            pass
+    return item
+
 
 def capture_path(db: Session, item: EncoderSubmissionItem, path: str) -> None:
     item.full_path = path
     snapshot = dict(item.source_json)
     stat = Path(path).stat()
-    snapshot.update(size=stat.st_size, mtime=stat.st_mtime, mtime_ns=stat.st_mtime_ns)
+    snapshot.update(size=stat.st_size, mtime=stat.st_mtime, mtime_ns=stat.st_mtime_ns,
+                    inode=stat.st_ino, device=stat.st_dev)
     disk = db.scalar(select(DiskFileHash).where(DiskFileHash.full_path == path))
     if disk and disk.size == stat.st_size and disk.mtime == stat.st_mtime and disk.content_hash:
         snapshot.update(content_hash=disk.content_hash, hash_algo=disk.hash_algo, hashed_at=as_utc_iso(disk.last_hashed_at))
@@ -135,8 +143,11 @@ def claim(
     db: Session, *, file_ids: list[int], request_id: str | None, digest: str,
     base_url: str, video_id: str, audio_id: str, downmix: str,
     retry_of: int | None = None, allow_repeat: bool = False, acknowledge_unknown: bool = False,
+    origin: str = "manual", auto_item_id: int | None = None, claim_token: str | None = None,
 ) -> tuple[EncoderSubmission, bool]:
-    recover_expired(db)
+    from app.services.automatic_encoder import lock
+    lock(db)
+    recover_expired(db, commit=False)
     key = request_id or str(uuid4())
     existing = replay(db, key, digest)
     if existing is not None:
@@ -172,13 +183,44 @@ def claim(
             .order_by(EncoderSubmissionItem.id.desc()).limit(1)
         )
         if old and (old.status == "sending" or old.status == "accepted" and not allow_repeat or old.status == "unknown" and not acknowledge_unknown):
-            previous.append({"file_id": item.file_id, "status": old.status, "submission_id": old.submission_id, "path": item.relative_path})
+            previous.append({"file_id": item.file_id, "item_id": old.id, "status": old.status, "submission_id": old.submission_id, "path": item.relative_path})
     if previous:
         db.rollback()
         raise SubmissionConflict("Выбранные файлы уже отправлялись с этими пресетами. Проверьте историю перед повтором.", previous)
+    for item in items:
+        if not item.info_hash:
+            continue
+        prior = db.execute(select(EncoderSubmissionItem, EncoderSubmission).join(EncoderSubmission).where(
+            EncoderSubmissionItem.release_id == item.release_id,
+            EncoderSubmissionItem.relative_path == item.relative_path,
+            EncoderSubmissionItem.status.in_(("sending", "accepted", "unknown")))).all()
+        for old, parent in prior:
+            if origin != "auto" and parent.origin != "auto":
+                continue
+            exact = old.info_hash == item.info_hash
+            new_hash, old_hash = item.source_json.get("content_hash"), old.source_json.get("content_hash")
+            content = (new_hash and old_hash and new_hash == old_hash
+                       and item.source_json.get("size") == old.source_json.get("size")
+                       and item.source_json.get("hash_algo") == old.source_json.get("hash_algo"))
+            unresolved = bool(old.source_json.get("source_conflict")) or old.status == "unknown" and not (new_hash and old_hash)
+            blocked = old.status == "sending" or (old.status == "accepted" and not allow_repeat) or (old.status == "unknown" and not acknowledge_unknown)
+            if (exact or content or unresolved) and blocked:
+                previous.append({"file_id": item.file_id, "item_id": old.id, "status": old.status,
+                                 "submission_id": parent.id, "path": item.relative_path})
+    if previous:
+        db.rollback()
+        raise SubmissionConflict("Источник уже отправлен или приём требует проверки", previous)
+    auto_item = None
+    if auto_item_id:
+        from app.db.models import EncoderAutoItem
+        auto_item = db.get(EncoderAutoItem, auto_item_id, populate_existing=True)
+        if not auto_item or auto_item.state != "claimed" or auto_item.claim_token != claim_token:
+            db.rollback()
+            raise SubmissionConflict("Подготовка автоотправки больше не актуальна")
     now = utcnow()
     group = EncoderSubmission(
         request_id=key, request_digest=digest, base_url=target,
+        origin=origin, auto_item_id=auto_item_id, policy_revision=auto_item.policy_revision if auto_item else None,
         video_id=video_id, audio_id=audio_id, audio_downmix=downmix,
         retry_of_id=retry_of, created_at=now, updated_at=now,
         # Preset preflight + maximum 300s encode + margin. Not a 60s job reclaim.
@@ -186,6 +228,10 @@ def claim(
     )
     db.add(group)
     try:
+        db.flush()
+        if auto_item:
+            auto_item.submission_id = group.id
+            auto_item.receipt_item_id = group.items[0].id
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -350,6 +396,8 @@ def serialize(group: EncoderSubmission) -> dict:
         "history_url": f"/encoder-history?submission_id={group.id}",
         "created_at": as_utc_iso(group.created_at), "request_started_at": as_utc_iso(group.request_started_at),
         "finished_at": as_utc_iso(group.finished_at), "base_url": group.base_url,
+        "origin": group.origin, "policy_revision": group.policy_revision, "auto_item_id": group.auto_item_id,
+        "recovery": group.recovery_json, "receipt_error": group.receipt_error,
         "retry_of_id": group.retry_of_id, "video_id": group.video_id, "audio_id": group.audio_id,
         "audio_downmix": group.audio_downmix, "presets": group.presets_json,
         "counts": counts, "ok": bool(group.items) and counts.get("accepted", 0) == len(group.items),
@@ -369,9 +417,11 @@ def serialize(group: EncoderSubmission) -> dict:
     return result
 
 
-def history_page(db: Session, *, page: int = 1, search: str = "", status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None) -> dict:
+def history_page(db: Session, *, page: int = 1, search: str = "", status: str = "", encoding_state: str = "", release_id: int | None = None, submission_id: int | None = None, origin: str = "") -> dict:
     recover_expired(db)
     query = select(EncoderSubmission)
+    if origin in {"auto", "manual"}:
+        query = query.where(EncoderSubmission.origin == origin)
     conditions = []
     if status == "attention":
         conditions.append(or_(EncoderSubmissionItem.status.in_(ATTENTION), EncoderSubmissionItem.encoding_jobs.any(or_(
@@ -402,7 +452,7 @@ def history_page(db: Session, *, page: int = 1, search: str = "", status: str = 
     page = min(max(1, page), pages)
     groups = db.scalars(query.order_by(EncoderSubmission.id.desc()).offset((page - 1) * 20).limit(20).options(selectinload(EncoderSubmission.items).selectinload(EncoderSubmissionItem.encoding_jobs))).all()
     return {"submissions": [serialize(g) for g in groups], "total": total, "page": page, "total_pages": pages,
-            "search": search, "status_filter": status, "encoding_state": encoding_state, "release_id": release_id, "submission_id": submission_id, "encoder_labels": LABELS}
+            "search": search, "status_filter": status, "encoding_state": encoding_state, "release_id": release_id, "submission_id": submission_id, "encoder_labels": LABELS, "origin_filter": origin}
 
 
 def latest_receipts(db: Session, file_ids: list[int]) -> dict:

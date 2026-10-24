@@ -122,7 +122,12 @@ def resolve_telegram_bot_settings(
 
 
 def upsert_setting(db: Session, key: str, value: str) -> None:
-    row = db.get(Setting, key)
+    # SessionLocal has autoflush=False. Repeated updates in one short
+    # transaction must reuse a not-yet-flushed Setting rather than INSERT twice.
+    row = next((item for item in getattr(db, "new", ())
+                if isinstance(item, Setting) and item.key == key), None)
+    if row is None:
+        row = db.get(Setting, key)
     if row is None:
         db.add(Setting(key=key, value=value))
     else:

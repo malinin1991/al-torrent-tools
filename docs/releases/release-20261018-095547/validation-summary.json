@@ -1,0 +1,28 @@
+{
+  "published": false,
+  "architectures": {
+    "arm64": {
+      "runtime": true,
+      "migration": "0028_automatic_encoder",
+      "legacy_receipt_preserved": true,
+      "http": true,
+      "auto_default": false,
+      "source_files": 171,
+      "native": true
+    },
+    "amd64": {
+      "runtime": true,
+      "migration": "0028_automatic_encoder",
+      "legacy_receipt_preserved": true,
+      "http": true,
+      "auto_default": false,
+      "source_files": 171,
+      "native": false
+    }
+  },
+  "source_manifest_sha256": "357906569fabaa2b5c86db4e3069cc7383d74c1d2d87716efdce60763bb471f2",
+  "qa_suite": "passed; see pytest-arm64.log and qa-evidence/pytest-junit.xml",
+  "source_snapshot_unchanged": true,
+  "ok": true,
+  "finished_utc": "2026-10-18T09:58:39.652223+00:00"
+}

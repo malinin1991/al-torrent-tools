@@ -1383,3 +1383,67 @@ def test_format_torrent_files_summary_plural_forms() -> None:
         )
         == "5 файлов (5 старых), 1 удалён."
     )
+
+
+def test_release_encoder_policies_are_bounded_and_flags_shared() -> None:
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.ext.compiler import compiles
+    from sqlalchemy.orm import Session
+
+    from app.db.base import Base
+    from app.db.models import ReleaseEncoderPolicy, Setting, TorrentArchive, TrackedRelease
+
+    @compiles(JSONB, "sqlite")
+    def jsonb_as_json(*_args, **_kwargs):
+        return "JSON"
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    statements = []
+    event.listen(engine, "before_cursor_execute", lambda _conn, _cursor, statement, parameters, _context, _many: statements.append((statement, parameters)))
+    with Session(engine) as db:
+        for rid in (1, 2, 3):
+            db.add(TorrentArchive(release_id=rid, torrent_id=rid, info_hash=f"{rid:040x}", file_path=f"{rid}.torrent", quality_json={}))
+        db.add_all([
+            Setting(key="video_kensetsu_enabled", value="true"),
+            Setting(key="video_kensetsu_base_url", value="https://encoder.example"),
+            Setting(key="video_kensetsu_auto_enabled", value="true"),
+            TrackedRelease(release_id=1, release_alias="first", enabled=True, source="web"),
+            TrackedRelease(release_id=2, release_alias="second", enabled=True, source="bot"),
+            ReleaseEncoderPolicy(release_id=2, revision=7, video_id="hevc", audio_id="opus", audio_downmix="stereo",
+                                 participating=False, presets_json={"video":{"name":"HEVC"},"audio":{"name":"Opus"}}),
+            ReleaseEncoderPolicy(release_id=99, revision=99, video_id="off-page", audio_id="off-page", presets_json={}),
+        ])
+        db.commit()
+        db.expunge_all()
+        statements.clear()
+        groups = {g.release_id:g for g in list_release_groups(db, per_page=30)["groups"]}
+        policy_reads = [(sql, params) for sql, params in statements if sql.lstrip().startswith("SELECT") and "FROM release_encoder_policies" in sql]
+        assert len(policy_reads) == 1
+        assert "IN (" in policy_reads[0][0]
+        assert set(policy_reads[0][1]) == {1, 2, 3}
+        assert groups[1].encoder_state == "enabled"
+        assert groups[1].encoder_policy["mode"] == "automatic"
+        assert groups[1].encoder_policy["revision"] == 0
+        assert groups[2].encoder_state == "enabled"  # Reconciliation enrollment has not run yet.
+        assert groups[2].encoder_policy["video_label"] == "HEVC"
+        assert groups[2].encoder_policy["audio_label"] == "Opus"
+        assert groups[2].encoder_policy["audio_downmix"] == "stereo"
+        assert groups[2].encoder_policy["revision"] == 7
+        assert groups[3].encoder_state == "disabled"
+        setting_reads = [params for sql, params in statements if sql.lstrip().startswith("SELECT") and "FROM settings" in sql]
+        for key in ("video_kensetsu_enabled", "video_kensetsu_base_url", "video_kensetsu_auto_enabled"):
+            assert sum(key in params for params in setting_reads) == 1
+        db.get(Setting, "video_kensetsu_auto_enabled").value = "false"
+        db.commit()
+        paused = {g.release_id:g for g in list_release_groups(db)["groups"]}
+        assert paused[1].encoder_state == "paused"
+        assert paused[2].encoder_state == "paused"
+        assert paused[3].encoder_state == "disabled"
+        db.get(Setting, "video_kensetsu_base_url").value = ""
+        db.commit()
+        disconnected = {g.release_id:g for g in list_release_groups(db)["groups"]}
+        assert disconnected[1].encoder_state == "disabled"
+        assert disconnected[2].encoder_state == "disabled"
+    engine.dispose()
