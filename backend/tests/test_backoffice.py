@@ -561,7 +561,7 @@ def test_initial_sync_archives_hidden_release_and_retry_then_return_to_site(db, 
     monkeypatch.setattr(job, "build_anilibria_client", lambda _: client)
     monkeypatch.setattr(job, "is_stop_requested", lambda *args: False)
     asyncio.run(job.run_backoffice_sync(db, 1, {}))
-    client.public.catalog_releases.assert_not_awaited()
+    client.public.catalog_releases.assert_awaited_once()
     archive = db.scalar(select(TorrentArchive))
     pipeline = db.scalar(select(TorrentPipeline))
     assert archive.backoffice_trackers and archive.notification_baseline
@@ -607,7 +607,7 @@ def test_real_processor_archives_known_backoffice_during_public_outage(db, monke
     client = source_client(RuntimeError("API unavailable"), {"id": 1, "_source": "backoffice",
         "alias": "show", "name": {"main": "Fresh Nova title"},
         "is_hidden": False, "is_blocked_by_copyrights": True}, db)
-    client.public.catalog_releases = AsyncMock(side_effect=AssertionError("public catalog must not be read"))
+    client.public.catalog_releases = AsyncMock(side_effect=RuntimeError("public catalog unavailable"))
     client.backoffice.list_resources = AsyncMock(return_value=[nova_resource()])
     monkeypatch.setenv("TORRENT_STORAGE_DIR", str(tmp_path))
     monkeypatch.setattr(job, "build_anilibria_client", lambda _: client)

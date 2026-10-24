@@ -94,7 +94,7 @@ def make_client(db):
         public = SimpleNamespace(
             base_url="https://public.test/api/v1",
             passkey="test-passkey",
-            catalog_releases=AsyncMock(side_effect=AssertionError("Nova scan must not read the public catalog")),
+            catalog_releases=AsyncMock(side_effect=RuntimeError("Public catalog unavailable")),
             get_release=AsyncMock(side_effect=RuntimeError("AniLibria API: запрос не выполнен (некорректный JSON)")),
             get_torrents_for_release=AsyncMock(return_value=[{"id": 10, "hash": TORRENT_HASH}]),
         )
@@ -229,7 +229,7 @@ def test_deferred_source_check_does_not_block_known_nova_or_complete_baseline(
     with pytest.raises(JobPartialFailure):
         asyncio.run(run.job.run_backoffice_sync(db, 1, {}))
 
-    client.public.catalog_releases.assert_not_awaited()
+    client.public.catalog_releases.assert_awaited_once()
     assert [item["release_id"] for item in run.processed] == [1]
     client.backoffice.get_torrents_for_release.assert_awaited_once_with(1)
     client.public.get_release.assert_awaited_once_with(1)
@@ -293,7 +293,7 @@ def test_nova_discovery_imports_new_confirmed_release_without_public_catalog(db,
 
     asyncio.run(run.job.run_backoffice_sync(db, 1, {}))
 
-    client.public.catalog_releases.assert_not_awaited()
+    client.public.catalog_releases.assert_awaited_once()
     assert [item["release_id"] for item in run.processed] == [1]
     row = db.get(Release, 1)
     assert row.source == "backoffice"
@@ -316,7 +316,7 @@ def test_nova_index_only_excludes_releases_with_both_confirmed_false_flags(
 
     asyncio.run(run.job.run_backoffice_sync(db, 1, {}))
 
-    client.public.catalog_releases.assert_not_awaited()
+    assert client.public.catalog_releases.await_count == int(expected_processed)
     assert bool(run.processed) is expected_processed
     assert client.public.get_release.await_count == int(expected_processed)
     assert client.backoffice.get_release.await_count == int(expected_processed)

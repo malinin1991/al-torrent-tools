@@ -1,4 +1,4 @@
-FROM python:3.15.0-slim-trixie AS base
+FROM python:3.15.1-slim-trixie AS base
 
 # MediaInfo CLI + libmediainfo из официального репозитория MediaArea
 # (свежее, чем пакет Debian freeze). После pip — см. ниже: удаляем bundled
